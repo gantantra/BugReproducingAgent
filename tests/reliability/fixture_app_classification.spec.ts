@@ -37,11 +37,7 @@ describe("fixture app classification", () => {
 
   it("deterministic product-failing fixture yields PRODUCT_FAILED by rule 4 on every run", async () => {
     h = await createHarness({ fixtures: ["product-failing-deterministic"] });
-    const results = await runExperiment(
-      h,
-      searchExperiment("product-failing-deterministic"),
-      5
-    );
+    const results = await runExperiment(h, searchExperiment("product-failing-deterministic"), 5);
 
     expect(results).toHaveLength(5);
     for (const r of results) {

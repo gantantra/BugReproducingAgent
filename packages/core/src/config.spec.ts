@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { loadConfigFromString } from "./config.js";
+import {
+  isEnvRef,
+  llmConfigStatus,
+  loadConfigFromString,
+  resolveLlmSettings,
+} from "./config.js";
 import { isInvestigatorError } from "./errors.js";
 
 /**
@@ -55,7 +60,10 @@ ${safety}
 `;
 }
 
-function load(exec = "", env: Record<string, string> = ENV): ReturnType<typeof loadConfigFromString> {
+function load(
+  exec = "",
+  env: Record<string, string> = ENV
+): ReturnType<typeof loadConfigFromString> {
   return loadConfigFromString(yaml(exec), { env: env as NodeJS.ProcessEnv });
 }
 
@@ -69,13 +77,49 @@ function codeOf(fn: () => unknown): string {
 }
 
 describe("config loader", () => {
-  it("loads a valid config and resolves env: references", () => {
+  it("resolves env: references outside the AI subtree, and never embeds a secret", () => {
     const cfg = load();
-    expect(cfg.llm.baseUrl).toBe(ENV.DEEPSEEK_BASE_URL);
-    expect(cfg.llm.aliases.FAST_MODEL.modelId).toBe("m-fast");
     // apiKeyEnv is a NAME, never resolved into the config object.
     expect(cfg.llm.apiKeyEnv).toBe("DEEPSEEK_API_KEY");
     expect(JSON.stringify(cfg)).not.toContain("sk-");
+  });
+
+  it("defers the AI subtree at load and resolves it only on demand", () => {
+    // Decision 6: no deterministic command reads llm.*, so requiring DEEPSEEK_* before a browser
+    // run was a false dependency that made `investigate run` fail on a fresh workspace.
+    const cfg = load();
+    expect(isEnvRef(cfg.llm.baseUrl), "llm.baseUrl stays an env: marker at load").toBe(true);
+    expect(isEnvRef(cfg.llm.aliases.FAST_MODEL.modelId)).toBe(true);
+
+    // Resolution is explicit, and yields the real values.
+    const resolved = resolveLlmSettings(cfg, ENV as unknown as NodeJS.ProcessEnv);
+    expect(resolved.baseUrl).toBe(ENV.DEEPSEEK_BASE_URL);
+    expect(resolved.aliases.FAST_MODEL.modelId).toBe("m-fast");
+  });
+
+  it("loads with NO AI variables set at all, and reports them as missing", () => {
+    const cfg = load("", { PATH: "x" });
+    const status = llmConfigStatus(cfg, { PATH: "x" } as NodeJS.ProcessEnv);
+    expect(status.state).toBe("missing");
+    expect(status.apiKeyConfigured).toBe(false);
+    expect(status.missingVars).toContain("DEEPSEEK_API_KEY");
+    // Names only. A status report must never carry a value.
+    expect(JSON.stringify(status)).not.toContain("sk-");
+  });
+
+  it("fails typed, naming variables and not values, when an AI operation needs them", () => {
+    const cfg = load("", { PATH: "x" });
+    try {
+      resolveLlmSettings(cfg, { PATH: "x" } as NodeJS.ProcessEnv);
+      throw new Error("expected a failure");
+    } catch (e) {
+      expect(isInvestigatorError(e)).toBe(true);
+      if (isInvestigatorError(e)) {
+        expect(e.code).toBe("CONFIG_ENV_UNRESOLVED");
+        expect(e.message).toContain("DEEPSEEK_BASE_URL");
+        expect(e.message).not.toContain("sk-");
+      }
+    }
   });
 
   it("applies built-in defaults and records their source", () => {
@@ -86,7 +130,9 @@ describe("config loader", () => {
     expect(cfg.execution.video).toBe("on-failure");
     expect(cfg.storage.sqlite.journalMode).toBe("wal");
     expect(cfg.sources["execution.leaseMs"]?.source).toBe("built-in-default");
-    expect(cfg.sources["llm.baseUrl"]?.source).toBe("env");
+    // llm.baseUrl is deferred, so it has no resolved source at load time. Its source is
+    // recorded when resolveLlmSettings runs, which is the only place the value exists.
+    expect(cfg.sources["llm.baseUrl"]?.source).not.toBe("env");
   });
 
   it("rejects an unknown key rather than ignoring it", () => {
@@ -94,16 +140,18 @@ describe("config loader", () => {
     expect(codeOf(() => load("  maxRunsPerInvestigaton: 10"))).toBe("CONFIG_INVALID");
   });
 
-  it("names the variable when an env: reference is unresolvable, and prints no value", () => {
+  it("names the variable when a NON-deferred env: reference is unresolvable", () => {
+    // execution.channel is not in the deferred subtree, so it must still fail at load:
+    // deferring anything the executor needs would move a load-time failure into a run.
     try {
-      load("", { ...ENV, DEEPSEEK_FAST_MODEL: "" });
+      load("\n  channel: env:REPROAGENT_CHANNEL");
       throw new Error("expected a failure");
     } catch (e) {
       expect(isInvestigatorError(e)).toBe(true);
       if (isInvestigatorError(e)) {
         expect(e.code).toBe("CONFIG_ENV_UNRESOLVED");
-        expect(e.message).toContain("DEEPSEEK_FAST_MODEL");
-        expect(e.context["variable"]).toBe("DEEPSEEK_FAST_MODEL");
+        expect(e.message).toContain("REPROAGENT_CHANNEL");
+        expect(e.context["variable"]).toBe("REPROAGENT_CHANNEL");
       }
     }
   });
@@ -117,7 +165,9 @@ describe("config loader", () => {
     );
     // And the same document with the field left at its only permitted value loads.
     const ok = yaml() + "\nlogging:\n  level: info\n  redactLogs: true\n";
-    expect(loadConfigFromString(ok, { env: ENV as NodeJS.ProcessEnv }).logging.redactLogs).toBe(true);
+    expect(loadConfigFromString(ok, { env: ENV as NodeJS.ProcessEnv }).logging.redactLogs).toBe(
+      true
+    );
   });
 
   it("rejects logging.disableCrashDumps false", () => {
@@ -131,7 +181,10 @@ describe("config loader", () => {
     expect(
       codeOf(() =>
         loadConfigFromString(
-          yaml().replace("  redactionPolicy:", "  sqlite: { journalMode: delete }\n  redactionPolicy:"),
+          yaml().replace(
+            "  redactionPolicy:",
+            "  sqlite: { journalMode: delete }\n  redactionPolicy:"
+          ),
           { env: ENV as NodeJS.ProcessEnv }
         )
       )
@@ -139,27 +192,31 @@ describe("config loader", () => {
   });
 
   it("rejects heartbeatMs >= leaseMs / 3", () => {
-    expect(codeOf(() => load("  leaseMs: 9000\n  heartbeatMs: 3000").execution)).toBe("CONFIG_INVALID");
+    expect(codeOf(() => load("  leaseMs: 9000\n  heartbeatMs: 3000").execution)).toBe(
+      "CONFIG_INVALID"
+    );
     // Just under the boundary is fine.
     expect(load("  leaseMs: 9000\n  heartbeatMs: 2999").execution.heartbeatMs).toBe(2999);
   });
 
   it("rejects maxParallelRuns above worker capacity", () => {
-    expect(codeOf(() => load("  perWorkerConcurrency: 1\n  maxParallelRuns: 4"))).toBe("CONFIG_INVALID");
+    expect(codeOf(() => load("  perWorkerConcurrency: 1\n  maxParallelRuns: 4"))).toBe(
+      "CONFIG_INVALID"
+    );
   });
 
   it("rejects a target whose origin is not in safety.allowedOrigins", () => {
     const bad = yaml().replace("http://127.0.0.1:9999\n", "http://127.0.0.1:1111\n");
-    expect(
-      codeOf(() => loadConfigFromString(bad, { env: ENV as NodeJS.ProcessEnv }))
-    ).toBe("CONFIG_INVALID");
+    expect(codeOf(() => loadConfigFromString(bad, { env: ENV as NodeJS.ProcessEnv }))).toBe(
+      "CONFIG_INVALID"
+    );
   });
 
   it("rejects a production classification outright", () => {
     const bad = yaml().replace("classification: fixture", "classification: production");
-    expect(
-      codeOf(() => loadConfigFromString(bad, { env: ENV as NodeJS.ProcessEnv }))
-    ).toBe("CONFIG_INVALID");
+    expect(codeOf(() => loadConfigFromString(bad, { env: ENV as NodeJS.ProcessEnv }))).toBe(
+      "CONFIG_INVALID"
+    );
   });
 
   it("rejects an origin matching productionOriginPatterns", () => {
@@ -175,9 +232,9 @@ describe("config loader", () => {
       "required: [experiment_selection, target_failure, final_reproduction]",
       "required: [experiment_selection]"
     );
-    expect(
-      codeOf(() => loadConfigFromString(bad, { env: ENV as NodeJS.ProcessEnv }))
-    ).toBe("CONFIG_INVALID");
+    expect(codeOf(() => loadConfigFromString(bad, { env: ENV as NodeJS.ProcessEnv }))).toBe(
+      "CONFIG_INVALID"
+    );
   });
 
   it("rejects the unimplemented trace pipeline with a message naming the ADR", () => {
@@ -186,15 +243,17 @@ describe("config loader", () => {
       throw new Error("expected a failure");
     } catch (e) {
       expect(isInvestigatorError(e) && e.code).toBe("CONFIG_INVALID");
-      expect(String((e as Error).message) + JSON.stringify((e as never as { context: unknown }).context)).toContain("ADR-0022");
+      expect(
+        String((e as Error).message) + JSON.stringify((e as never as { context: unknown }).context)
+      ).toContain("ADR-0022");
     }
   });
 
   it("rejects an unimplemented storage adapter", () => {
     const bad = yaml().replace("metadata: sqlite", "metadata: postgres");
-    expect(
-      codeOf(() => loadConfigFromString(bad, { env: ENV as NodeJS.ProcessEnv }))
-    ).toBe("CONFIG_INVALID");
+    expect(codeOf(() => loadConfigFromString(bad, { env: ENV as NodeJS.ProcessEnv }))).toBe(
+      "CONFIG_INVALID"
+    );
   });
 
   it("CLI overrides take precedence over env and file, and record their source", () => {

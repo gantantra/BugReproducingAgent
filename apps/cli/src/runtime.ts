@@ -65,9 +65,7 @@ function resolvePolicyPath(ws: Workspace, configured: string): string {
 }
 
 export async function openRuntime(opts: GlobalOptions): Promise<Runtime> {
-  const ws = opts.workspace
-    ? requireWorkspaceAt(opts.workspace)
-    : requireWorkspace(process.cwd());
+  const ws = opts.workspace ? requireWorkspaceAt(opts.workspace) : requireWorkspace(process.cwd());
 
   const logger = new Logger({
     level: opts.verbose ? "debug" : "info",
@@ -182,7 +180,10 @@ export function readJsonFile<T>(path: string): T {
   try {
     return JSON.parse(readFileSync(path, "utf8")) as T;
   } catch (e) {
-    return fail("INPUT_INVALID", "Cannot read or parse input file", { context: { path }, cause: e });
+    return fail("INPUT_INVALID", "Cannot read or parse input file", {
+      context: { path },
+      cause: e,
+    });
   }
 }
 

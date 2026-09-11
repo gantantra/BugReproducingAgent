@@ -156,9 +156,9 @@ describe("schema invariants (M1-AT-2, M1-AT-3)", () => {
        VALUES ('J1','INV-001','EXP-001',0,0,1,'{}','PENDING','2026-01-01T00:00:00Z')`
     ).run();
 
-    expect(() => db.prepare("UPDATE jobs SET state='TERMINAL' WHERE job_id='J1'").run()).toThrowError(
-      /constraint/
-    );
+    expect(() =>
+      db.prepare("UPDATE jobs SET state='TERMINAL' WHERE job_id='J1'").run()
+    ).toThrowError(/constraint/);
     expect(() =>
       db.prepare("UPDATE jobs SET terminal_reason='COMPLETED' WHERE job_id='J1'").run()
     ).toThrowError(/constraint/);
@@ -177,12 +177,12 @@ describe("schema invariants (M1-AT-2, M1-AT-3)", () => {
          'deterministic','execution','0.1.0','2026-01-01T00:00:00Z','sha256:x')`
     ).run();
 
-    expect(() => db.prepare("UPDATE lineage SET seq=2 WHERE lineage_id='LIN-000001'").run()).toThrowError(
-      /STORE_APPEND_ONLY_VIOLATION/
-    );
-    expect(() => db.prepare("DELETE FROM lineage WHERE lineage_id='LIN-000001'").run()).toThrowError(
-      /STORE_APPEND_ONLY_VIOLATION/
-    );
+    expect(() =>
+      db.prepare("UPDATE lineage SET seq=2 WHERE lineage_id='LIN-000001'").run()
+    ).toThrowError(/STORE_APPEND_ONLY_VIOLATION/);
+    expect(() =>
+      db.prepare("DELETE FROM lineage WHERE lineage_id='LIN-000001'").run()
+    ).toThrowError(/STORE_APPEND_ONLY_VIOLATION/);
 
     db.prepare(
       `INSERT INTO approvals (approval_id, investigation_id, gate, approval_type,
@@ -194,9 +194,9 @@ describe("schema invariants (M1-AT-2, M1-AT-3)", () => {
     expect(() =>
       db.prepare("UPDATE approvals SET decision='reject' WHERE approval_id='APPR-001'").run()
     ).toThrowError(/STORE_APPEND_ONLY_VIOLATION/);
-    expect(() => db.prepare("DELETE FROM approvals WHERE approval_id='APPR-001'").run()).toThrowError(
-      /STORE_APPEND_ONLY_VIOLATION/
-    );
+    expect(() =>
+      db.prepare("DELETE FROM approvals WHERE approval_id='APPR-001'").run()
+    ).toThrowError(/STORE_APPEND_ONLY_VIOLATION/);
 
     await s.close();
   });
@@ -239,9 +239,9 @@ describe("schema invariants (M1-AT-2, M1-AT-3)", () => {
     ]) {
       expect(() => db.prepare(sql).run(), sql).toThrowError(/STORE_APPEND_ONLY_VIOLATION/);
     }
-    expect(() => db.prepare("DELETE FROM artifact_refs WHERE artifact_id='ART-1'").run()).toThrowError(
-      /STORE_APPEND_ONLY_VIOLATION/
-    );
+    expect(() =>
+      db.prepare("DELETE FROM artifact_refs WHERE artifact_id='ART-1'").run()
+    ).toThrowError(/STORE_APPEND_ONLY_VIOLATION/);
 
     // The one permitted mutation: a retention tombstone.
     db.prepare(
@@ -431,7 +431,9 @@ describe("job identity constraints", () => {
     }
     expect(isInvestigatorError(err)).toBe(true);
     const message = (err as Error).message;
-    expect(message, `blamed the work tuple for an id collision: ${message}`).toMatch(/already exists/);
+    expect(message, `blamed the work tuple for an id collision: ${message}`).toMatch(
+      /already exists/
+    );
     expect(message).toContain("JOB-aaaaaaaaaaaa");
     await s.close();
   });
@@ -444,7 +446,12 @@ describe("job identity constraints", () => {
     // ADR-0005: a retry is a NEW row with an incremented attempt index. The unique index must
     // permit that, or the bounded-retry path would be dead on arrival.
     await q.enqueue(
-      job({ jobId: "JOB-cccccccccccc", attemptIndex: 1, seq: 2, previousAttemptJobId: "JOB-aaaaaaaaaaaa" })
+      job({
+        jobId: "JOB-cccccccccccc",
+        attemptIndex: 1,
+        seq: 2,
+        previousAttemptJobId: "JOB-aaaaaaaaaaaa",
+      })
     );
 
     const jobs = await q.listJobs("INV-001");

@@ -12,7 +12,13 @@ import {
 import type { Collector } from "./collector.js";
 import { isOriginAllowed } from "./destructive-classifier.js";
 import type { Redactor } from "@investigator/evidence";
-import type { ActionSpec, AssertionSpec, DeclaredFactor, SelectorSpec, TestDataValue } from "./types.js";
+import type {
+  ActionSpec,
+  AssertionSpec,
+  DeclaredFactor,
+  SelectorSpec,
+  TestDataValue,
+} from "./types.js";
 
 /**
  * Deterministic action interpreter (ADR-0006).
@@ -60,7 +66,10 @@ function locatorFor(page: Page, sel: SelectorSpec): Locator {
     case "label":
       return page.getByLabel(sel.value ?? "", sel.exact !== undefined ? { exact: sel.exact } : {});
     case "placeholder":
-      return page.getByPlaceholder(sel.value ?? "", sel.exact !== undefined ? { exact: sel.exact } : {});
+      return page.getByPlaceholder(
+        sel.value ?? "",
+        sel.exact !== undefined ? { exact: sel.exact } : {}
+      );
     case "text":
       return page.getByText(sel.value ?? "", sel.exact !== undefined ? { exact: sel.exact } : {});
     case "css":
@@ -80,7 +89,11 @@ function resolveLocator(page: Page, sel: SelectorSpec): Locator {
  * generators are a closed set seeded from the run seed, secretRefs resolve through SecretStore,
  * and an unresolved `unknown` refuses to run rather than guessing.
  */
-function resolveValue(value: TestDataValue | undefined, opts: InterpreterOptions, actionId: string): string {
+function resolveValue(
+  value: TestDataValue | undefined,
+  opts: InterpreterOptions,
+  actionId: string
+): string {
   if (!value) return "";
   switch (value.kind) {
     case "literal":
@@ -133,7 +146,10 @@ const TRANSPORT_ERROR =
   /net::ERR_|ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ERR_EMPTY_RESPONSE|ERR_CONNECTION|ERR_SOCKET|ERR_ADDRESS|ERR_NAME_NOT_RESOLVED|socket hang up|Connection closed/i;
 
 /** FIXED in-page storage reader. Literal source, no parameters. */
-const STORAGE_READER = (): { local: Array<{ k: string; v: string }>; session: Array<{ k: string; v: string }> } => {
+const STORAGE_READER = (): {
+  local: Array<{ k: string; v: string }>;
+  session: Array<{ k: string; v: string }>;
+} => {
   const dump = (store: Storage): Array<{ k: string; v: string }> => {
     const out: Array<{ k: string; v: string }> = [];
     for (let i = 0; i < store.length; i++) {
@@ -219,7 +235,10 @@ export class ActionInterpreter {
 
   constructor(private readonly opts: InterpreterOptions) {}
 
-  async run(actions: readonly ActionSpec[], assertions: readonly AssertionSpec[]): Promise<InterpreterResult> {
+  async run(
+    actions: readonly ActionSpec[],
+    assertions: readonly AssertionSpec[]
+  ): Promise<InterpreterResult> {
     const inlineIds = new Set(
       actions.filter((a) => a.type === "assert" && a.assertion).map((a) => a.assertion!.assertionId)
     );
@@ -234,7 +253,12 @@ export class ActionInterpreter {
       } catch (e) {
         const reason = e instanceof Error ? e.message : String(e);
         const isTimeout = /Timeout|timed out/i.test(reason);
-        this.opts.collector.actionEnd(action.actionId, action.type, isTimeout ? "timeout" : "failed", reason);
+        this.opts.collector.actionEnd(
+          action.actionId,
+          action.type,
+          isTimeout ? "timeout" : "failed",
+          reason
+        );
         await this.captureOnFailure(action.actionId);
 
         // An infrastructure-class error propagates so the worker can classify it by rule 2.
@@ -268,7 +292,8 @@ export class ActionInterpreter {
       }
 
       if (this.opts.domSnapshotOn.includes("action")) await this.captureDomSnapshot("action");
-      if (this.opts.screenshotOn.includes("action")) await this.captureScreenshot(`action-${action.actionId}`);
+      if (this.opts.screenshotOn.includes("action"))
+        await this.captureScreenshot(`action-${action.actionId}`);
     }
 
     for (const a of assertions) {
@@ -343,7 +368,8 @@ export class ActionInterpreter {
         await resolveLocator(page, action.selector!).uncheck({ timeout });
         break;
       case "press":
-        if (action.selector) await resolveLocator(page, action.selector).press(action.key ?? "Enter", { timeout });
+        if (action.selector)
+          await resolveLocator(page, action.selector).press(action.key ?? "Enter", { timeout });
         else await page.keyboard.press(action.key ?? "Enter");
         break;
       case "hover":
@@ -374,7 +400,8 @@ export class ActionInterpreter {
       case "setStorage":
         await page.evaluate(
           (args: { area: string; key: string; value: string }) => {
-            const store = args.area === "sessionStorage" ? window.sessionStorage : window.localStorage;
+            const store =
+              args.area === "sessionStorage" ? window.sessionStorage : window.localStorage;
             store.setItem(args.key, args.value);
           },
           {
@@ -457,7 +484,10 @@ export class ActionInterpreter {
         case "elementCountAtLeast": {
           const loc = locatorFor(page, a.selector!);
           const min = a.min ?? 1;
-          await loc.first().waitFor({ state: "attached", timeout }).catch(() => undefined);
+          await loc
+            .first()
+            .waitFor({ state: "attached", timeout })
+            .catch(() => undefined);
           const n = await loc.count();
           result = n >= min ? "pass" : "fail";
           detail = `count=${n} min=${min}`;
@@ -470,13 +500,17 @@ export class ActionInterpreter {
           break;
         }
         case "elementVisible": {
-          const visible = await resolveLocator(page, a.selector!).isVisible({ timeout }).catch(() => false);
+          const visible = await resolveLocator(page, a.selector!)
+            .isVisible({ timeout })
+            .catch(() => false);
           result = visible ? "pass" : "fail";
           detail = `visible=${visible}`;
           break;
         }
         case "elementHidden": {
-          const visible = await resolveLocator(page, a.selector!).isVisible({ timeout }).catch(() => false);
+          const visible = await resolveLocator(page, a.selector!)
+            .isVisible({ timeout })
+            .catch(() => false);
           result = visible ? "fail" : "pass";
           detail = `visible=${visible}`;
           break;
@@ -488,13 +522,17 @@ export class ActionInterpreter {
           break;
         }
         case "textEquals": {
-          const text = ((await resolveLocator(page, a.selector!).textContent({ timeout })) ?? "").trim();
+          const text = (
+            (await resolveLocator(page, a.selector!).textContent({ timeout })) ?? ""
+          ).trim();
           result = text === (a.text ?? "") ? "pass" : "fail";
           detail = `matched=${result === "pass"}`;
           break;
         }
         case "attributeEquals": {
-          const v = await resolveLocator(page, a.selector!).getAttribute(a.attribute ?? "", { timeout });
+          const v = await resolveLocator(page, a.selector!).getAttribute(a.attribute ?? "", {
+            timeout,
+          });
           result = v === a.expected ? "pass" : "fail";
           detail = `matched=${result === "pass"}`;
           break;
@@ -507,7 +545,8 @@ export class ActionInterpreter {
         case "storageKeyAbsent": {
           const present = await page.evaluate(
             (args: { area: string; key: string }) => {
-              const store = args.area === "sessionStorage" ? window.sessionStorage : window.localStorage;
+              const store =
+                args.area === "sessionStorage" ? window.sessionStorage : window.localStorage;
               return store.getItem(args.key) !== null;
             },
             { area: a.storageArea ?? "localStorage", key: a.storageKey ?? "" }
@@ -540,16 +579,20 @@ export class ActionInterpreter {
 
     if (result === "fail") {
       if (this.opts.domSnapshotOn.includes("failure")) await this.captureDomSnapshot("failure");
-      if (this.opts.screenshotOn.includes("failure")) await this.captureScreenshot(`assert-${a.assertionId}`);
+      if (this.opts.screenshotOn.includes("failure"))
+        await this.captureScreenshot(`assert-${a.assertionId}`);
     }
   }
 
   private async captureOnFailure(actionId: string): Promise<void> {
     if (this.opts.domSnapshotOn.includes("failure")) await this.captureDomSnapshot("failure");
-    if (this.opts.screenshotOn.includes("failure")) await this.captureScreenshot(`fail-${actionId}`);
+    if (this.opts.screenshotOn.includes("failure"))
+      await this.captureScreenshot(`fail-${actionId}`);
   }
 
-  private async captureDomSnapshot(trigger: "action" | "navigation" | "failure" | "manual"): Promise<void> {
+  private async captureDomSnapshot(
+    trigger: "action" | "navigation" | "failure" | "manual"
+  ): Promise<void> {
     try {
       const json = await this.opts.page.evaluate(DOM_SERIALIZER);
       if (json.length > this.opts.domSnapshotMaxBytes) {

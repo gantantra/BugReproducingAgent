@@ -25,7 +25,9 @@ export class EnvSecretStore implements SecretStore {
       });
     }
     if (this.allowed && !this.allowed.has(name)) {
-      fail("INPUT_INVALID", "Secret name is not in the configured allowlist", { context: { name } });
+      fail("INPUT_INVALID", "Secret name is not in the configured allowlist", {
+        context: { name },
+      });
     }
   }
 

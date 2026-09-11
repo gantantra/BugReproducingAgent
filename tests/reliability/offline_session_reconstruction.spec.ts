@@ -4,7 +4,13 @@ import { join } from "node:path";
 import { searchExperiment } from "@investigator/test-fixtures";
 import { Redactor, runPlane } from "@investigator/evidence";
 import { COLLECTOR_VERSION } from "@investigator/core";
-import { createHarness, readNormalized, readRawLog, runExperiment, type Harness } from "./harness.js";
+import {
+  createHarness,
+  readNormalized,
+  readRawLog,
+  runExperiment,
+  type Harness,
+} from "./harness.js";
 
 /**
  * Reliability gate test 10 — offline session reconstruction.
@@ -46,7 +52,13 @@ describe("offline session reconstruction", () => {
     for (const r of all) {
       originals.set(r.runId, (await readNormalized(h, r.runId))!);
       rawLogs.set(r.runId, (await readRawLog(h, r.runId))!);
-      requiredByRun.set(r.runId, ["actions", "navigation", "console", "exceptions", "networkMetadata"]);
+      requiredByRun.set(r.runId, [
+        "actions",
+        "navigation",
+        "console",
+        "exceptions",
+        "networkMetadata",
+      ]);
     }
 
     // Now make the world hostile: any network call throws, and there is no browser.

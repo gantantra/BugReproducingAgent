@@ -75,9 +75,29 @@ export interface RunResult {
   durationMs: number;
 }
 
+/**
+ * First meaningful line of a browser launch error, capped.
+ *
+ * Playwright launch errors are multi-line and can embed a local profile path; the first line
+ * carries the classification (timeout, spawn EPERM, target closed) which is what a diagnosis
+ * needs. Local filesystem paths are not secrets, but the value is capped and single-lined so it
+ * cannot smuggle an arbitrary payload into a persisted manifest field.
+ */
+function launchErrorSummary(e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e);
+  const firstMeaningful =
+    raw
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .find((l) => l.length > 0 && !l.startsWith("at ")) ?? "unknown";
+  return firstMeaningful.slice(0, 200);
+}
+
 export class Worker {
   private readonly clock: Clock;
   private stopped = false;
+  /** Shared across every run in the batch. See ADR-0025. */
+  private browser: Browser | null = null;
 
   constructor(private readonly deps: WorkerDeps) {
     this.clock = deps.clock ?? systemClock;
@@ -85,6 +105,61 @@ export class Worker {
 
   stop(): void {
     this.stopped = true;
+  }
+
+  /**
+   * The batch's browser, launched on first use and reused afterwards (ADR-0025).
+   *
+   * The bounded retry here is a PRE-RUN launch retry and is deliberately not a run attempt. No
+   * job has started, no evidence has been collected, and no product behaviour has been observed,
+   * so there is nothing it can hide: it does not create a job row, does not increment
+   * `attemptIndex`, and does not appear in any statistic. Contrast the run-level infrastructure
+   * retry in `drain`, which is a new linked attempt precisely because a run did happen.
+   *
+   * Measured justification: `chromium.launch()` fails on this platform roughly 4 times per 100
+   * sequential launches with "Target page, context or browser has been closed", reproducible with
+   * no ReproAgent code in the picture. Reusing one browser cuts a 100-run batch from 100 launches
+   * to 1; the retry covers the residual chance that the single launch is the one that fails. If
+   * every attempt fails, EXEC_BROWSER_LAUNCH_FAILED still surfaces and the run is still
+   * INFRASTRUCTURE_FAILED, so a genuinely broken environment fails loudly.
+   */
+  private async getBrowser(jobId: string): Promise<Browser> {
+    if (this.browser?.isConnected()) return this.browser;
+    // A disconnected browser (crash, external kill) is replaced rather than reused.
+    this.browser = null;
+
+    const attempts = 3;
+    let last: unknown;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        this.browser = await chromium.launch({
+          headless: true,
+          ...(this.deps.config.execution.channel
+            ? { channel: this.deps.config.execution.channel }
+            : {}),
+          args: ["--disable-dev-shm-usage"],
+        });
+        return this.browser;
+      } catch (e) {
+        last = e;
+      }
+    }
+    throw new InvestigatorError(
+      "EXEC_BROWSER_LAUNCH_FAILED",
+      `Chromium failed to launch after ${attempts} attempts: ${launchErrorSummary(last)}`,
+      { context: { jobId, launchAttempts: attempts }, cause: last }
+    );
+  }
+
+  /** Release the batch's browser. Safe to call more than once. */
+  private async closeBrowser(): Promise<void> {
+    const b = this.browser;
+    this.browser = null;
+    try {
+      await b?.close();
+    } catch {
+      /* already gone */
+    }
   }
 
   /**
@@ -106,23 +181,32 @@ export class Worker {
     // Reap before the first claim so a previous crash is classified before new work starts.
     await this.deps.queue.reapStale(this.clock.nowMs());
 
-    let repetitionsCompleted = 0;
-    while (!this.stopped && repetitionsCompleted < max) {
-      const job = await this.deps.queue.claim(this.deps.workerId, this.deps.config.execution.leaseMs);
-      if (!job) break;
+    try {
+      let repetitionsCompleted = 0;
+      while (!this.stopped && repetitionsCompleted < max) {
+        const job = await this.deps.queue.claim(
+          this.deps.workerId,
+          this.deps.config.execution.leaseMs
+        );
+        if (!job) break;
 
-      const result = await this.runClaimedJob(job.jobId, job.payloadJson, job);
-      results.push(result);
+        const result = await this.runClaimedJob(job.jobId, job.payloadJson, job);
+        results.push(result);
 
-      if (result.outcome === "INFRASTRUCTURE_FAILED" && job.attemptIndex < maxRetries) {
-        // A new row with an incremented attempt index, never a mutation of history. The failed
-        // attempt stays visible, so the statistics can report it.
-        await this.enqueueRetry(job, result);
-        continue; // this repetition has not yet produced a valid observation
+        if (result.outcome === "INFRASTRUCTURE_FAILED" && job.attemptIndex < maxRetries) {
+          // A new row with an incremented attempt index, never a mutation of history. The failed
+          // attempt stays visible, so the statistics can report it.
+          await this.enqueueRetry(job, result);
+          continue; // this repetition has not yet produced a valid observation
+        }
+        repetitionsCompleted++;
       }
-      repetitionsCompleted++;
+      return results;
+    } finally {
+      // The batch owns the browser (ADR-0025), so it is released here rather than per run --
+      // including when the batch throws or is stopped mid-way.
+      await this.closeBrowser();
     }
-    return results;
   }
 
   private async enqueueRetry(
@@ -212,17 +296,30 @@ export class Worker {
     const experiment = this.deps.loadExperiment(payloadJson);
     const target = cfg.execution.targets[experiment.targetName];
     if (!target) {
-      return this.finishWithoutBrowser(jobId, runId, job, startedAt, "WORKER_ERROR", "INFRASTRUCTURE_FAILED", 2,
-        `Target ${experiment.targetName} is not configured`);
+      return this.finishWithoutBrowser(
+        jobId,
+        runId,
+        job,
+        startedAt,
+        "WORKER_ERROR",
+        "INFRASTRUCTURE_FAILED",
+        2,
+        `Target ${experiment.targetName} is not configured`
+      );
     }
 
-    const seed = deriveSeed(cfg.execution.seed, job.experimentId, job.repetitionIndex, job.attemptIndex);
+    const seed = deriveSeed(
+      cfg.execution.seed,
+      job.experimentId,
+      job.repetitionIndex,
+      job.attemptIndex
+    );
     const rng = new SeededRng(seed);
 
     let browser: Browser | undefined;
     let context: BrowserContext | undefined;
     let page: Page | undefined;
-    let profileDir: string | undefined;
+    let videoDir: string | undefined;
     let detach: (() => void) | undefined;
 
     const artifacts: ArtifactRef[] = [];
@@ -249,20 +346,10 @@ export class Worker {
     let interpreterResult: Awaited<ReturnType<ActionInterpreter["run"]>> | undefined;
 
     try {
-      profileDir = mkdtempSync(join(tmpdir(), "investigator-profile-"));
-
-      try {
-        browser = await chromium.launch({
-          headless: true,
-          ...(cfg.execution.channel ? { channel: cfg.execution.channel } : {}),
-          args: ["--disable-dev-shm-usage"],
-        });
-      } catch (e) {
-        throw new InvestigatorError("EXEC_BROWSER_LAUNCH_FAILED", "Chromium failed to launch", {
-          context: { jobId },
-          cause: e,
-        });
-      }
+      // One browser per worker, a fresh CONTEXT per run (ADR-0025). The context is the isolation
+      // boundary the configured `resetStrategy: fresh-context` names; launching a whole browser
+      // per run bought no extra isolation and cost 4 spurious INFRASTRUCTURE_FAILED per 100 runs.
+      browser = await this.getBrowser(jobId);
 
       const profileName = experiment.emulationProfile ?? cfg.execution.emulation.defaultProfile;
       const profile = cfg.execution.emulation.profiles[profileName];
@@ -283,8 +370,15 @@ export class Worker {
         ...(profile.reducedMotion ? { reducedMotion: profile.reducedMotion } : {}),
         ...(profile.forcedColors ? { forcedColors: profile.forcedColors } : {}),
         ...(profile.userAgent ? { userAgent: profile.userAgent } : {}),
+        // The scratch directory is created ONLY when video is on. Creating and deleting a temp
+        // directory on every run cost real I/O and, on Windows, raced with the exiting browser
+        // for no benefit: nothing else used it once the browser stopped being launched per run.
         ...(cfg.execution.video === "on"
-          ? { recordVideo: { dir: join(profileDir, "video") } }
+          ? {
+              recordVideo: {
+                dir: join((videoDir ??= mkdtempSync(join(tmpdir(), "reproagent-video-"))), "video"),
+              },
+            }
           : {}),
       });
 
@@ -390,7 +484,9 @@ export class Worker {
       interpreterResult = await interpreter.run(experiment.actions, experiment.assertions);
       automationFailure = interpreterResult.automationFailure;
     } catch (e) {
-      const err = isInvestigatorError(e) ? e : new InvestigatorError("INTERNAL", String(e), { cause: e });
+      const err = isInvestigatorError(e)
+        ? e
+        : new InvestigatorError("INTERNAL", String(e), { cause: e });
       // Boundary rule: harness, host, or environment failures are infrastructure; everything the
       // instructions did to the application is automation (ADR-0005 rules 2 and 3).
       if (
@@ -416,16 +512,13 @@ export class Worker {
       } catch {
         /* context already closed */
       }
-      try {
-        await browser?.close();
-      } catch {
-        /* browser already gone */
-      }
-      if (profileDir) {
+      // The browser is owned by the worker and closed in `drain`, not here: it is shared across
+      // every run in the batch (ADR-0025).
+      if (videoDir) {
         try {
-          rmSync(profileDir, { recursive: true, force: true });
+          rmSync(videoDir, { recursive: true, force: true });
         } catch {
-          /* best effort */
+          /* best effort; the OS temp directory is disposable */
         }
       }
     }
@@ -489,7 +582,13 @@ export class Worker {
 
     if (!manifestWriter) {
       return this.finishWithoutBrowser(
-        jobId, runId, job, startedAt, "WORKER_ERROR", "INFRASTRUCTURE_FAILED", 2,
+        jobId,
+        runId,
+        job,
+        startedAt,
+        "WORKER_ERROR",
+        "INFRASTRUCTURE_FAILED",
+        2,
         infrastructureFailure?.reason ?? "worker failed before the manifest was opened"
       );
     }
@@ -571,7 +670,12 @@ export class Worker {
   private async finishWithoutBrowser(
     jobId: string,
     runId: string,
-    job: { investigationId: string; experimentId: string; repetitionIndex: number; attemptIndex: number },
+    job: {
+      investigationId: string;
+      experimentId: string;
+      repetitionIndex: number;
+      attemptIndex: number;
+    },
     startedAt: string,
     reason: JobTerminalReason,
     outcome: RunOutcome,
@@ -670,7 +774,9 @@ export class Worker {
       redactionApplied: this.deps.redactor.stamp(),
     });
 
-    const runSeq = await this.deps.metadata.tx((t) => t.nextSequence(job.investigationId, "runSeq"));
+    const runSeq = await this.deps.metadata.tx((t) =>
+      t.nextSequence(job.investigationId, "runSeq")
+    );
     await this.deps.metadata.tx(async (t) => {
       await t.insertRun({
         runId,
@@ -700,6 +806,14 @@ export class Worker {
     });
 
     await this.deps.queue.finish(jobId, { reason, runOutcome: outcome });
-    return { runId, jobId, terminalReason: reason, outcome, outcomeRuleId: ruleId, manifest, durationMs: 0 };
+    return {
+      runId,
+      jobId,
+      terminalReason: reason,
+      outcome,
+      outcomeRuleId: ruleId,
+      manifest,
+      durationMs: 0,
+    };
   }
 }

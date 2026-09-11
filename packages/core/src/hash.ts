@@ -30,7 +30,9 @@ function sortValue(value: unknown): JsonValue {
   }
   if (typeof value === "number") {
     if (!Number.isFinite(value)) {
-      throw new Error(`canonicalJson: non-finite number cannot be canonicalised (${String(value)})`);
+      throw new Error(
+        `canonicalJson: non-finite number cannot be canonicalised (${String(value)})`
+      );
     }
     return value;
   }

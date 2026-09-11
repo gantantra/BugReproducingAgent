@@ -53,8 +53,10 @@ export function canonicalSelector(input: {
 }): string {
   const parts: string[] = [input.strategy];
   if (input.role) parts.push(`role=${input.role}`);
-  if (input.name !== undefined) parts.push(`name=${JSON.stringify(collapseWhitespace(input.name))}`);
-  if (input.value !== undefined) parts.push(`value=${JSON.stringify(collapseWhitespace(input.value))}`);
+  if (input.name !== undefined)
+    parts.push(`name=${JSON.stringify(collapseWhitespace(input.name))}`);
+  if (input.value !== undefined)
+    parts.push(`value=${JSON.stringify(collapseWhitespace(input.value))}`);
   if (input.exact !== undefined) parts.push(`exact=${input.exact}`);
   if (input.nth !== undefined) parts.push(`nth=${input.nth}`);
   return parts.join("|");

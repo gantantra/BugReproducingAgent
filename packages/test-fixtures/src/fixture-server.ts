@@ -52,7 +52,7 @@ export function intermittentFails(seed: number): boolean {
 export const INTERMITTENT_TARGET_RATE = 0.2;
 
 const SHELL = (body: string, script: string): string => `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>fixture</title></head>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>fixture</title></head>
 <body>${body}<script>${script}</script></body></html>`;
 
 const SEARCH_BODY = `
@@ -65,8 +65,17 @@ function send(res: ServerResponse, status: number, contentType: string, body: st
   res.end(body);
 }
 
-function json(res: ServerResponse, status: number, value: unknown, extraHeaders: Record<string, string> = {}): void {
-  res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store", ...extraHeaders });
+function json(
+  res: ServerResponse,
+  status: number,
+  value: unknown,
+  extraHeaders: Record<string, string> = {}
+): void {
+  res.writeHead(status, {
+    "content-type": "application/json",
+    "cache-control": "no-store",
+    ...extraHeaders,
+  });
   res.end(JSON.stringify(value));
 }
 
@@ -139,7 +148,11 @@ function handler(kind: FixtureKind) {
 
     if (url.pathname === "/__meta/expected") {
       const seed = seedOf(url);
-      json(res, 200, { seed, fails: intermittentFails(seed), targetRate: INTERMITTENT_TARGET_RATE });
+      json(res, 200, {
+        seed,
+        fails: intermittentFails(seed),
+        targetRate: INTERMITTENT_TARGET_RATE,
+      });
       return;
     }
 

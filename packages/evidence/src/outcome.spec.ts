@@ -61,7 +61,13 @@ function inputs(over: Partial<OutcomeInputs> = {}): OutcomeInputs {
     infrastructureFailure: null,
     automationFailure: null,
     assertionOutcomes: [
-      { assertionId: "AS1", actionId: "A1", result: "pass", isFailurePredicate: false, detail: null },
+      {
+        assertionId: "AS1",
+        actionId: "A1",
+        result: "pass",
+        isFailurePredicate: false,
+        detail: null,
+      },
     ],
     consoleErrorCount: 0,
     exceptionCount: 0,
@@ -79,7 +85,13 @@ describe("RunOutcome decision rules", () => {
         infrastructureFailure: { reason: "also broken" },
         automationFailure: { reason: "also broken" },
         assertionOutcomes: [
-          { assertionId: "AS1", actionId: null, result: "fail", isFailurePredicate: false, detail: null },
+          {
+            assertionId: "AS1",
+            actionId: null,
+            result: "fail",
+            isFailurePredicate: false,
+            detail: null,
+          },
         ],
       })
     );
@@ -93,7 +105,13 @@ describe("RunOutcome decision rules", () => {
         infrastructureFailure: { reason: "browser launch failed" },
         automationFailure: { reason: "selector missing" },
         assertionOutcomes: [
-          { assertionId: "AS1", actionId: null, result: "fail", isFailurePredicate: false, detail: null },
+          {
+            assertionId: "AS1",
+            actionId: null,
+            result: "fail",
+            isFailurePredicate: false,
+            detail: null,
+          },
         ],
       })
     );
@@ -107,7 +125,13 @@ describe("RunOutcome decision rules", () => {
         automationFailure: { reason: "selector did not exist", actionId: "A2" },
         // Assertions also failed, but only because the run never got that far.
         assertionOutcomes: [
-          { assertionId: "AS1", actionId: null, result: "fail", isFailurePredicate: false, detail: null },
+          {
+            assertionId: "AS1",
+            actionId: null,
+            result: "fail",
+            isFailurePredicate: false,
+            detail: null,
+          },
         ],
       })
     );
@@ -120,7 +144,13 @@ describe("RunOutcome decision rules", () => {
     const d = decideOutcome(
       inputs({
         assertionOutcomes: [
-          { assertionId: "AS1", actionId: "A1", result: "fail", isFailurePredicate: false, detail: "count=0" },
+          {
+            assertionId: "AS1",
+            actionId: "A1",
+            result: "fail",
+            isFailurePredicate: false,
+            detail: "count=0",
+          },
         ],
       })
     );
@@ -133,7 +163,13 @@ describe("RunOutcome decision rules", () => {
     const d = decideOutcome(
       inputs({
         assertionOutcomes: [
-          { assertionId: "AS9", actionId: "A1", result: "pass", isFailurePredicate: true, detail: null },
+          {
+            assertionId: "AS9",
+            actionId: "A1",
+            result: "pass",
+            isFailurePredicate: true,
+            detail: null,
+          },
         ],
       })
     );
@@ -158,7 +194,13 @@ describe("RunOutcome decision rules", () => {
     const d = decideOutcome(
       inputs({
         assertionOutcomes: [
-          { assertionId: "AS1", actionId: null, result: "not-evaluated", isFailurePredicate: false, detail: null },
+          {
+            assertionId: "AS1",
+            actionId: null,
+            result: "not-evaluated",
+            isFailurePredicate: false,
+            detail: null,
+          },
         ],
       })
     );
@@ -198,8 +240,18 @@ describe("CaptureStatusBuilder", () => {
     const keys = Object.keys(status.categories).sort();
     expect(keys).toEqual(
       [
-        "actions", "console", "domSnapshots", "exceptions", "navigation", "networkMetadata",
-        "responseBodies", "screenshots", "storage", "trace", "video", "webSocketFrames",
+        "actions",
+        "console",
+        "domSnapshots",
+        "exceptions",
+        "navigation",
+        "networkMetadata",
+        "responseBodies",
+        "screenshots",
+        "storage",
+        "trace",
+        "video",
+        "webSocketFrames",
       ].sort()
     );
   });

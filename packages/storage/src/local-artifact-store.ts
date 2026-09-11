@@ -106,7 +106,8 @@ export class LocalArtifactStore implements ArtifactStore {
     // Fail closed before touching the disk.
     assertRedactionStamp(req.redactionApplied, req.filename);
 
-    const bytes = typeof req.bytes === "string" ? Buffer.from(req.bytes, "utf8") : Buffer.from(req.bytes);
+    const bytes =
+      typeof req.bytes === "string" ? Buffer.from(req.bytes, "utf8") : Buffer.from(req.bytes);
     const hashHex = sha256Hex(bytes);
     const { dir, file } = this.pathFor(req.investigationId, req.kind, hashHex);
 
@@ -165,11 +166,15 @@ export class LocalArtifactStore implements ArtifactStore {
     return ref;
   }
 
-  private async resolve(ref: ArtifactRef | string): Promise<ArtifactRef & { investigationId: string }> {
+  private async resolve(
+    ref: ArtifactRef | string
+  ): Promise<ArtifactRef & { investigationId: string }> {
     if (typeof ref !== "string") {
       const row = await this.metadata.read((t) => t.getArtifactRef(ref.artifactId));
       if (!row) {
-        fail("INTERNAL", "Artifact ref is not registered", { context: { artifactId: ref.artifactId } });
+        fail("INTERNAL", "Artifact ref is not registered", {
+          context: { artifactId: ref.artifactId },
+        });
       }
       return row;
     }
@@ -242,7 +247,11 @@ export class LocalArtifactStore implements ArtifactStore {
 
     // The row keeps the hash and byte length, so a restored backup copy can still be verified
     // against the claim it supported (ADR-0018).
-    const db = (this.metadata as unknown as { raw(): { prepare(s: string): { run(...a: unknown[]): unknown } } }).raw();
+    const db = (
+      this.metadata as unknown as {
+        raw(): { prepare(s: string): { run(...a: unknown[]): unknown } };
+      }
+    ).raw();
     db.prepare(
       "UPDATE artifact_refs SET tombstoned = 1, tombstoned_at = ?, tombstone_reason = ? WHERE artifact_id = ?"
     ).run(at, reason, row.artifactId);

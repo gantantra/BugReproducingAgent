@@ -46,8 +46,16 @@ const jsonBody = JSON.stringify({
 });
 
 const cases = [
-  ["network.responseBody(html)", htmlBody, { contentType: "text/html", optIns: new Set(["captureBodies"]) }],
-  ["network.responseBody(json)", jsonBody, { contentType: "application/json", optIns: new Set(["captureBodies"]) }],
+  [
+    "network.responseBody(html)",
+    htmlBody,
+    { contentType: "text/html", optIns: new Set(["captureBodies"]) },
+  ],
+  [
+    "network.responseBody(json)",
+    jsonBody,
+    { contentType: "application/json", optIns: new Set(["captureBodies"]) },
+  ],
   ["dom.text", htmlBody, {}],
   ["console.text", "token=" + SEEDED.jwt + " key=" + SEEDED.awsKey, {}],
   ["network.url", "http://x/api?access_token=" + SEEDED.awsKey + "&q=laptop", {}],

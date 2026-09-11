@@ -97,11 +97,7 @@ export type FlowResult<T> =
       completedUnits: number;
       totalUnits: number;
       stopReason:
-        | "BUDGET_TOKENS"
-        | "BUDGET_COST"
-        | "BUDGET_TURNS"
-        | "BUDGET_WALLCLOCK"
-        | "BUDGET_TOOL_CALLS";
+        "BUDGET_TOKENS" | "BUDGET_COST" | "BUDGET_TURNS" | "BUDGET_WALLCLOCK" | "BUDGET_TOOL_CALLS";
       warnings: string[];
     }
   | { status: "inconclusive"; reason: string; warnings: string[] };

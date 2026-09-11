@@ -1,7 +1,13 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { searchExperiment } from "@investigator/test-fixtures";
 import { parseRawLog } from "@investigator/evidence";
-import { createHarness, readNormalized, readRawLog, runExperiment, type Harness } from "./harness.js";
+import {
+  createHarness,
+  readNormalized,
+  readRawLog,
+  runExperiment,
+  type Harness,
+} from "./harness.js";
 
 /**
  * Reliability gate test 3 — monotonic timestamps and gap-free ordering.
@@ -41,9 +47,18 @@ describe("monotonic timestamps", () => {
       let prevDelta = -Infinity;
       let prevWall = -Infinity;
       for (const e of events) {
-        expect(e.tMonoMs, `run ${r.runId} seq ${e.seq} tMonoMs went backwards`).toBeGreaterThanOrEqual(prevMono);
-        expect(e.tDeltaMs, `run ${r.runId} seq ${e.seq} tDeltaMs went backwards`).toBeGreaterThanOrEqual(prevDelta);
-        expect(e.tWallMs, `run ${r.runId} seq ${e.seq} tWallMs went backwards`).toBeGreaterThanOrEqual(prevWall);
+        expect(
+          e.tMonoMs,
+          `run ${r.runId} seq ${e.seq} tMonoMs went backwards`
+        ).toBeGreaterThanOrEqual(prevMono);
+        expect(
+          e.tDeltaMs,
+          `run ${r.runId} seq ${e.seq} tDeltaMs went backwards`
+        ).toBeGreaterThanOrEqual(prevDelta);
+        expect(
+          e.tWallMs,
+          `run ${r.runId} seq ${e.seq} tWallMs went backwards`
+        ).toBeGreaterThanOrEqual(prevWall);
         expect(e.tDeltaMs).toBeGreaterThanOrEqual(0);
         prevMono = e.tMonoMs;
         prevDelta = e.tDeltaMs;
@@ -76,7 +91,9 @@ describe("monotonic timestamps", () => {
     expect(normalizedText).toBeTruthy();
 
     const { events: rawEvents } = parseRawLog(raw!);
-    const normalized = JSON.parse(normalizedText!) as { events: Array<{ seq: number; eventId: string }> };
+    const normalized = JSON.parse(normalizedText!) as {
+      events: Array<{ seq: number; eventId: string }>;
+    };
 
     // The plane drops collectorNote events (diagnostics, not evidence), so normalized is a
     // subsequence of raw — but the ORDER must be identical and strictly ascending.

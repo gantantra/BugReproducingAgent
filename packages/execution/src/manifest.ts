@@ -10,12 +10,7 @@ import type {
   VersionStamps,
   Clock,
 } from "@investigator/core";
-import {
-  computeSealHash,
-  fail,
-  isLegalTerminalOutcome,
-  verifySealHash,
-} from "@investigator/core";
+import { computeSealHash, fail, isLegalTerminalOutcome, verifySealHash } from "@investigator/core";
 import type { AssertionOutcome } from "@investigator/evidence";
 import type { DeclaredFactor } from "./types.js";
 
@@ -138,7 +133,8 @@ export class ManifestWriter {
   }
 
   markStarted(clock: Clock): void {
-    if (this.isSealed) fail("MANIFEST_IMMUTABLE", "Manifest is sealed", { context: { runId: this.manifest.runId } });
+    if (this.isSealed)
+      fail("MANIFEST_IMMUTABLE", "Manifest is sealed", { context: { runId: this.manifest.runId } });
     this.manifest.startedAt = clock.nowIso();
   }
 

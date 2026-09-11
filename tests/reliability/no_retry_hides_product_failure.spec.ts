@@ -71,14 +71,34 @@ describe("no retry hides product failure", () => {
     // Repetitions 5 and 22 are seed-passing and also had an infra attempt 1.
     // Repetitions 11 and 27 are seed-failing with no retry at all.
     await seedAttempts(h, "EXP-RETRY", [
-      { repetitionIndex: 3, attemptIndex: 0, reason: "WORKER_ERROR", outcome: "INFRASTRUCTURE_FAILED" },
+      {
+        repetitionIndex: 3,
+        attemptIndex: 0,
+        reason: "WORKER_ERROR",
+        outcome: "INFRASTRUCTURE_FAILED",
+      },
       { repetitionIndex: 3, attemptIndex: 1, reason: "COMPLETED", outcome: "PRODUCT_FAILED" },
-      { repetitionIndex: 5, attemptIndex: 0, reason: "WORKER_ERROR", outcome: "INFRASTRUCTURE_FAILED" },
+      {
+        repetitionIndex: 5,
+        attemptIndex: 0,
+        reason: "WORKER_ERROR",
+        outcome: "INFRASTRUCTURE_FAILED",
+      },
       { repetitionIndex: 5, attemptIndex: 1, reason: "COMPLETED", outcome: "VALID_COMPLETED" },
       { repetitionIndex: 11, attemptIndex: 0, reason: "COMPLETED", outcome: "PRODUCT_FAILED" },
-      { repetitionIndex: 19, attemptIndex: 0, reason: "WORKER_ERROR", outcome: "INFRASTRUCTURE_FAILED" },
+      {
+        repetitionIndex: 19,
+        attemptIndex: 0,
+        reason: "WORKER_ERROR",
+        outcome: "INFRASTRUCTURE_FAILED",
+      },
       { repetitionIndex: 19, attemptIndex: 1, reason: "COMPLETED", outcome: "PRODUCT_FAILED" },
-      { repetitionIndex: 22, attemptIndex: 0, reason: "WORKER_ERROR", outcome: "INFRASTRUCTURE_FAILED" },
+      {
+        repetitionIndex: 22,
+        attemptIndex: 0,
+        reason: "WORKER_ERROR",
+        outcome: "INFRASTRUCTURE_FAILED",
+      },
       { repetitionIndex: 22, attemptIndex: 1, reason: "COMPLETED", outcome: "VALID_COMPLETED" },
       { repetitionIndex: 27, attemptIndex: 0, reason: "COMPLETED", outcome: "PRODUCT_FAILED" },
     ]);
@@ -157,8 +177,18 @@ describe("no retry hides product failure", () => {
     h = await createHarness({ fixtures: ["passing"] });
 
     await seedAttempts(h, "EXP-NOOBS", [
-      { repetitionIndex: 0, attemptIndex: 0, reason: "WORKER_ERROR", outcome: "INFRASTRUCTURE_FAILED" },
-      { repetitionIndex: 0, attemptIndex: 1, reason: "WORKER_ERROR", outcome: "INFRASTRUCTURE_FAILED" },
+      {
+        repetitionIndex: 0,
+        attemptIndex: 0,
+        reason: "WORKER_ERROR",
+        outcome: "INFRASTRUCTURE_FAILED",
+      },
+      {
+        repetitionIndex: 0,
+        attemptIndex: 1,
+        reason: "WORKER_ERROR",
+        outcome: "INFRASTRUCTURE_FAILED",
+      },
       { repetitionIndex: 1, attemptIndex: 0, reason: "INTERRUPTED", outcome: "INTERRUPTED" },
       { repetitionIndex: 2, attemptIndex: 0, reason: "COMPLETED", outcome: "PRODUCT_FAILED" },
     ]);
@@ -181,8 +211,18 @@ describe("no retry hides product failure", () => {
   it("repetition and attempt counters stay separate and attempts link to predecessors", async () => {
     h = await createHarness({ fixtures: ["passing"] });
     await seedAttempts(h, "EXP-LINK", [
-      { repetitionIndex: 0, attemptIndex: 0, reason: "WORKER_ERROR", outcome: "INFRASTRUCTURE_FAILED" },
-      { repetitionIndex: 0, attemptIndex: 1, reason: "WORKER_ERROR", outcome: "INFRASTRUCTURE_FAILED" },
+      {
+        repetitionIndex: 0,
+        attemptIndex: 0,
+        reason: "WORKER_ERROR",
+        outcome: "INFRASTRUCTURE_FAILED",
+      },
+      {
+        repetitionIndex: 0,
+        attemptIndex: 1,
+        reason: "WORKER_ERROR",
+        outcome: "INFRASTRUCTURE_FAILED",
+      },
       { repetitionIndex: 0, attemptIndex: 2, reason: "COMPLETED", outcome: "PRODUCT_FAILED" },
     ]);
 

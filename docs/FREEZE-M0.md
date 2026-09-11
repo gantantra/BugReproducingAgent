@@ -1,9 +1,22 @@
-# FREEZE-M0 — Review and Sign-off Template
+# FREEZE-M0 — Review and Sign-off
 
-Status: **awaiting review**
+Status: **ACCEPTED WITH RECORDED CORRECTIONS**
 Prepared: 2026-09-10
-Purpose: the single document a reviewer reads to accept, amend, or reject the M0 architecture
-before any code is written.
+Signed off: 2026-09-11
+Product name: **ReproAgent** (internal package namespace remains `@investigator/*`)
+Authorized implementation scope: **M0 through M8**
+Frozen brief: `docs/prompt-a.txt`, SHA-256 `eabe7754a4c6d0dcc80f8efda4dc71114ffb48088e37734fe9fd8dec5d5a0d4a`
+Purpose: the single document a reviewer reads to accept, amend, or reject the M0 architecture.
+
+The individual "accept / reject / amend" blanks in Part 2 below are resolved in one place, by the
+sign-off above: every extension E1..En is **accepted**, subject to the corrections the completion
+audit found. Those corrections, the adapter decisions, and the statements of the frozen brief that
+later decisions supersede are recorded in `docs/m0-decisions.md`. The blanks are left visible
+because this document is the historical record of what was put to review.
+
+Authorizing M0 through M8 removes no human approval from the product itself: the three gates
+(`experiment_selection`, `target_failure`, `final_reproduction`) remain mandatory, file-based and
+SHA-256-bound. Milestone quality gates also remain mandatory -- a failed gate stops progress.
 
 ## Governing principle
 

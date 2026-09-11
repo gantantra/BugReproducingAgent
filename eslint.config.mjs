@@ -7,10 +7,22 @@ import tseslint from "typescript-eslint";
  * tests/docs/import-boundary.spec.ts walks the resolved module graph and fails the build.
  */
 const AI_PACKAGES = ["@investigator/ai-gateway", "@investigator/ai-flows"];
-const PROVIDER_SDKS = ["openai", "@anthropic-ai/*", "@google/*", "cohere-ai", "ollama", "langchain", "langchain/*"];
+const PROVIDER_SDKS = [
+  "openai",
+  "@anthropic-ai/*",
+  "@google/*",
+  "cohere-ai",
+  "ollama",
+  "langchain",
+  "langchain/*",
+];
 
 const deterministicOnly = {
-  files: ["packages/execution/**/*.ts", "packages/evidence/**/*.ts", "packages/test-fixtures/**/*.ts"],
+  files: [
+    "packages/execution/**/*.ts",
+    "packages/evidence/**/*.ts",
+    "packages/test-fixtures/**/*.ts",
+  ],
   rules: {
     "no-restricted-imports": [
       "error",
@@ -83,12 +95,23 @@ export default tseslint.config(
     languageOptions: {
       ecmaVersion: 2023,
       sourceType: "module",
-      globals: { process: "readonly", console: "readonly", Buffer: "readonly", __dirname: "readonly" },
+      globals: {
+        process: "readonly",
+        console: "readonly",
+        Buffer: "readonly",
+        __dirname: "readonly",
+      },
     },
     rules: {
-      "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_", varsIgnorePattern: "^_" }],
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
+      ],
       "@typescript-eslint/no-explicit-any": "error",
-      "@typescript-eslint/consistent-type-imports": ["error", { prefer: "type-imports", fixStyle: "separate-type-imports" }],
+      "@typescript-eslint/consistent-type-imports": [
+        "error",
+        { prefer: "type-imports", fixStyle: "separate-type-imports" },
+      ],
       "no-console": "off",
       eqeqeq: ["error", "always", { null: "ignore" }],
       "no-var": "error",

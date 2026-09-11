@@ -1,0 +1,210 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://investigator.local/schemas/fixture-experiment.v1.json",
+  "title": "Fixture experiment (M1)",
+  "description": "A deterministic experiment against a local fixture application, loadable by `investigate run --fixture-experiment`. This is an M1-only input: from M2, an experiment reaches the executor only through an approved, checksum-bound gate-1 proposal, and the flag is removed. `investigationId` is assigned by the CLI at run time and is therefore not required here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "experimentId",
+    "targetName",
+    "actions",
+    "assertions",
+    "requiredEvidence",
+    "safety"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0.0"
+    },
+    "experimentId": {
+      "type": "string",
+      "pattern": "^EXP-[A-Za-z0-9-]+$"
+    },
+    "investigationId": {
+      "type": "string",
+      "description": "Optional. Overwritten by the CLI with the active investigation."
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 500
+    },
+    "targetName": {
+      "type": "string",
+      "description": "Must name a target in execution.targets, or be supplied by --fixture-app / --target."
+    },
+    "emulationProfile": {
+      "type": "string",
+      "description": "Omit to use execution.emulation.defaultProfile."
+    },
+    "repetitions": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000
+    },
+    "actions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "action.v1.json"
+      }
+    },
+    "assertions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "assertionId",
+          "kind"
+        ],
+        "properties": {
+          "assertionId": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "elementCountAtLeast",
+              "elementCountEquals",
+              "elementVisible",
+              "elementHidden",
+              "textContains",
+              "textEquals",
+              "attributeEquals",
+              "urlMatches",
+              "noConsoleErrors",
+              "noUncaughtExceptions",
+              "responseStatusIn",
+              "storageKeyPresent",
+              "storageKeyAbsent"
+            ]
+          },
+          "selector": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "strategy"
+            ],
+            "properties": {
+              "strategy": {
+                "enum": [
+                  "testid",
+                  "role",
+                  "label",
+                  "placeholder",
+                  "text",
+                  "css",
+                  "xpath"
+                ]
+              },
+              "value": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "exact": {
+                "type": "boolean"
+              },
+              "nth": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "text": {
+            "type": "string"
+          },
+          "min": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "timeoutMs": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 120000
+          },
+          "isFailurePredicate": {
+            "type": "boolean",
+            "description": "When true, a MATCH indicates the product failure rather than a violated expectation."
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "attribute": {
+            "type": "string"
+          },
+          "expected": {},
+          "urlPattern": {
+            "type": "string"
+          },
+          "statuses": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "storageArea": {
+            "enum": [
+              "localStorage",
+              "sessionStorage"
+            ]
+          },
+          "storageKey": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "requiredEvidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "common.v1.json#/$defs/evidenceCategory"
+      },
+      "description": "A category listed here that is not usable makes the run INCONCLUSIVE by outcome rule 6."
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxSideEffectClass",
+        "destructiveActionIds",
+        "resetStrategy"
+      ],
+      "properties": {
+        "maxSideEffectClass": {
+          "enum": [
+            "read",
+            "local-write",
+            "remote-write",
+            "destructive"
+          ]
+        },
+        "destructiveActionIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "resetStrategy": {
+          "enum": [
+            "none",
+            "fresh-context",
+            "seeded-storage-state",
+            "scripted-reset",
+            "per-run-tenant",
+            "idempotent-only"
+          ]
+        }
+      }
+    }
+  }
+}

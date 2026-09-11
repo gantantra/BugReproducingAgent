@@ -11,7 +11,10 @@ const args = ["vitest", "run", "--project", "reliability"];
 for (const pass of [1, 2]) {
   const extra = pass === 2 ? ["--exclude", `**/${PERF}.spec.ts`] : [];
   console.log(`\n=== reliability gate, pass ${pass} of 2 ===\n`);
-  const r = spawnSync("npx", [...args, ...extra], { stdio: "inherit", shell: process.platform === "win32" });
+  const r = spawnSync("npx", [...args, ...extra], {
+    stdio: "inherit",
+    shell: process.platform === "win32",
+  });
   if (r.status !== 0) {
     console.error(`\nreliability gate FAILED on pass ${pass}`);
     process.exit(r.status ?? 1);

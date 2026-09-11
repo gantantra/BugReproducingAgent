@@ -1,0 +1,62 @@
+{
+  "schemaVersion": "1.0.0",
+  "experimentId": "EXP-INTERMITTENT",
+  "description": "Search then filter on the intermittent fixture, pinned to seed 7. Whether results render is a pure function of the seed, so seed 7 fails on every repetition and seed 0 passes on every one: the intermittency lives in the seed space, not in wall-clock timing, which is what makes it reproducible anywhere. Yields PRODUCT_FAILED by rule 4. Failing seeds under 40: 7, 8, 9, 19, 23, 35, 39.",
+  "targetName": "product-failing-intermittent",
+  "repetitions": 20,
+  "actions": [
+    {
+      "actionId": "A1",
+      "type": "goto",
+      "url": "/search?seed=7",
+      "waitUntil": "load"
+    },
+    {
+      "actionId": "A2",
+      "type": "click",
+      "selector": {
+        "strategy": "testid",
+        "value": "filter-verified"
+      },
+      "timeoutMs": 5000
+    },
+    {
+      "actionId": "A3",
+      "type": "waitFor",
+      "condition": "networkidle",
+      "timeoutMs": 5000
+    },
+    {
+      "actionId": "A4",
+      "type": "assert",
+      "assertion": {
+        "assertionId": "AS1",
+        "kind": "elementCountAtLeast",
+        "selector": {
+          "strategy": "testid",
+          "value": "result-card"
+        },
+        "min": 1,
+        "timeoutMs": 3000
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "assertionId": "AS1",
+      "kind": "elementCountAtLeast",
+      "selector": {
+        "strategy": "testid",
+        "value": "result-card"
+      },
+      "min": 1,
+      "timeoutMs": 3000
+    }
+  ],
+  "requiredEvidence": ["actions", "navigation", "console", "exceptions", "networkMetadata"],
+  "safety": {
+    "maxSideEffectClass": "read",
+    "destructiveActionIds": [],
+    "resetStrategy": "fresh-context"
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "schemaVersion": "1.0.0",
+  "experimentId": "EXP-AUTOMATION-FAILING",
+  "description": "Targets a control that does not exist, so the approved action cannot execute. Classified AUTOMATION_FAILED by rule 3, which takes precedence over rule 4: a broken instruction is not a product defect.",
+  "targetName": "automation-failing",
+  "repetitions": 2,
+  "actions": [
+    {
+      "actionId": "A1",
+      "type": "goto",
+      "url": "/search",
+      "waitUntil": "load"
+    },
+    {
+      "actionId": "A2",
+      "type": "click",
+      "selector": {
+        "strategy": "testid",
+        "value": "control-that-does-not-exist"
+      },
+      "timeoutMs": 5000
+    },
+    {
+      "actionId": "A3",
+      "type": "waitFor",
+      "condition": "networkidle",
+      "timeoutMs": 5000
+    },
+    {
+      "actionId": "A4",
+      "type": "assert",
+      "assertion": {
+        "assertionId": "AS1",
+        "kind": "elementCountAtLeast",
+        "selector": {
+          "strategy": "testid",
+          "value": "result-card"
+        },
+        "min": 1,
+        "timeoutMs": 3000
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "assertionId": "AS1",
+      "kind": "elementCountAtLeast",
+      "selector": {
+        "strategy": "testid",
+        "value": "result-card"
+      },
+      "min": 1,
+      "timeoutMs": 3000
+    }
+  ],
+  "requiredEvidence": ["actions", "navigation", "console", "exceptions", "networkMetadata"],
+  "safety": {
+    "maxSideEffectClass": "read",
+    "destructiveActionIds": [],
+    "resetStrategy": "fresh-context"
+  }
+}

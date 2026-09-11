@@ -1,0 +1,9 @@
+# Default: let Git normalise text in the index, checkout native.
+* text=auto
+
+# FROZEN BYTES. No end-of-line conversion, ever.
+# docs/prompt-a.sha256 is computed over the canonical LF bytes of docs/prompt-a.txt. A checkout
+# that rewrote LF to CRLF would invalidate the checksum through no fault of the content, so both
+# files are marked binary-ish and pass through untouched on every platform.
+docs/prompt-a.txt   -text
+docs/prompt-a.sha256 -text

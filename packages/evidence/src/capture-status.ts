@@ -30,15 +30,15 @@ const TEMPLATES: Record<CaptureReasonCode, (c: CaptureReason, cat: EvidenceCateg
     `Content material to analysis was removed from ${categoryLabel(cat)} by the redaction policy${
       c.count > 1 ? ` (${c.count} occurrences)` : ""
     }.`,
-  CONFIG_OFF: (_c, cat) => `${capitalize(categoryLabel(cat))} capture is disabled by configuration.`,
+  CONFIG_OFF: (_c, cat) =>
+    `${capitalize(categoryLabel(cat))} capture is disabled by configuration.`,
   COLLECTOR_UNSUPPORTED: (_c, cat) =>
     `${capitalize(categoryLabel(cat))} capture is not supported by this collector version.`,
   RUN_INTERRUPTED: (_c, cat) =>
     `${capitalize(categoryLabel(cat))} collection stopped because the run was interrupted.`,
   PARSE_FAILED: (c, cat) =>
     `${count(c.count)} ${noun(cat, c.count)} are present but could not be parsed.`,
-  HASH_MISMATCH: (c, cat) =>
-    `${count(c.count)} ${noun(cat, c.count)} failed an integrity check.`,
+  HASH_MISMATCH: (c, cat) => `${count(c.count)} ${noun(cat, c.count)} failed an integrity check.`,
   DROPPED_BACKPRESSURE: (c, cat) =>
     `${count(c.count)} ${noun(cat, c.count)} were dropped because event volume exceeded the in-process buffer.`,
   TARGET_DETACHED: (_c, cat) =>
@@ -61,8 +61,19 @@ const NOUNS: Partial<Record<EvidenceCategory, [string, string]>> = {
 };
 
 const WORDS = [
-  "Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
-  "Eleven", "Twelve",
+  "Zero",
+  "One",
+  "Two",
+  "Three",
+  "Four",
+  "Five",
+  "Six",
+  "Seven",
+  "Eight",
+  "Nine",
+  "Ten",
+  "Eleven",
+  "Twelve",
 ];
 
 function count(n: number): string {
@@ -104,7 +115,11 @@ export class CaptureStatusBuilder {
   }
 
   /** Record a reason. Status is derived from the reasons at seal time, never set directly. */
-  reason(cat: EvidenceCategory, code: CaptureReasonCode, opts: { count?: number; limitBytes?: number; detail?: string } = {}): void {
+  reason(
+    cat: EvidenceCategory,
+    code: CaptureReasonCode,
+    opts: { count?: number; limitBytes?: number; detail?: string } = {}
+  ): void {
     const entry = this.categories.get(cat)!;
     entry.reasons ??= [];
     const existing = entry.reasons.find((r) => r.code === code);
@@ -140,7 +155,12 @@ export class CaptureStatusBuilder {
 
     const collected = entry.collected ?? 0;
     if (codes.has("RUN_INTERRUPTED")) return collected > 0 ? "partial" : "missing";
-    if (codes.has("SIZE_LIMIT") || codes.has("CONTENT_TYPE_NOT_CAPTURED") || codes.has("DROPPED_BACKPRESSURE") || codes.has("TARGET_DETACHED")) {
+    if (
+      codes.has("SIZE_LIMIT") ||
+      codes.has("CONTENT_TYPE_NOT_CAPTURED") ||
+      codes.has("DROPPED_BACKPRESSURE") ||
+      codes.has("TARGET_DETACHED")
+    ) {
       return collected > 0 ? "partial" : "missing";
     }
     if (entry.expected !== null && entry.expected !== undefined && collected < entry.expected) {
@@ -149,7 +169,13 @@ export class CaptureStatusBuilder {
     return "complete";
   }
 
-  seal(args: { runId: string; versions: VersionStamps; redaction: RedactionStamp; unsafeTrace?: boolean; unsafeDebug?: boolean }): CaptureStatus {
+  seal(args: {
+    runId: string;
+    versions: VersionStamps;
+    redaction: RedactionStamp;
+    unsafeTrace?: boolean;
+    unsafeDebug?: boolean;
+  }): CaptureStatus {
     const categories = {} as Record<EvidenceCategory, CategoryStatus>;
     const limitations: string[] = [];
 

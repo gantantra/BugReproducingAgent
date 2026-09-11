@@ -32,7 +32,8 @@ type Row = Record<string, unknown>;
 
 function str(row: Row, key: string): string {
   const v = row[key];
-  if (typeof v !== "string") throw new InvestigatorError("INTERNAL", `Column ${key} is not a string`);
+  if (typeof v !== "string")
+    throw new InvestigatorError("INTERNAL", `Column ${key} is not a string`);
   return v;
 }
 function strOrNull(row: Row, key: string): string | null {
@@ -109,7 +110,8 @@ class Tx implements MetadataTx {
   }
 
   async getRun(runId: string): Promise<RunRecord | null> {
-    const row = this.db.prepare("SELECT * FROM runs WHERE run_id = ?").get(runId) as Row | undefined;
+    const row = this.db.prepare("SELECT * FROM runs WHERE run_id = ?").get(runId) as
+      Row | undefined;
     return row ? this.mapRun(row) : null;
   }
 
@@ -147,7 +149,10 @@ class Tx implements MetadataTx {
     return row ? this.mapArtifact(row) : null;
   }
 
-  async listArtifactRefs(investigationId: string, kind?: ArtifactKind): Promise<ArtifactRefRecord[]> {
+  async listArtifactRefs(
+    investigationId: string,
+    kind?: ArtifactKind
+  ): Promise<ArtifactRefRecord[]> {
     const rows = (
       kind
         ? this.db
@@ -297,7 +302,12 @@ class Tx implements MetadataTx {
     runId: string,
     fields: Pick<
       RunRecord,
-      "outcome" | "outcomeRuleId" | "manifestArtifactId" | "manifestSealHash" | "finishedAt" | "durationMs"
+      | "outcome"
+      | "outcomeRuleId"
+      | "manifestArtifactId"
+      | "manifestSealHash"
+      | "finishedAt"
+      | "durationMs"
     >
   ): Promise<void> {
     try {

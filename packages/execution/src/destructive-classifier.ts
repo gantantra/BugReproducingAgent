@@ -180,7 +180,9 @@ export function assertSafeToEnqueue(input: SafetyGateInput): void {
 
   // A sequence that writes to the server needs a declared reset strategy, or run N differs from
   // run 1 for reasons unrelated to the hypothesis.
-  const writes = classification.remoteWriteActionIds.length > 0 || classification.destructiveActionIds.length > 0;
+  const writes =
+    classification.remoteWriteActionIds.length > 0 ||
+    classification.destructiveActionIds.length > 0;
   const strategy = experiment.safety.resetStrategy;
   if (writes && (strategy === "none" || strategy === "fresh-context")) {
     fail(
@@ -190,7 +192,10 @@ export function assertSafeToEnqueue(input: SafetyGateInput): void {
         context: {
           experimentId: experiment.experimentId,
           resetStrategy: strategy,
-          offendingActions: [...classification.remoteWriteActionIds, ...classification.destructiveActionIds].join(","),
+          offendingActions: [
+            ...classification.remoteWriteActionIds,
+            ...classification.destructiveActionIds,
+          ].join(","),
         },
       }
     );

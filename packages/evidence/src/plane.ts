@@ -1,7 +1,17 @@
-import type { CaptureStatus, EvidenceCategory, RunOutcome, VersionStamps } from "@investigator/core";
+import type {
+  CaptureStatus,
+  EvidenceCategory,
+  RunOutcome,
+  VersionStamps,
+} from "@investigator/core";
 import { EXTRACTOR_VERSION, NORMALIZER_VERSION, canonicalJson } from "@investigator/core";
 import { parseRawLog, type RawEvent } from "./raw-events.js";
-import { buildEvidenceIndex, buildTimeline, type EvidenceIndex, type SessionTimeline } from "./timeline.js";
+import {
+  buildEvidenceIndex,
+  buildTimeline,
+  type EvidenceIndex,
+  type SessionTimeline,
+} from "./timeline.js";
 import { extractFeatures, type AssertionOutcome, type ExtractedFeatures } from "./extract.js";
 import { CaptureStatusBuilder, requiredEvidenceUsable } from "./capture-status.js";
 import type { Redactor } from "./redaction.js";
@@ -31,7 +41,12 @@ export interface PlaneInput {
   /** Artifact ids the collector registered, keyed by the raw event seq that produced them. */
   artifactIdsBySeq?: Map<number, string[]>;
   /** Categories the collector reported as unavailable, with the reason. */
-  collectorNotes?: Array<{ category: EvidenceCategory; code: Parameters<CaptureStatusBuilder["reason"]>[1]; count?: number; limitBytes?: number }>;
+  collectorNotes?: Array<{
+    category: EvidenceCategory;
+    code: Parameters<CaptureStatusBuilder["reason"]>[1];
+    count?: number;
+    limitBytes?: number;
+  }>;
   /** Set when the run was killed or its lease expired. Drives outcome rule 1. */
   interrupted?: boolean;
   infrastructureFailure?: { reason: string } | null;
@@ -114,7 +129,14 @@ export function runPlane(input: PlaneInput): PlaneResult {
   const index = buildEvidenceIndex(timeline);
 
   const required = input.requiredCategories ?? DEFAULT_REQUIRED;
-  const captureStatus = buildCaptureStatus(input, rawEvents, features, required, versions, truncatedTail);
+  const captureStatus = buildCaptureStatus(
+    input,
+    rawEvents,
+    features,
+    required,
+    versions,
+    truncatedTail
+  );
 
   const outcomeInputs: OutcomeInputs = {
     interrupted: input.interrupted === true,
@@ -168,7 +190,9 @@ function buildCaptureStatus(
   }
 
   // Actions: expected is known exactly, since every action emits a start and an end event.
-  const actionStarts = rawEvents.filter((e) => e.category === "action" && e.phase === "start").length;
+  const actionStarts = rawEvents.filter(
+    (e) => e.category === "action" && e.phase === "start"
+  ).length;
   const actionEnds = rawEvents.filter((e) => e.category === "action" && e.phase === "end").length;
   builder.expected("actions", actionStarts * 2);
   if (actionEnds < actionStarts) {
@@ -194,10 +218,14 @@ function buildCaptureStatus(
     (e): e is Extract<RawEvent, { category: "collectorNote" }> => e.category === "collectorNote"
   );
   for (const n of fromLog) {
-    builder.reason(n.evidenceCategory as EvidenceCategory, n.code as Parameters<CaptureStatusBuilder["reason"]>[1], {
-      ...(n.count !== undefined ? { count: n.count } : {}),
-      ...(n.limitBytes !== undefined ? { limitBytes: n.limitBytes } : {}),
-    });
+    builder.reason(
+      n.evidenceCategory as EvidenceCategory,
+      n.code as Parameters<CaptureStatusBuilder["reason"]>[1],
+      {
+        ...(n.count !== undefined ? { count: n.count } : {}),
+        ...(n.limitBytes !== undefined ? { limitBytes: n.limitBytes } : {}),
+      }
+    );
   }
   const alreadyFromLog = new Set(fromLog.map((n) => `${n.evidenceCategory}:${n.code}`));
   for (const note of input.collectorNotes ?? []) {
@@ -210,7 +238,12 @@ function buildCaptureStatus(
 
   if (truncatedTail || input.interrupted) {
     // An interrupted run has an incomplete tail across every category that was still streaming.
-    for (const cat of ["actions", "console", "networkMetadata", "navigation"] as EvidenceCategory[]) {
+    for (const cat of [
+      "actions",
+      "console",
+      "networkMetadata",
+      "navigation",
+    ] as EvidenceCategory[]) {
       builder.reason(cat, "RUN_INTERRUPTED", { count: 1 });
     }
   }

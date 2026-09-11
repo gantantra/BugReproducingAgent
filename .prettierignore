@@ -9,3 +9,7 @@ eval/reports/
 docs/
 schemas/
 scripts/workspace-graph.json
+
+# Frozen Prompt A bytes. The formatter must never reflow these (docs/FREEZE-M0-PROMPT-A.md).
+docs/prompt-a.txt
+docs/prompt-a.sha256

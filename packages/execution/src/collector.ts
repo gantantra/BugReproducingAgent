@@ -54,7 +54,11 @@ export interface CollectorNote {
  * `Omit` over a discriminated union collapses to the keys common to every member, which would
  * reject every category-specific field. Distribute it so each union member keeps its own shape.
  */
-type RawEventInput = RawEvent extends infer T ? (T extends RawEvent ? Omit<T, "seq"> : never) : never;
+type RawEventInput = RawEvent extends infer T
+  ? T extends RawEvent
+    ? Omit<T, "seq">
+    : never
+  : never;
 
 /** Categories whose raw event may carry a content-addressed artifact id. */
 const ARTIFACT_CATEGORIES = new Set(["screenshot", "video", "trace", "webSocketFrame"]);
@@ -91,8 +95,8 @@ export class Collector {
   }
 
   /** Assigns seq and appends. Returns the assigned seq, or -1 if dropped under backpressure. */
-  private push(event: RawEventInput): number {
-    if (this.events.length >= this.maxEvents) {
+  private push(event: RawEventInput, opts: { bypassCeiling?: boolean } = {}): number {
+    if (!opts.bypassCeiling && this.events.length >= this.maxEvents) {
       // Backpressure is recorded as a capture limitation, so downstream reasoning sees the gap
       // rather than inferring the events never happened.
       this.droppedCount++;
@@ -138,7 +142,14 @@ export class Collector {
 
   /** Called by the interpreter around each action, so actions form the timeline spine. */
   actionStart(actionId: string, actionType: string, selectorCanonical: string | null): void {
-    this.push({ ...this.now(), category: "action", actionId, actionType, phase: "start", selectorCanonical });
+    this.push({
+      ...this.now(),
+      category: "action",
+      actionId,
+      actionType,
+      phase: "start",
+      selectorCanonical,
+    });
   }
 
   actionEnd(
@@ -170,7 +181,11 @@ export class Collector {
 
   storageSnapshot(
     area: "localStorage" | "sessionStorage" | "cookies" | "indexedDb",
-    entries: Array<{ key: string; rawValue: string | null; metadata?: Record<string, string | number | boolean | null> }>
+    entries: Array<{
+      key: string;
+      rawValue: string | null;
+      metadata?: Record<string, string | number | boolean | null>;
+    }>
   ): void {
     const scope =
       area === "cookies"
@@ -196,7 +211,11 @@ export class Collector {
     this.push({ ...this.now(), category: "storage", area, entries: redacted });
   }
 
-  artifact(category: "screenshot" | "video" | "trace" | "webSocketFrame", artifactId?: string, noteText?: string): number {
+  artifact(
+    category: "screenshot" | "video" | "trace" | "webSocketFrame",
+    artifactId?: string,
+    noteText?: string
+  ): number {
     return this.push({
       ...this.now(),
       category,
@@ -247,7 +266,10 @@ export class Collector {
     const onRequest = (req: Request): void => {
       const t = this.now();
       const headers = req.headers();
-      const { headerNames, values } = this.opts.redactor.redactHeaders("network.requestHeaders", headers);
+      const { headerNames, values } = this.opts.redactor.redactHeaders(
+        "network.requestHeaders",
+        headers
+      );
       this.push({
         ...t,
         category: "request",
@@ -266,7 +288,10 @@ export class Collector {
       const t = this.now();
       const req = res.request();
       const headers = res.headers();
-      const { headerNames, values } = this.opts.redactor.redactHeaders("network.responseHeaders", headers);
+      const { headerNames, values } = this.opts.redactor.redactHeaders(
+        "network.responseHeaders",
+        headers
+      );
       this.push({
         ...t,
         category: "response",
@@ -478,14 +503,22 @@ export class Collector {
       this.note({ category: "domSnapshots", code: "TARGET_DETACHED" });
     }
     for (const n of this.notes) {
-      this.push({
-        ...this.now(),
-        category: "collectorNote",
-        code: n.code,
-        evidenceCategory: n.category,
-        ...(n.count !== undefined ? { count: n.count } : {}),
-        ...(n.limitBytes !== undefined ? { limitBytes: n.limitBytes } : {}),
-      });
+      this.push(
+        {
+          ...this.now(),
+          category: "collectorNote",
+          code: n.code,
+          evidenceCategory: n.category,
+          ...(n.count !== undefined ? { count: n.count } : {}),
+          ...(n.limitBytes !== undefined ? { limitBytes: n.limitBytes } : {}),
+        },
+        // Notes bypass the event ceiling deliberately. A run that hit the ceiling is exactly the
+        // run whose limitation MUST be recorded, and pushing the note through the ceiling check
+        // meant the DROPPED_BACKPRESSURE note was itself dropped -- leaving the gap invisible to
+        // an offline rebuild, which is the property ADR-0007 requires. Notes are deduplicated by
+        // (category, code), so their number is bounded by the taxonomy, not by traffic.
+        { bypassCeiling: true }
+      );
     }
   }
 

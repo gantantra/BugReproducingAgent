@@ -17,12 +17,19 @@ import { createHarness, readManifests, runExperiment, type Harness } from "./har
  * If the runner class cannot meet the budget, the BUDGET is renegotiated in writing in
  * docs/FREEZE-M0.md. It is never quietly relaxed to make CI green.
  *
- * `RELIABILITY_RUNS` shortens the batch for local iteration; CI leaves it unset so the real
- * 100-run budget is what gets asserted. A shortened batch scales the wall-clock ceiling but
- * keeps every correctness assertion intact.
+ * ZERO RETRIES IS PART OF THE CRITERION (docs/m0-decisions.md, decision 3). An earlier version of
+ * this file asserted only that retries were "bounded and linked", reasoning that demanding zero
+ * retries asserts the environment never hiccups. That reasoning was rejected: this fixture is a
+ * deterministic local app driven by a seeded experiment, so an infrastructure failure here is a
+ * defect in this system until proven otherwise, not weather. The relaxed version also passed while
+ * printing "4 infrastructure retries occurred", which is precisely the false green a gate exists to
+ * prevent.
+ *
+ * The run count is fixed at 100 and deliberately NOT configurable. Meeting this criterion by
+ * lowering the repetition count through an environment variable is explicitly disallowed.
  */
 
-const REQUESTED = Number.parseInt(process.env["RELIABILITY_RUNS"] ?? "100", 10);
+const REQUESTED = 100;
 const WALL_CLOCK_BUDGET_MS = 600_000;
 const P95_BUDGET_MS = 8_000;
 const MAX_RUN_BUDGET_MS = 20_000;
@@ -40,7 +47,10 @@ function dirSize(dir: string): number {
 
 function percentile(sortedAsc: number[], p: number): number {
   if (!sortedAsc.length) return 0;
-  const idx = Math.min(sortedAsc.length - 1, Math.max(0, Math.ceil((p / 100) * sortedAsc.length) - 1));
+  const idx = Math.min(
+    sortedAsc.length - 1,
+    Math.max(0, Math.ceil((p / 100) * sortedAsc.length) - 1)
+  );
   return sortedAsc[idx]!;
 }
 
@@ -70,13 +80,7 @@ describe("same test, 100 sequential runs", () => {
       const wallClockMs = Date.now() - startedAt;
       const grewBytes = dirSize(h.workspace.root) - startBytes;
 
-      // 1 and 2. Every REPETITION produced a valid observation.
-      //
-      // Asserted per repetition rather than per attempt, deliberately. A transient browser
-      // launch hiccup is an infrastructure failure the worker retries by design (ADR-0005);
-      // demanding zero retries would be asserting that the environment never hiccups, which is
-      // not a property of this system. What must hold is that every repetition ends with a
-      // valid observation and that no product failure appears in a passing app.
+      // 1 and 2. Every repetition produced a valid observation, on its FIRST attempt.
       const { perRepetition, noValidObservation } = await h.queue.repetitionOutcomes(
         h.investigationId
       );
@@ -87,30 +91,45 @@ describe("same test, 100 sequential runs", () => {
       }
 
       const jobs = await h.queue.listJobs(h.investigationId);
-      expect(jobs.every((j) => j.state === "TERMINAL")).toBe(true);
-      expect(jobs.length).toBeGreaterThanOrEqual(REQUESTED);
+      const manifests = await readManifests(h);
 
-      // 8. A passing app must never produce a product or automation failure, however many
-      //    infrastructure retries happened underneath.
+      // Diagnosis FIRST, so a failure names its cause and not only its count. Reasons come from
+      // the sealed manifests' outcomeDetail, which is already redacted before persistence.
+      const detailByRunId = new Map(
+        manifests.map((m) => [m["runId"] as string, String(m["outcomeDetail"] ?? "")])
+      );
+      const diagnosis = jobs
+        .filter((j) => j.runOutcome !== "VALID_COMPLETED" || j.attemptIndex > 0)
+        .map(
+          (j) =>
+            `  rep ${j.repetitionIndex} attempt ${j.attemptIndex}: ${j.runOutcome} :: ` +
+            `${detailByRunId.get(j.runId ?? "") || "(no manifest detail)"}`
+        )
+        .join("\n");
+
+      expect(jobs.every((j) => j.state === "TERMINAL")).toBe(true);
+
+      // 8. Zero of every failure outcome. A deterministic local fixture driven by a seeded
+      //    experiment has no legitimate source of infrastructure failure.
       const stats = await h.queue.stats(h.investigationId);
-      expect(stats.byOutcome["PRODUCT_FAILED"] ?? 0).toBe(0);
-      expect(stats.byOutcome["AUTOMATION_FAILED"] ?? 0).toBe(0);
-      expect(stats.byOutcome["INCONCLUSIVE"] ?? 0).toBe(0);
+      const z = (k: string): number => stats.byOutcome[k] ?? 0;
+      expect(z("PRODUCT_FAILED"), `PRODUCT_FAILED:\n${diagnosis}`).toBe(0);
+      expect(z("AUTOMATION_FAILED"), `AUTOMATION_FAILED:\n${diagnosis}`).toBe(0);
+      expect(
+        z("INFRASTRUCTURE_FAILED"),
+        `INFRASTRUCTURE_FAILED on a deterministic fixture:\n${diagnosis}`
+      ).toBe(0);
+      expect(z("INTERRUPTED"), `INTERRUPTED:\n${diagnosis}`).toBe(0);
+      expect(z("INCONCLUSIVE"), `INCONCLUSIVE:\n${diagnosis}`).toBe(0);
       expect(stats.byOutcome["VALID_COMPLETED"]).toBe(REQUESTED);
 
-      // Retries are bounded and linked, never silent.
+      // 0 retry attempts, hence exactly one job and one manifest per repetition.
       const retries = jobs.filter((j) => j.attemptIndex > 0);
-      for (const r of retries) {
-        expect(r.previousAttemptJobId, "a retry must link to its predecessor").toBeTruthy();
-        expect(r.attemptIndex).toBeLessThanOrEqual(2);
-      }
-      if (retries.length) {
-        console.log(`[perf] ${retries.length} infrastructure retries occurred and were bounded`);
-      }
+      expect(retries.length, `zero retries required, got ${retries.length}:\n${diagnosis}`).toBe(0);
+      expect(jobs.length, "one job per repetition when no retry occurred").toBe(REQUESTED);
 
       // 3. Exactly one sealed manifest per run.
-      const manifests = await readManifests(h);
-      expect(manifests.length).toBeGreaterThanOrEqual(REQUESTED);
+      expect(manifests.length).toBe(REQUESTED);
 
       // 4. Required categories complete on every run.
       const required = ["actions", "navigation", "console", "exceptions", "networkMetadata"];
@@ -120,15 +139,14 @@ describe("same test, 100 sequential runs", () => {
       for (const m of manifests.filter((x) => validRunIds.has(x["runId"] as string))) {
         const cs = m["captureStatus"] as { categories: Record<string, { status: string }> };
         for (const cat of required) {
-          expect(
-            cs.categories[cat]?.status,
-            `run ${String(m["runId"])} category ${cat}`
-          ).toBe("complete");
+          expect(cs.categories[cat]?.status, `run ${String(m["runId"])} category ${cat}`).toBe(
+            "complete"
+          );
         }
       }
 
       // 5, 6. Wall clock and per-run distribution. Scaled when the batch is shortened locally.
-      const scaledWallBudget = (WALL_CLOCK_BUDGET_MS * REQUESTED) / 100;
+      const scaledWallBudget = WALL_CLOCK_BUDGET_MS;
       expect(
         wallClockMs,
         `total wall clock ${Math.round(wallClockMs / 1000)}s exceeded the ${Math.round(scaledWallBudget / 1000)}s budget`
@@ -148,7 +166,7 @@ describe("same test, 100 sequential runs", () => {
       );
 
       // 7. Disk growth. Video plus trace at scale is a real operational failure mode (R12).
-      const scaledDiskBudget = (DISK_BUDGET_BYTES * REQUESTED) / 100;
+      const scaledDiskBudget = DISK_BUDGET_BYTES;
       expect(
         grewBytes,
         `workspace grew ${Math.round(grewBytes / 1024 / 1024)}MB, over the ${Math.round(scaledDiskBudget / 1024 / 1024)}MB budget`
@@ -162,6 +180,6 @@ describe("same test, 100 sequential runs", () => {
       );
     },
     // Generous ceiling: the assertion above is what enforces the budget, not the test timeout.
-    Math.max(900_000, REQUESTED * 20_000)
+    REQUESTED * 20_000
   );
 });

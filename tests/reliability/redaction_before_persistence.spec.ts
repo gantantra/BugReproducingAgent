@@ -71,10 +71,7 @@ describe("redaction before persistence", () => {
       for (const encoded of encodings(value)) {
         if (encoded.length < 8) continue;
         for (const hay of haystacks) {
-          expect(
-            hay.text.includes(encoded),
-            `secret ${name} leaked into ${hay.label}`
-          ).toBe(false);
+          expect(hay.text.includes(encoded), `secret ${name} leaked into ${hay.label}`).toBe(false);
         }
       }
     }

@@ -4,7 +4,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { EXIT, GOVERNING_PRINCIPLE, InvestigatorError, Logger, fail } from "@investigator/core";
 import { initWorkspace, workspacePaths } from "@investigator/storage";
-import { emit, openRuntime, reportAndExit, seedDefaultPolicy, type GlobalOptions } from "./runtime.js";
+import {
+  emit,
+  openRuntime,
+  reportAndExit,
+  seedDefaultPolicy,
+  type GlobalOptions,
+} from "./runtime.js";
 import { runCommand } from "./commands/run.js";
 import { doctorCommand } from "./commands/doctor.js";
 
@@ -58,7 +64,9 @@ function version(): string {
     join(__dirname, "..", "..", "package.json"),
   ]) {
     try {
-      return (JSON.parse(readFileSync(candidate, "utf8")) as { version?: string }).version ?? "0.0.0";
+      return (
+        (JSON.parse(readFileSync(candidate, "utf8")) as { version?: string }).version ?? "0.0.0"
+      );
     } catch {
       /* try the next candidate */
     }
@@ -107,7 +115,9 @@ program
     const g = globalsFrom(this);
     const logger = new Logger({ json: g.json === true });
     try {
-      const root = g.workspace ? join(g.workspace, ".investigator") : join(process.cwd(), ".investigator");
+      const root = g.workspace
+        ? join(g.workspace, ".investigator")
+        : join(process.cwd(), ".investigator");
       const result = initWorkspace(root);
       const policySeeded = seedDefaultPolicy(result.workspace);
 
@@ -149,10 +159,18 @@ program
   .option("--experiment <id...>", "limit to specific experiment ids")
   .option("--repeat <n>", "repetitions to enqueue", (v) => Number.parseInt(v, 10))
   .option("--max-parallel <n>", "override maxParallelRuns", (v) => Number.parseInt(v, 10))
-  .option("--stop-after-failures <n>", "stop the batch after n product failures", (v) => Number.parseInt(v, 10))
+  .option("--stop-after-failures <n>", "stop the batch after n product failures", (v) =>
+    Number.parseInt(v, 10)
+  )
   .option(
     "--fixture-experiment <file>",
     "[M1 ONLY] run a fixture experiment file directly. M2 removes this flag and requires gate 1."
+  )
+  .option(
+    "--fixture-app <kind>",
+    "[M1 ONLY] start a local fixture application for this run and allowlist its origin. " +
+      "One of: passing, product-failing-deterministic, product-failing-intermittent, " +
+      "automation-failing, infrastructure-failing, straddling-requests, sensitive."
   )
   .option("--target <name>", "target name for the fixture experiment")
   .action(async function (this: Command) {

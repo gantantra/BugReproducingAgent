@@ -76,7 +76,10 @@ export interface ResolvedConfig {
     aliases: Record<"FAST_MODEL" | "REASONING_MODEL" | "FALLBACK_MODEL", AliasConfig>;
     capabilitiesCacheTtlSeconds: number;
     budgets: { perInvestigationUsd: number; perCallTokens: number };
-    prices?: Record<string, { inputUsdPerMillionTokens: number; outputUsdPerMillionTokens: number }>;
+    prices?: Record<
+      string,
+      { inputUsdPerMillionTokens: number; outputUsdPerMillionTokens: number }
+    >;
     retry: {
       rateLimitAttempts: number;
       timeoutAttempts: number;
@@ -135,7 +138,11 @@ export interface ResolvedConfig {
     unreachabilityBreakerConsecutive: number;
   };
   minimization: { maxRounds: number; repeatPerCandidate: number; retentionFractionTarget: number };
-  logging: { level: "error" | "warn" | "info" | "debug"; redactLogs: true; disableCrashDumps: true };
+  logging: {
+    level: "error" | "warn" | "info" | "debug";
+    redactLogs: true;
+    disableCrashDumps: true;
+  };
   /** Per-leaf effective value and where it came from. Recorded in every run manifest. */
   sources: Record<string, ConfigSourceEntry>;
 }
@@ -163,6 +170,19 @@ export const DEFAULT_EMULATION_PROFILES: Record<string, EmulationProfile> = {
     isMobile: true,
     hasTouch: true,
     maxTouchPoints: 5,
+    // A CONCRETE Android user agent, materialised (ADR-0014), never templated.
+    //
+    // Without this the profile inherited Chromium's default UA, which on a Windows host is a
+    // desktop Windows string: a "Chrome mobile" run would then advertise desktop to any
+    // UA-sniffing application and be served the desktop experience, making the emulation
+    // misleading for exactly the class of issue this product investigates.
+    //
+    // The version is pinned deliberately. ADR-0014 requires a profile to mean the same thing in a
+    // future investigation as it did in a past one, so it must not track the installed browser.
+    // The manifest records `emulation.browser.browserVersion` separately, so a divergence between
+    // the advertised and the actual engine version is always auditable.
+    userAgent:
+      "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.210 Mobile Safari/537.36",
     locale: "en-IN",
     timezoneId: "Asia/Kolkata",
     colorScheme: "light",
@@ -183,7 +203,13 @@ export const DEFAULT_EMULATION_PROFILES: Record<string, EmulationProfile> = {
     colorScheme: "light",
     reducedMotion: "no-preference",
     forcedColors: "none",
-    network: { profile: "fast-3g", downloadKbps: 1600, uploadKbps: 750, latencyMs: 150, offline: false },
+    network: {
+      profile: "fast-3g",
+      downloadKbps: 1600,
+      uploadKbps: 750,
+      latencyMs: 150,
+      offline: false,
+    },
     cpu: { throttlingRate: 4 },
   },
 };
@@ -221,7 +247,9 @@ const DEFAULTS = {
     capture: {
       responseBodyMaxBytes: 262144,
       responseBodyContentTypes: ["application/json", "text/plain", "text/html"],
-      domSnapshotOn: ["action", "navigation", "failure"] as Array<"action" | "navigation" | "failure">,
+      domSnapshotOn: ["action", "navigation", "failure"] as Array<
+        "action" | "navigation" | "failure"
+      >,
       domSnapshotMaxBytes: 2097152,
       screenshotOn: ["action", "failure"] as Array<"action" | "navigation" | "failure">,
       webSocketFrames: false,
@@ -264,6 +292,27 @@ export interface LoadConfigOptions {
 const ENV_PREFIX = "env:";
 
 /**
+ * True when a value is still an unresolved `env:NAME` reference.
+ *
+ * Deliberately NOT a type predicate: narrowing an already-`string` field to `string` makes the
+ * negative branch `never`, which then rejects every legitimate use of the resolved value.
+ */
+export function isEnvRef(value: unknown): boolean {
+  return typeof value === "string" && value.startsWith(ENV_PREFIX);
+}
+
+/**
+ * Config paths whose `env:` references are resolved on demand rather than at load.
+ *
+ * Only the AI subtree qualifies: it is the only configuration a deterministic command never
+ * reads. Deferring anything the executor needs would move a load-time failure to the middle of a
+ * run, which is strictly worse.
+ */
+function isDeferredEnvPath(path: string): boolean {
+  return path === "llm" || path.startsWith("llm.");
+}
+
+/**
  * Resolve `env:NAME` strictly. The variable NAME is safe to print; the value never is, so an
  * unresolved reference names the variable and stops.
  */
@@ -271,16 +320,24 @@ function resolveEnvRefs(
   node: unknown,
   env: NodeJS.ProcessEnv,
   path: string,
-  sources: Record<string, ConfigSourceEntry>
+  sources: Record<string, ConfigSourceEntry>,
+  defer: (path: string) => boolean = () => false
 ): unknown {
   if (typeof node === "string") {
     if (node.startsWith(ENV_PREFIX)) {
+      // Deferred subtrees keep their `env:NAME` marker. Resolution happens when the dependent
+      // operation runs, so a deterministic command never fails on a variable it does not use.
+      if (defer(path)) return node;
       const name = node.slice(ENV_PREFIX.length);
       const value = env[name];
       if (value === undefined || value === "") {
-        fail("CONFIG_ENV_UNRESOLVED", `Environment variable ${name} is not set (referenced at ${path})`, {
-          context: { variable: name, path },
-        });
+        fail(
+          "CONFIG_ENV_UNRESOLVED",
+          `Environment variable ${name} is not set (referenced at ${path})`,
+          {
+            context: { variable: name, path },
+          }
+        );
       }
       sources[path] = { value, source: "env" };
       return value;
@@ -288,12 +345,12 @@ function resolveEnvRefs(
     return node;
   }
   if (Array.isArray(node)) {
-    return node.map((v, i) => resolveEnvRefs(v, env, `${path}[${i}]`, sources));
+    return node.map((v, i) => resolveEnvRefs(v, env, `${path}[${i}]`, sources, defer));
   }
   if (node && typeof node === "object") {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
-      out[k] = resolveEnvRefs(v, env, path ? `${path}.${k}` : k, sources);
+      out[k] = resolveEnvRefs(v, env, path ? `${path}.${k}` : k, sources, defer);
     }
     return out;
   }
@@ -460,14 +517,25 @@ export function assertConfigInvariants(cfg: ResolvedConfig): void {
     }
   }
 
-  if (!cfg.llm.allowInsecureBaseUrl && cfg.llm.baseUrl && !cfg.llm.baseUrl.startsWith("https:")) {
+  // An unresolved `env:` marker cannot be checked for a scheme yet. The same invariant is
+  // enforced in `resolveLlmSettings`, which is the only place the real value appears.
+  if (
+    !cfg.llm.allowInsecureBaseUrl &&
+    cfg.llm.baseUrl &&
+    !isEnvRef(cfg.llm.baseUrl) &&
+    !cfg.llm.baseUrl.startsWith("https:")
+  ) {
     fails.push("llm.baseUrl must use https unless llm.allowInsecureBaseUrl is true");
   }
 
   if (fails.length) {
-    throw new InvestigatorError("CONFIG_INVALID", `Configuration invariants violated: ${fails[0]}`, {
-      context: { violationCount: fails.length, violations: fails.join(" | ") },
-    });
+    throw new InvestigatorError(
+      "CONFIG_INVALID",
+      `Configuration invariants violated: ${fails[0]}`,
+      {
+        context: { violationCount: fails.length, violations: fails.join(" | ") },
+      }
+    );
   }
 }
 
@@ -505,7 +573,15 @@ export function loadConfigFromString(
   recordLeafSources(raw, "", "config-file", sources);
 
   // Precedence: CLI flag > env > config file > built-in default. Applied per leaf.
-  const withEnv = resolveEnvRefs(raw, env, "", sources) as Record<string, unknown>;
+  // The `llm` subtree is resolved LAZILY (decision 6). M1 and every deterministic command --
+  // init, run, classify, doctor -- makes no provider call, so requiring DEEPSEEK_* to be set
+  // before a browser run is a false dependency: it made `investigate run` fail with
+  // CONFIG_ENV_UNRESOLVED on a fresh workspace. Call `resolveLlmSettings` at the point an
+  // AI-dependent operation actually needs a value.
+  const withEnv = resolveEnvRefs(raw, env, "", sources, isDeferredEnvPath) as Record<
+    string,
+    unknown
+  >;
 
   for (const [path, value] of Object.entries(opts.overrides ?? {})) {
     if (value === undefined) continue;
@@ -583,3 +659,127 @@ export function loadConfigFile(path: string, opts: LoadConfigOptions = {}): Reso
 }
 
 export const CONFIG_DEFAULTS = DEFAULTS;
+
+/** Whether the AI configuration can be used, without revealing any value. */
+export type LlmConfigState = "configured" | "missing" | "unavailable";
+
+export interface LlmConfigStatus {
+  state: LlmConfigState;
+  /** Variable NAMES only. Never a value (ADR-0009, security model). */
+  missingVars: string[];
+  apiKeyEnv: string;
+  apiKeyConfigured: boolean;
+  baseUrlHost: string | null;
+}
+
+/** Every `env:` reference inside the deferred `llm` subtree, as variable NAMES. */
+function llmEnvRefs(cfg: ResolvedConfig): Array<{ path: string; variable: string }> {
+  const out: Array<{ path: string; variable: string }> = [];
+  const walk = (node: unknown, path: string): void => {
+    if (isEnvRef(node)) {
+      out.push({ path, variable: (node as string).slice(ENV_PREFIX.length) });
+      return;
+    }
+    if (Array.isArray(node)) return node.forEach((v, i) => walk(v, `${path}[${i}]`));
+    if (node && typeof node === "object") {
+      for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+        walk(v, path ? `${path}.${k}` : k);
+      }
+    }
+  };
+  walk(cfg.llm, "llm");
+  return out;
+}
+
+/**
+ * Report whether AI configuration is usable, WITHOUT resolving it and without throwing.
+ *
+ * `doctor` and any other status surface uses this: a missing DeepSeek variable is a fact to
+ * report, not a reason to fail a command that never makes a provider call (decision 6). Only
+ * variable names are returned, never values.
+ */
+export function llmConfigStatus(
+  cfg: ResolvedConfig,
+  env: NodeJS.ProcessEnv = process.env
+): LlmConfigStatus {
+  const missingVars = llmEnvRefs(cfg)
+    .filter(({ variable }) => {
+      const v = env[variable];
+      return v === undefined || v === "";
+    })
+    .map(({ variable }) => variable);
+
+  const apiKeyValue = env[cfg.llm.apiKeyEnv];
+  const apiKeyConfigured = apiKeyValue !== undefined && apiKeyValue !== "";
+  if (!apiKeyConfigured) missingVars.push(cfg.llm.apiKeyEnv);
+
+  let baseUrlHost: string | null = null;
+  if (!isEnvRef(cfg.llm.baseUrl)) {
+    try {
+      baseUrlHost = new URL(cfg.llm.baseUrl).host;
+    } catch {
+      baseUrlHost = null;
+    }
+  } else {
+    const resolved = env[(cfg.llm.baseUrl as string).slice(ENV_PREFIX.length)];
+    if (resolved) {
+      try {
+        baseUrlHost = new URL(resolved).host;
+      } catch {
+        baseUrlHost = null;
+      }
+    }
+  }
+
+  return {
+    state: missingVars.length === 0 ? "configured" : "missing",
+    missingVars: [...new Set(missingVars)],
+    apiKeyEnv: cfg.llm.apiKeyEnv,
+    apiKeyConfigured,
+    baseUrlHost,
+  };
+}
+
+/**
+ * Resolve the deferred `llm` subtree. Call this ONLY from an AI-dependent operation.
+ *
+ * Failure is typed and names the missing variables, never their values. This is the single point
+ * where the deferred references become real, and therefore the only place the https invariant on
+ * a resolved base URL can be enforced.
+ */
+export function resolveLlmSettings(
+  cfg: ResolvedConfig,
+  env: NodeJS.ProcessEnv = process.env
+): ResolvedConfig["llm"] {
+  const refs = llmEnvRefs(cfg);
+  const missing = refs
+    .filter(({ variable }) => {
+      const v = env[variable];
+      return v === undefined || v === "";
+    })
+    .map(({ variable }) => variable);
+
+  if (missing.length) {
+    fail(
+      "CONFIG_ENV_UNRESOLVED",
+      `AI configuration is incomplete: ${missing.join(", ")} not set. ` +
+        `Deterministic commands do not need these; this operation does.`,
+      { context: { missingVariables: missing.join(","), count: missing.length } }
+    );
+  }
+
+  const sources: Record<string, ConfigSourceEntry> = {};
+  const resolved = resolveEnvRefs(cfg.llm, env, "llm", sources) as ResolvedConfig["llm"];
+
+  if (
+    !resolved.allowInsecureBaseUrl &&
+    resolved.baseUrl &&
+    !resolved.baseUrl.startsWith("https:")
+  ) {
+    fail("CONFIG_INVALID", "llm.baseUrl must use https unless llm.allowInsecureBaseUrl is true", {
+      context: { path: "llm.baseUrl" },
+    });
+  }
+
+  return resolved;
+}

@@ -1,7 +1,11 @@
 import type { Clock, ResolvedConfig } from "@investigator/core";
 import { fail, jobId as makeJobId, sha256Hex, systemClock } from "@investigator/core";
 import type { MetadataStore, WorkQueue } from "@investigator/storage";
-import { assertSafeToEnqueue, classifyExperiment, isOriginAllowed } from "./destructive-classifier.js";
+import {
+  assertSafeToEnqueue,
+  classifyExperiment,
+  isOriginAllowed,
+} from "./destructive-classifier.js";
 import type { ExperimentSpec } from "./types.js";
 
 /**
@@ -60,7 +64,9 @@ export function deriveJobId(
   repetitionIndex: number,
   attemptIndex: number
 ): string {
-  const material = [seed, investigationId, experimentId, repetitionIndex, attemptIndex].join("\u0000");
+  const material = [seed, investigationId, experimentId, repetitionIndex, attemptIndex].join(
+    "\u0000"
+  );
   return makeJobId(() => sha256Hex(material));
 }
 
@@ -136,7 +142,13 @@ export async function enqueueExperiment(args: EnqueueArgs): Promise<EnqueueResul
 
     const seq = await args.metadata.tx((t) => t.nextSequence(args.investigationId, "job"));
     if (i === 0) firstSeq = seq;
-    const id = deriveJobId(cfg.execution.seed, args.investigationId, experiment.experimentId, repetitionIndex, attemptIndex);
+    const id = deriveJobId(
+      cfg.execution.seed,
+      args.investigationId,
+      experiment.experimentId,
+      repetitionIndex,
+      attemptIndex
+    );
 
     await args.queue.enqueue({
       jobId: id,

@@ -394,10 +394,12 @@ export function buildTimeline(
           },
         };
         if (re.resourceType) base.request.resourceType = re.resourceType;
-        if (re.fromServiceWorker !== undefined) base.request.fromServiceWorker = re.fromServiceWorker;
+        if (re.fromServiceWorker !== undefined)
+          base.request.fromServiceWorker = re.fromServiceWorker;
         if (re.fromCache !== undefined) base.request.fromCache = re.fromCache;
         if (re.headerNames) {
-          if (re.category === "request") base.request.requestHeaderNames = [...re.headerNames].sort();
+          if (re.category === "request")
+            base.request.requestHeaderNames = [...re.headerNames].sort();
           else base.request.responseHeaderNames = [...re.headerNames].sort();
         }
         if (u.redactedKeys.length) {

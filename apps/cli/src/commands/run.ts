@@ -1,5 +1,11 @@
 import { readFileSync } from "node:fs";
-import { fail, investigationId as makeInvestigationId, systemClock } from "@investigator/core";
+import {
+  fail,
+  investigationId as makeInvestigationId,
+  schemaRegistry,
+  systemClock,
+} from "@investigator/core";
+import { startFixture, type FixtureKind } from "@investigator/test-fixtures";
 import { ensureInvestigationDirs } from "@investigator/storage";
 import { Worker, enqueueExperiment, type ExperimentSpec } from "@investigator/execution";
 import type { GlobalOptions, Runtime } from "../runtime.js";
@@ -23,6 +29,7 @@ interface RunOptions {
   maxParallel?: number;
   stopAfterFailures?: number;
   fixtureExperiment?: string;
+  fixtureApp?: string;
   target?: string;
 }
 
@@ -41,15 +48,38 @@ export async function runCommand(
 
   const investigationId = globals.investigation ?? makeInvestigationId(1);
 
-  let experiment: ExperimentSpec;
+  let parsed: unknown;
   try {
-    experiment = JSON.parse(readFileSync(opts.fixtureExperiment, "utf8")) as ExperimentSpec;
+    parsed = JSON.parse(readFileSync(opts.fixtureExperiment, "utf8"));
   } catch (e) {
     return fail("INPUT_INVALID", "Cannot read fixture experiment file", {
       context: { path: opts.fixtureExperiment },
       cause: e,
     });
   }
+  // Validate before anything is enqueued. A malformed experiment must fail as input, not
+  // half-way through a batch (ADR-0015).
+  schemaRegistry().assert("fixture-experiment.v1.json", parsed, opts.fixtureExperiment);
+  const experiment = parsed as ExperimentSpec;
+  // `--fixture-app` starts the named local fixture application for the duration of this run and
+  // registers it as an allowed target. It exists so the documented M1 demo is a single command
+  // with explicit setup and teardown, rather than asking an operator to hand-edit config.yaml
+  // with a port the fixture chose at random. M1-only, like --fixture-experiment.
+  let fixture: { origin: string; baseUrl: string; close: () => Promise<void> } | undefined;
+  if (opts.fixtureApp) {
+    fixture = await startFixture(opts.fixtureApp as FixtureKind);
+    const name = experiment.targetName || opts.fixtureApp;
+    experiment.targetName = name;
+    rt.config.execution.targets[name] = {
+      baseUrl: fixture.baseUrl,
+      classification: "fixture",
+      resetStrategy: "fresh-context",
+      correlationHeaderAllowed: false,
+    };
+    // The allowlist is extended for this process only; nothing is written to config.yaml.
+    rt.config.safety.allowedOrigins = [...rt.config.safety.allowedOrigins, fixture.origin];
+  }
+
   if (opts.target) experiment.targetName = opts.target;
   experiment.investigationId = investigationId;
 
@@ -90,7 +120,14 @@ export async function runCommand(
     loadExperiment: (payloadJson) => JSON.parse(payloadJson) as ExperimentSpec,
   });
 
-  const results = await worker.drain(repetitions);
+  let results;
+  try {
+    results = await worker.drain(repetitions);
+  } finally {
+    // Explicit teardown, even if the batch threw: a fixture server left listening would hold a
+    // port and outlive the command that started it.
+    await fixture?.close();
+  }
 
   const byOutcome: Record<string, number> = {};
   for (const r of results) byOutcome[r.outcome] = (byOutcome[r.outcome] ?? 0) + 1;

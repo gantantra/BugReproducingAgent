@@ -52,8 +52,29 @@ describe("artifact integrity hashes", () => {
     h = await createHarness({ fixtures: ["passing"] });
     await runExperiment(h, searchExperiment("passing"), 3);
 
+    // The invariant is one manifest per ATTEMPT, bijective with the job rows -- not a fixed
+    // total. Asserting `=== 3` encoded an assumption that no retry ever happens, which ADR-0005
+    // explicitly permits; this spec's subject is artifact integrity, so it must not fail for a
+    // reason that has nothing to do with artifacts (decision 4).
+    //
+    // The deterministic 100-run fixture separately requires ZERO retries
+    // (same_test_100_runs.spec.ts). That criterion is not weakened by this assertion: this spec
+    // asserts the lineage invariant, that spec asserts the zero-retry criterion, and both hold.
     const manifests = await readManifests(h);
-    expect(manifests.length).toBe(3);
+    const jobs = await h.queue.listJobs(h.investigationId);
+    expect(manifests.length, "one manifest per attempt").toBe(jobs.length);
+    expect(manifests.length).toBeGreaterThanOrEqual(3);
+
+    const manifestRunIds = new Set(manifests.map((m) => m["runId"] as string));
+    expect(manifestRunIds.size, "manifest runIds are unique").toBe(manifests.length);
+    for (const job of jobs) {
+      expect(job.runId, `job ${job.jobId} has no runId`).toBeTruthy();
+      expect(manifestRunIds.has(job.runId!), `job ${job.jobId} has no manifest`).toBe(true);
+    }
+    // Every retry is a new linked attempt, never a mutation of its predecessor.
+    for (const retry of jobs.filter((j) => j.attemptIndex > 0)) {
+      expect(retry.previousAttemptJobId, "a retry must link to its predecessor").toBeTruthy();
+    }
 
     for (const m of manifests) {
       const listed = m["artifacts"] as Array<{ artifactId: string; sha256: string }>;

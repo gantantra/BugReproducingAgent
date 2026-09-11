@@ -13,7 +13,10 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** dir -> { deps: workspace package short names, external: npm deps } */
 const GRAPH = {
-  "packages/core": { deps: [], external: { ajv: "^8.17.1", "ajv-formats": "^3.0.1", yaml: "^2.8.1" } },
+  "packages/core": {
+    deps: [],
+    external: { ajv: "^8.17.1", "ajv-formats": "^3.0.1", yaml: "^2.8.1" },
+  },
   "packages/storage": { deps: ["core"], external: {} },
   "packages/evidence": { deps: ["core", "storage"], external: { yaml: "^2.8.1" } },
   // `lib: DOM` because this package contains in-page page.evaluate callbacks that really do
@@ -102,7 +105,12 @@ for (const [dir, spec] of Object.entries(GRAPH)) {
 writeFileSync(
   join(root, "scripts", "workspace-graph.json"),
   JSON.stringify(
-    Object.fromEntries(Object.entries(GRAPH).map(([d, s]) => [d, { deps: s.deps, external: Object.keys(s.external) }])),
+    Object.fromEntries(
+      Object.entries(GRAPH).map(([d, s]) => [
+        d,
+        { deps: s.deps, external: Object.keys(s.external) },
+      ])
+    ),
     null,
     2
   ) + "\n"

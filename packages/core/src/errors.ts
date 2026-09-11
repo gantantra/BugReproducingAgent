@@ -186,11 +186,7 @@ export function isInvestigatorError(e: unknown): e is InvestigatorError {
   return e instanceof InvestigatorError;
 }
 
-export function fail(
-  code: ErrorCode,
-  message: string,
-  opts: InvestigatorErrorOptions = {}
-): never {
+export function fail(code: ErrorCode, message: string, opts: InvestigatorErrorOptions = {}): never {
   throw new InvestigatorError(code, message, opts);
 }
 

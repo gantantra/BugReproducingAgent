@@ -1,0 +1,62 @@
+{
+  "schemaVersion": "1.0.0",
+  "experimentId": "EXP-PASSING",
+  "description": "The four-action performance sequence against the always-passing fixture. Every repetition must end VALID_COMPLETED with zero retries; this is the sequence the 100-run reliability budget is measured against.",
+  "targetName": "passing",
+  "repetitions": 5,
+  "actions": [
+    {
+      "actionId": "A1",
+      "type": "goto",
+      "url": "/search",
+      "waitUntil": "load"
+    },
+    {
+      "actionId": "A2",
+      "type": "click",
+      "selector": {
+        "strategy": "testid",
+        "value": "filter-verified"
+      },
+      "timeoutMs": 5000
+    },
+    {
+      "actionId": "A3",
+      "type": "waitFor",
+      "condition": "networkidle",
+      "timeoutMs": 5000
+    },
+    {
+      "actionId": "A4",
+      "type": "assert",
+      "assertion": {
+        "assertionId": "AS1",
+        "kind": "elementCountAtLeast",
+        "selector": {
+          "strategy": "testid",
+          "value": "result-card"
+        },
+        "min": 1,
+        "timeoutMs": 3000
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "assertionId": "AS1",
+      "kind": "elementCountAtLeast",
+      "selector": {
+        "strategy": "testid",
+        "value": "result-card"
+      },
+      "min": 1,
+      "timeoutMs": 3000
+    }
+  ],
+  "requiredEvidence": ["actions", "navigation", "console", "exceptions", "networkMetadata"],
+  "safety": {
+    "maxSideEffectClass": "read",
+    "destructiveActionIds": [],
+    "resetStrategy": "fresh-context"
+  }
+}

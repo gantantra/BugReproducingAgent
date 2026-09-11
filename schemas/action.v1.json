@@ -5,104 +5,281 @@
   "description": "One step in the closed action vocabulary the deterministic interpreter can execute. There is no action type that permits arbitrary script, shell, or model-supplied source. Adding a type requires a schema change and a human gate.",
   "type": "object",
   "unevaluatedProperties": false,
-  "required": ["actionId", "type"],
+  "required": [
+    "actionId",
+    "type"
+  ],
   "properties": {
-    "actionId": { "$ref": "common.v1.json#/$defs/actionId" },
-    "type": {
-      "enum": ["goto", "click", "dblclick", "fill", "select", "check", "uncheck", "press",
-               "hover", "scroll", "waitFor", "waitForTimeout", "assert", "screenshot",
-               "setStorage", "clearStorage", "setEmulation", "reload", "goBack", "goForward"]
+    "actionId": {
+      "$ref": "common.v1.json#/$defs/actionId"
     },
-    "description": { "type": "string" },
-    "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 120000 },
+    "type": {
+      "enum": [
+        "goto",
+        "click",
+        "dblclick",
+        "fill",
+        "select",
+        "check",
+        "uncheck",
+        "press",
+        "hover",
+        "scroll",
+        "waitFor",
+        "waitForTimeout",
+        "assert",
+        "screenshot",
+        "setStorage",
+        "clearStorage",
+        "setEmulation",
+        "reload",
+        "goBack",
+        "goForward"
+      ]
+    },
+    "description": {
+      "type": "string"
+    },
+    "timeoutMs": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 120000
+    },
     "sideEffect": {
       "$ref": "common.v1.json#/$defs/sideEffectClass",
       "description": "Declared class. The deterministic classifier computes the authoritative value; a declared class weaker than the computed one fails validation."
     },
-    "computedSideEffect": { "$ref": "common.v1.json#/$defs/sideEffectClass" }
+    "computedSideEffect": {
+      "$ref": "common.v1.json#/$defs/sideEffectClass"
+    }
   },
   "allOf": [
     {
-      "if": { "properties": { "type": { "enum": ["goto"] } }, "required": ["type"] },
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "goto"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
       "then": {
-        "required": ["url"],
+        "required": [
+          "url"
+        ],
         "properties": {
           "url": {
             "type": "string",
-            "format": "uri",
-            "description": "Must resolve to an origin present in safety.allowedOrigins. Validated outside JSON Schema against the resolved config."
+            "format": "uri-reference",
+            "description": "Absolute, or relative to the target baseUrl -- the executor resolves it with `new URL(action.url, target.baseUrl)`, so a target-relative path like `/search` is the normal form and keeps an experiment portable across environments. Either way the RESOLVED origin must be present in safety.allowedOrigins, which is validated outside JSON Schema against the resolved config (enqueueExperiment)."
           },
-          "waitUntil": { "enum": ["commit", "domcontentloaded", "load", "networkidle"] }
+          "waitUntil": {
+            "enum": [
+              "commit",
+              "domcontentloaded",
+              "load",
+              "networkidle"
+            ]
+          }
         }
       }
     },
     {
       "if": {
-        "properties": { "type": { "enum": ["click", "dblclick", "check", "uncheck", "hover"] } },
-        "required": ["type"]
+        "properties": {
+          "type": {
+            "enum": [
+              "click",
+              "dblclick",
+              "check",
+              "uncheck",
+              "hover"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
       },
       "then": {
-        "required": ["selector"],
-        "properties": { "selector": { "$ref": "common.v1.json#/$defs/selector" } }
-      }
-    },
-    {
-      "if": { "properties": { "type": { "enum": ["fill"] } }, "required": ["type"] },
-      "then": {
-        "required": ["selector", "value"],
+        "required": [
+          "selector"
+        ],
         "properties": {
-          "selector": { "$ref": "common.v1.json#/$defs/selector" },
-          "value": { "$ref": "#/$defs/testDataValue" }
+          "selector": {
+            "$ref": "common.v1.json#/$defs/selector"
+          }
         }
       }
     },
     {
-      "if": { "properties": { "type": { "enum": ["select"] } }, "required": ["type"] },
-      "then": {
-        "required": ["selector", "option"],
+      "if": {
         "properties": {
-          "selector": { "$ref": "common.v1.json#/$defs/selector" },
-          "option": { "type": "string" }
+          "type": {
+            "enum": [
+              "fill"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "selector",
+          "value"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "common.v1.json#/$defs/selector"
+          },
+          "value": {
+            "$ref": "#/$defs/testDataValue"
+          }
         }
       }
     },
     {
-      "if": { "properties": { "type": { "enum": ["press"] } }, "required": ["type"] },
-      "then": {
-        "required": ["key"],
+      "if": {
         "properties": {
-          "selector": { "$ref": "common.v1.json#/$defs/selector" },
-          "key": { "type": "string", "minLength": 1 }
+          "type": {
+            "enum": [
+              "select"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "selector",
+          "option"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "common.v1.json#/$defs/selector"
+          },
+          "option": {
+            "type": "string"
+          }
         }
       }
     },
     {
-      "if": { "properties": { "type": { "enum": ["scroll"] } }, "required": ["type"] },
-      "then": {
+      "if": {
         "properties": {
-          "selector": { "$ref": "common.v1.json#/$defs/selector" },
-          "deltaY": { "type": "integer" },
-          "deltaX": { "type": "integer" }
+          "type": {
+            "enum": [
+              "press"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "key"
+        ],
+        "properties": {
+          "selector": {
+            "$ref": "common.v1.json#/$defs/selector"
+          },
+          "key": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
     {
-      "if": { "properties": { "type": { "enum": ["waitFor"] } }, "required": ["type"] },
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "scroll"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
       "then": {
-        "required": ["condition"],
+        "properties": {
+          "selector": {
+            "$ref": "common.v1.json#/$defs/selector"
+          },
+          "deltaY": {
+            "type": "integer"
+          },
+          "deltaX": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "waitFor"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "condition"
+        ],
         "properties": {
           "condition": {
-            "enum": ["commit", "domcontentloaded", "load", "networkidle",
-                     "selectorVisible", "selectorHidden", "selectorAttached", "selectorDetached"]
+            "enum": [
+              "commit",
+              "domcontentloaded",
+              "load",
+              "networkidle",
+              "selectorVisible",
+              "selectorHidden",
+              "selectorAttached",
+              "selectorDetached"
+            ]
           },
-          "selector": { "$ref": "common.v1.json#/$defs/selector" }
+          "selector": {
+            "$ref": "common.v1.json#/$defs/selector"
+          }
         }
       }
     },
     {
-      "if": { "properties": { "type": { "enum": ["waitForTimeout"] } }, "required": ["type"] },
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "waitForTimeout"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
       "then": {
-        "required": ["ms"],
+        "required": [
+          "ms"
+        ],
         "properties": {
           "ms": {
             "type": "integer",
@@ -114,47 +291,136 @@
       }
     },
     {
-      "if": { "properties": { "type": { "enum": ["assert"] } }, "required": ["type"] },
-      "then": {
-        "required": ["assertion"],
-        "properties": { "assertion": { "$ref": "#/$defs/assertion" } }
-      }
-    },
-    {
-      "if": { "properties": { "type": { "enum": ["screenshot"] } }, "required": ["type"] },
-      "then": {
+      "if": {
         "properties": {
-          "selector": { "$ref": "common.v1.json#/$defs/selector" },
-          "fullPage": { "type": "boolean" }
-        }
-      }
-    },
-    {
-      "if": { "properties": { "type": { "enum": ["setStorage"] } }, "required": ["type"] },
+          "type": {
+            "enum": [
+              "assert"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
       "then": {
-        "required": ["area", "key", "value"],
+        "required": [
+          "assertion"
+        ],
         "properties": {
-          "area": { "enum": ["localStorage", "sessionStorage"] },
-          "key": { "type": "string", "minLength": 1 },
-          "value": { "$ref": "#/$defs/testDataValue" }
-        }
-      }
-    },
-    {
-      "if": { "properties": { "type": { "enum": ["clearStorage"] } }, "required": ["type"] },
-      "then": {
-        "properties": {
-          "areas": {
-            "type": "array",
-            "items": { "enum": ["localStorage", "sessionStorage", "cookies", "indexedDb", "cache"] }
+          "assertion": {
+            "$ref": "#/$defs/assertion"
           }
         }
       }
     },
     {
-      "if": { "properties": { "type": { "enum": ["setEmulation"] } }, "required": ["type"] },
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "screenshot"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
       "then": {
-        "required": ["profileName"],
+        "properties": {
+          "selector": {
+            "$ref": "common.v1.json#/$defs/selector"
+          },
+          "fullPage": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "setStorage"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "area",
+          "key",
+          "value"
+        ],
+        "properties": {
+          "area": {
+            "enum": [
+              "localStorage",
+              "sessionStorage"
+            ]
+          },
+          "key": {
+            "type": "string",
+            "minLength": 1
+          },
+          "value": {
+            "$ref": "#/$defs/testDataValue"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "clearStorage"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "areas": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "localStorage",
+                "sessionStorage",
+                "cookies",
+                "indexedDb",
+                "cache"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "setEmulation"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "profileName"
+        ],
         "properties": {
           "profileName": {
             "type": "string",
@@ -170,9 +436,14 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind", "literal"],
+          "required": [
+            "kind",
+            "literal"
+          ],
           "properties": {
-            "kind": { "const": "literal" },
+            "kind": {
+              "const": "literal"
+            },
             "literal": {
               "type": "string",
               "description": "Rejected by the validator when it matches a credential, real-domain email, card, or phone shape. The model may not invent test data."
@@ -182,19 +453,39 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind", "generator"],
+          "required": [
+            "kind",
+            "generator"
+          ],
           "properties": {
-            "kind": { "const": "generated" },
-            "generator": { "enum": ["seededEmail", "seededUsername", "seededNumber", "seededUuid", "seededString"] },
-            "params": { "type": "object" }
+            "kind": {
+              "const": "generated"
+            },
+            "generator": {
+              "enum": [
+                "seededEmail",
+                "seededUsername",
+                "seededNumber",
+                "seededUuid",
+                "seededString"
+              ]
+            },
+            "params": {
+              "type": "object"
+            }
           }
         },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind", "envVar"],
+          "required": [
+            "kind",
+            "envVar"
+          ],
           "properties": {
-            "kind": { "const": "secretRef" },
+            "kind": {
+              "const": "secretRef"
+            },
             "envVar": {
               "type": "string",
               "pattern": "^[A-Z][A-Z0-9_]*$",
@@ -205,9 +496,14 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind", "unknownId"],
+          "required": [
+            "kind",
+            "unknownId"
+          ],
           "properties": {
-            "kind": { "const": "unknown" },
+            "kind": {
+              "const": "unknown"
+            },
             "unknownId": {
               "type": "string",
               "description": "References a Flow unknown the human must fill. Enqueue is refused while any unknown remains unresolved."
@@ -219,26 +515,75 @@
     "assertion": {
       "type": "object",
       "unevaluatedProperties": false,
-      "required": ["assertionId", "kind"],
+      "required": [
+        "assertionId",
+        "kind"
+      ],
       "properties": {
-        "assertionId": { "type": "string", "pattern": "^AS[0-9]{1,4}$" },
-        "kind": {
-          "enum": ["elementCountAtLeast", "elementCountEquals", "elementVisible",
-                   "elementHidden", "textContains", "textEquals", "attributeEquals",
-                   "urlMatches", "noConsoleErrors", "noUncaughtExceptions",
-                   "responseStatusIn", "storageKeyPresent", "storageKeyAbsent"]
+        "assertionId": {
+          "type": "string",
+          "pattern": "^AS[0-9]{1,4}$"
         },
-        "selector": { "$ref": "common.v1.json#/$defs/selector" },
-        "min": { "type": "integer", "minimum": 0 },
-        "count": { "type": "integer", "minimum": 0 },
-        "text": { "type": "string" },
-        "attribute": { "type": "string" },
-        "expected": { "$ref": "common.v1.json#/$defs/jsonPrimitive" },
-        "urlPattern": { "type": "string" },
-        "statuses": { "type": "array", "items": { "type": "integer" } },
-        "storageArea": { "enum": ["localStorage", "sessionStorage"] },
-        "storageKey": { "type": "string" },
-        "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 120000 },
+        "kind": {
+          "enum": [
+            "elementCountAtLeast",
+            "elementCountEquals",
+            "elementVisible",
+            "elementHidden",
+            "textContains",
+            "textEquals",
+            "attributeEquals",
+            "urlMatches",
+            "noConsoleErrors",
+            "noUncaughtExceptions",
+            "responseStatusIn",
+            "storageKeyPresent",
+            "storageKeyAbsent"
+          ]
+        },
+        "selector": {
+          "$ref": "common.v1.json#/$defs/selector"
+        },
+        "min": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "text": {
+          "type": "string"
+        },
+        "attribute": {
+          "type": "string"
+        },
+        "expected": {
+          "$ref": "common.v1.json#/$defs/jsonPrimitive"
+        },
+        "urlPattern": {
+          "type": "string"
+        },
+        "statuses": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "storageArea": {
+          "enum": [
+            "localStorage",
+            "sessionStorage"
+          ]
+        },
+        "storageKey": {
+          "type": "string"
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 120000
+        },
         "isFailurePredicate": {
           "type": "boolean",
           "description": "When true, a match indicates the product failure rather than a violated expectation. Feeds RunOutcome rule 4."

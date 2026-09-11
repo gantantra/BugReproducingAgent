@@ -106,7 +106,10 @@ export const CAPTURE_STATUS_SEVERITY: readonly CaptureStatusValue[] = [
   "corrupted",
 ];
 
-export function worseCaptureStatus(a: CaptureStatusValue, b: CaptureStatusValue): CaptureStatusValue {
+export function worseCaptureStatus(
+  a: CaptureStatusValue,
+  b: CaptureStatusValue
+): CaptureStatusValue {
   const ia = CAPTURE_STATUS_SEVERITY.indexOf(a);
   const ib = CAPTURE_STATUS_SEVERITY.indexOf(b);
   return ia >= ib ? a : b;

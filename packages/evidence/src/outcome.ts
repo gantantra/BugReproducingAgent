@@ -1,4 +1,9 @@
-import type { CaptureStatus, EvidenceCategory, OutcomeRuleId, RunOutcome } from "@investigator/core";
+import type {
+  CaptureStatus,
+  EvidenceCategory,
+  OutcomeRuleId,
+  RunOutcome,
+} from "@investigator/core";
 import { requiredEvidenceUsable } from "./capture-status.js";
 import type { AssertionOutcome } from "./extract.js";
 
@@ -80,9 +85,15 @@ export function decideOutcome(input: OutcomeInputs): OutcomeDecision {
       parts.push(`assertions failed: ${failedAssertions.map((a) => a.assertionId).join(", ")}`);
     }
     if (matchedPredicates.length) {
-      parts.push(`failure predicates matched: ${matchedPredicates.map((a) => a.assertionId).join(", ")}`);
+      parts.push(
+        `failure predicates matched: ${matchedPredicates.map((a) => a.assertionId).join(", ")}`
+      );
     }
-    return { outcome: "PRODUCT_FAILED", ruleId: 4, detail: `${OUTCOME_RULES[4]} (${parts.join("; ")})` };
+    return {
+      outcome: "PRODUCT_FAILED",
+      ruleId: 4,
+      detail: `${OUTCOME_RULES[4]} (${parts.join("; ")})`,
+    };
   }
 
   // Rule 5 — valid. Everything declared passed AND the required evidence is actually usable.

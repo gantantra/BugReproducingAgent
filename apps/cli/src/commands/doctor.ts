@@ -1,4 +1,4 @@
-import { detectUnsafeDiagnostics } from "@investigator/core";
+import { detectUnsafeDiagnostics, llmConfigStatus } from "@investigator/core";
 import { verifyManifest } from "@investigator/execution";
 import type { Runtime } from "../runtime.js";
 
@@ -23,14 +23,12 @@ export async function doctorCommand(rt: Runtime, opts: DoctorOptions): Promise<D
   const investigations = await rt.metadata.read((t) => t.listInvestigations());
   const diagnostics = detectUnsafeDiagnostics();
 
-  let baseUrlHost = "unset";
-  try {
-    baseUrlHost = new URL(rt.config.llm.baseUrl).host;
-  } catch {
-    baseUrlHost = "unparseable";
-  }
-
-  const keyConfigured = await rt.secrets.has(rt.config.llm.apiKeyEnv);
+  // AI configuration is REPORTED, never required (decision 6). `doctor` must work on a fresh
+  // workspace with no DeepSeek variables set, because nothing it does calls a provider. Only
+  // variable NAMES appear in the output.
+  const llm = llmConfigStatus(rt.config);
+  const baseUrlHost = llm.baseUrlHost ?? "unset";
+  const keyConfigured = llm.apiKeyConfigured;
 
   const perInvestigation: Array<{
     investigationId: string;
@@ -97,6 +95,9 @@ export async function doctorCommand(rt: Runtime, opts: DoctorOptions): Promise<D
       baseUrlHost,
       apiKeyEnv: rt.config.llm.apiKeyEnv,
       apiKeyConfigured: keyConfigured,
+      // "configured" | "missing" | "unavailable", plus the NAMES of anything absent.
+      aiConfig: llm.state,
+      aiConfigMissing: llm.missingVars,
       metadata: rt.config.storage.metadata,
       artifacts: rt.config.storage.artifacts,
       queue: rt.config.storage.queue,
@@ -130,7 +131,7 @@ export async function doctorCommand(rt: Runtime, opts: DoctorOptions): Promise<D
         `Storage        metadata=${rt.config.storage.metadata} artifacts=${rt.config.storage.artifacts} queue=${rt.config.storage.queue} journal=${rt.config.storage.sqlite.journalMode}`
       );
       l.push(
-        `Provider       ${rt.config.llm.provider} host=${baseUrlHost} key(${rt.config.llm.apiKeyEnv})=${keyConfigured ? "configured" : "not set"}`
+        `Provider       ${rt.config.llm.provider} host=${baseUrlHost} key(${rt.config.llm.apiKeyEnv})=${keyConfigured ? "configured" : "not set"} ai=${llm.state}${llm.missingVars.length ? ` missing=${llm.missingVars.join(",")}` : ""}`
       );
       l.push(
         `Redaction      ${rt.redactor.policy.policyId} v${rt.redactor.policy.policyVersion} mode=${rt.redactor.policy.mode} rules=${rt.redactor.policy.rules.length}`

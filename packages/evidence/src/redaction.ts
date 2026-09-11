@@ -18,12 +18,7 @@ import { InvestigatorError, fail, sha256Prefixed, schemaRegistry } from "@invest
 export const REDACTED = "[redacted]";
 
 export type RedactionAction =
-  | "keep"
-  | "mask-value"
-  | "mask-match"
-  | "drop-value"
-  | "names-only"
-  | "hash-value";
+  "keep" | "mask-value" | "mask-match" | "drop-value" | "names-only" | "hash-value";
 
 export type FieldScope =
   | "network.url"
@@ -233,9 +228,13 @@ export class Redactor {
     try {
       parsed = parseYaml(text);
     } catch (e) {
-      throw new InvestigatorError("REDACTION_POLICY_MISSING", "Redaction policy is not valid YAML", {
-        cause: e,
-      });
+      throw new InvestigatorError(
+        "REDACTION_POLICY_MISSING",
+        "Redaction policy is not valid YAML",
+        {
+          cause: e,
+        }
+      );
     }
     const registry = schemaRegistry();
     const policy = registry.assert<RedactionPolicy>(
@@ -293,11 +292,14 @@ export class Redactor {
 
     if (m.headerNameIn) {
       if (!ctx.headerName) return false;
-      if (!m.headerNameIn.some((h) => h.toLowerCase() === ctx.headerName!.toLowerCase())) return false;
+      if (!m.headerNameIn.some((h) => h.toLowerCase() === ctx.headerName!.toLowerCase()))
+        return false;
     }
     if (m.contentTypeIn) {
       if (!ctx.contentType) return false;
-      if (!m.contentTypeIn.some((c) => ctx.contentType!.toLowerCase().startsWith(c.toLowerCase()))) {
+      if (
+        !m.contentTypeIn.some((c) => ctx.contentType!.toLowerCase().startsWith(c.toLowerCase()))
+      ) {
         return false;
       }
     }
@@ -333,12 +335,12 @@ export class Redactor {
     // A rule with no positive term is a configuration mistake, not a match-everything rule.
     return Boolean(
       m.headerNameIn ||
-        m.contentTypeIn ||
-        m.inputTypeIn ||
-        rule.compiledKey ||
-        rule.compiledValue ||
-        m.luhnCandidate ||
-        m.entropyBitsPerCharAtLeast !== undefined
+      m.contentTypeIn ||
+      m.inputTypeIn ||
+      rule.compiledKey ||
+      rule.compiledValue ||
+      m.luhnCandidate ||
+      m.entropyBitsPerCharAtLeast !== undefined
     );
   }
 
@@ -608,11 +610,17 @@ const RESIDUE_PATTERNS: Array<{ label: string; re: RegExp }> = [
   { label: "jwt", re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g },
   { label: "set-cookie", re: /\bset-cookie\s*:\s*\S+=\S+/gi },
   { label: "authorization-header", re: /\bauthorization\s*:\s*\S{12,}/gi },
-  { label: "token-query", re: /[?&](access_token|id_token|refresh_token|api_key|apikey)=[^&\s"]{8,}/gi },
+  {
+    label: "token-query",
+    re: /[?&](access_token|id_token|refresh_token|api_key|apikey)=[^&\s"]{8,}/gi,
+  },
   { label: "private-key", re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/g },
 ];
 
-export function scanForResidue(text: string, extraLiterals: readonly string[] = []): ResidueFinding[] {
+export function scanForResidue(
+  text: string,
+  extraLiterals: readonly string[] = []
+): ResidueFinding[] {
   const findings: ResidueFinding[] = [];
   for (const { label, re } of RESIDUE_PATTERNS) {
     re.lastIndex = 0;

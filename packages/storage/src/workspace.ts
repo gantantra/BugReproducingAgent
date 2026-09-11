@@ -45,7 +45,10 @@ export function findWorkspace(startDir: string = process.cwd()): Workspace | nul
   let dir = resolve(startDir);
   for (let i = 0; i < 24; i++) {
     const candidate = join(dir, WORKSPACE_DIR);
-    if (existsSync(join(candidate, "investigator.db")) || existsSync(join(candidate, "config.yaml"))) {
+    if (
+      existsSync(join(candidate, "investigator.db")) ||
+      existsSync(join(candidate, "config.yaml"))
+    ) {
       return workspacePaths(candidate);
     }
     const parent = dirname(dir);

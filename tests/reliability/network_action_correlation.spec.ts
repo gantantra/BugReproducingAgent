@@ -61,7 +61,10 @@ describe("network action correlation", () => {
 
       // 2. Attribution is by START seq. For each request phase after `request`, the window it
       //    reports must be the window of its own `request` phase, not of its own position.
-      const startWindowByKey = new Map<string, { actionId?: string; window: string; seq: number }>();
+      const startWindowByKey = new Map<
+        string,
+        { actionId?: string; window: string; seq: number }
+      >();
       for (const e of doc.events) {
         if (e.request?.phase !== "request") continue;
         startWindowByKey.set(`${e.request.requestKey}#${e.seq}`, {
@@ -77,9 +80,10 @@ describe("network action correlation", () => {
         if (e.request?.phase !== "request") continue;
         const containing = windows.find((w) => e.seq >= w.startSeq && e.seq <= w.endSeq);
         if (containing) {
-          expect(e.actionId, `request at seq ${e.seq} should belong to ${containing.actionId}`).toBe(
-            containing.actionId
-          );
+          expect(
+            e.actionId,
+            `request at seq ${e.seq} should belong to ${containing.actionId}`
+          ).toBe(containing.actionId);
           expect(e.window).toBe("in-action");
         } else {
           expect(e.actionId).toBeUndefined();
@@ -87,9 +91,7 @@ describe("network action correlation", () => {
       }
 
       // 3. A request that finished in a later window records finishedInActionId.
-      const straddlers = doc.events.filter(
-        (e) => e.request?.finishedInActionId !== undefined
-      );
+      const straddlers = doc.events.filter((e) => e.request?.finishedInActionId !== undefined);
       for (const s of straddlers) {
         expect(s.request!.finishedInActionId).not.toBe(s.actionId);
       }

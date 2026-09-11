@@ -63,8 +63,7 @@ rules:
     stage: collection
 
   - id: bearer-and-jwt-anywhere
-    appliesTo:
-      [console.text, network.responseBody, dom.text, storage.values, exception.message]
+    appliesTo: [console.text, network.responseBody, dom.text, storage.values, exception.message]
     match:
       valueMatches: "(?i)bearer\\s+[A-Za-z0-9._~+/=-]{16,}|eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}"
     action: mask-match
@@ -96,7 +95,7 @@ rules:
     # The regex bounds WHAT gets masked; luhnCandidate alone matches the whole value, which
     # under mask-match would wipe an entire page body rather than the number inside it.
     match:
-      valueMatches: '(?<![0-9])(?:[0-9][ -]?){12,18}[0-9](?![0-9])'
+      valueMatches: "(?<![0-9])(?:[0-9][ -]?){12,18}[0-9](?![0-9])"
     action: mask-match
 
   - id: pii-govt-id-in

@@ -135,7 +135,12 @@ describe("one manifest per run", () => {
           timezoneId: "UTC",
           colorScheme: "light",
         },
-        browser: { engine: "chromium", playwrightVersion: "x", browserVersion: "y", headless: true },
+        browser: {
+          engine: "chromium",
+          playwrightVersion: "x",
+          browserVersion: "y",
+          headless: true,
+        },
       },
       versions: { collectorVersion: "1", normalizerVersion: "1", extractorVersion: "1" },
       target: { name: "t", baseUrl: "http://127.0.0.1:1", classification: "fixture" },

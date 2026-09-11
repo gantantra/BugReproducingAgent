@@ -1,0 +1,634 @@
+You are a principal product architect, staff-level SDET, browser automation expert, and AI systems engineer. You will work in plan mode first, then implement milestone by milestone with explicit human approval gates. Do not skip gates. Do not proceed past a HALT without explicit `proceed` from the user.
+
+================================================================
+MISSION
+================================================================
+
+Build a standalone local CLI agent that investigates intermittent Chrome-based web issues.
+
+The agent:
+- Accepts reported intermittent Chrome web issues from authorized users
+- Converts them into structured flows and ranked experiments
+- Executes approved experiments in Playwright with deterministic evidence capture
+- Normalizes and redacts evidence deterministically
+- Uses DeepSeek to interpret, prioritize, cluster, compare, and explain
+- Produces minimized reproductions, passing controls, and Jira-ready reports
+- Keeps humans in control at three approval gates
+
+The agent is not a generic test generator, log viewer, session recorder, or replacement for QA, developers, or observability tooling. It investigates a defined class of issues: Chrome desktop and Chrome mobile-emulated web, reproducible at least occasionally, observable from the browser and client boundary, in authorized test environments.
+
+================================================================
+GOVERNING PRINCIPLE
+================================================================
+
+Playwright produces evidence. Deterministic software normalizes and measures evidence. DeepSeek interprets and prioritizes evidence. Humans authorize consequential transitions.
+
+This sentence must appear verbatim in CLAUDE.md, docs/architecture/overview.md, and every ADR that touches execution, evidence, or AI.
+
+================================================================
+NON-NEGOTIABLE PRINCIPLES
+================================================================
+
+- Browser execution and evidence capture are deterministic.
+- DeepSeek is never in the execution loop.
+- Every AI output is untrusted until schema-validated and reference-validated.
+- Every analytical claim carries explicit, validated evidence references.
+- No AI output is persisted if it fails schema or reference validation.
+- Every AI flow has an explicit tool allowlist and a bounded budget.
+- Budget exhaustion returns a typed partial or inconclusive result.
+- Missing, partial, redacted, unsupported, and corrupted evidence is represented explicitly.
+- Confirmed root cause requires approved direct evidence. A passing control supports a trigger hypothesis, not a root-cause claim.
+
+================================================================
+STANDALONE MVP DECISION
+================================================================
+
+The initial product must run as a local CLI agent without PostgreSQL, Redis, S3, MinIO, Kubernetes, or a separate API service.
+
+Required runtime: Node.js, Chrome or bundled Chromium, DeepSeek API key, local disk.
+
+Implement storage and orchestration behind interfaces: MetadataStore, ArtifactStore, WorkQueue, SecretStore.
+
+Initial adapters:
+- SQLite metadata and lineage storage (WAL mode, single writer, configured busy timeout, short transactions)
+- Local filesystem artifact storage
+- SQLite-backed durable job table
+- Environment-variable secret access
+- One local Playwright worker with bounded concurrency
+
+Design but do not implement initially: PostgreSQL, S3 or MinIO, BullMQ and Redis, central secret manager, distributed browser workers.
+
+Local workspace layout:
+
+.investigator/
+  investigator.db
+  config.yaml
+  prompts/
+  investigations/
+    INV-001/
+      manifests/
+      normalized/
+      artifacts/
+      reports/
+      reproducer/
+
+================================================================
+TECH STACK
+================================================================
+
+- TypeScript monorepo, pnpm, Turborepo
+- CLI: Node + Commander or equivalent
+- Browser: Playwright with Chromium
+- Validation: Zod or JSON Schema, versioned
+- Storage: SQLite + local filesystem
+- LLM: DeepSeek via OpenAI-compatible HTTP API, server-side only, behind an LlmProvider adapter
+- Optional local web UI later
+
+================================================================
+REPOSITORY SKELETON
+================================================================
+
+/investigator
+  /apps
+    /cli
+    /ui              (optional later)
+  /packages
+    /core
+    /lineage
+    /execution
+    /evidence
+    /ai-gateway
+    /ai-flows
+    /tools
+    /approvals
+    /storage
+    /reporting
+    /test-fixtures
+  /ai
+    /flows
+      /intake_to_flow
+      /propose_experiments
+      /classify_runs
+      /analyze_pass_fail
+      /suggest_minimization
+      /generate_report
+  /schemas
+  /docs
+    /architecture
+    /adrs
+    /security
+    /milestones
+    /evaluation
+    /acceptance-tests
+  /eval
+    /datasets
+    /harness
+    /reports
+  /tests
+    /reliability
+  CLAUDE.md
+
+================================================================
+FROZEN M0 DECISIONS
+================================================================
+
+1. Durable queue: SQLite-backed job table.
+2. SQLite behavior: WAL mode, single writer, configured busy timeout, short transactions.
+3. M1 performance fixture: deterministic local fixture sized for 100 sequential runs inside the agreed CI budget.
+4. Approval mechanism: file-based, SHA-256 checksum-bound.
+5. Reference validation (MVP): ownership, type validity, field existence, exact field match. Free-form semantic entailment is out of scope.
+6. Secret handling: DEEPSEEK_API_KEY from environment only. Never logged, never persisted, never written to artifacts.
+
+Queue model:
+
+JobState: PENDING | CLAIMED | RUNNING | TERMINAL
+JobTerminalReason: COMPLETED | INTERRUPTED | WORKER_ERROR
+RunOutcome: VALID_COMPLETED | PRODUCT_FAILED | AUTOMATION_FAILED | INFRASTRUCTURE_FAILED | INTERRUPTED | INCONCLUSIVE
+
+Rules:
+- Job lifecycle and run outcome are separate dimensions.
+- JobState=TERMINAL, JobTerminalReason=COMPLETED, RunOutcome=PRODUCT_FAILED is a successful worker execution that captured a valid product failure. It counts toward product-failure frequency.
+- A worker restart converts stale CLAIMED or RUNNING jobs to TERMINAL/INTERRUPTED with RunOutcome=INTERRUPTED. Stale jobs are never silently re-run.
+- Retries are new job attempts linked to the prior attempt, not mutations of history.
+- Test repetition and infrastructure retry are separate counters. A product failure is never hidden by retry.
+
+Redaction boundary:
+
+Raw sensitive evidence may exist only in bounded process memory during collection and transformation. It must be redacted before durable persistence, provider transmission, normalized indexing, diagnostic logging, report generation, or any artifact export. Buffers are released after processing. The agent disables its own crash-dump, heap-snapshot, and verbose-log paths that would persist unredacted in-process data. OS-level paging and kernel mechanisms are documented as residual risk in the security model.
+
+================================================================
+CLI CONTRACT
+================================================================
+
+investigate init
+investigate intake --from <file>
+investigate plan
+investigate approve <gate> --from <file> --checksum <sha256>
+investigate run
+investigate classify
+investigate suite generate
+investigate frequency run
+investigate minimize
+investigate revalidate
+investigate report
+investigate export
+
+Gates: experiment_selection, target_failure, final_reproduction.
+
+Approvals are file-based and checksum-bound to the proposal. No silent auto-approval.
+
+Config file:
+
+llm:
+  provider: deepseek
+  baseUrl: env:DEEPSEEK_BASE_URL
+  apiKeyEnv: DEEPSEEK_API_KEY
+  aliases:
+    FAST_MODEL:
+      modelId: env:DEEPSEEK_FAST_MODEL
+      inferenceMode: non-thinking
+    REASONING_MODEL:
+      modelId: env:DEEPSEEK_REASONING_MODEL
+      inferenceMode: thinking
+    FALLBACK_MODEL:
+      modelId: env:DEEPSEEK_FALLBACK_MODEL
+      inferenceMode: non-thinking
+  capabilitiesCacheTtlSeconds: 3600
+  budgets:
+    perInvestigationUsd: 5
+    perCallTokens: 32000
+storage:
+  metadata: sqlite
+  artifacts: local
+  queue: local
+  redactionPolicy: policies/default.yaml
+execution:
+  browser: chromium
+  workers: 1
+  maxParallelRuns: 1
+approvals:
+  required: [experiment_selection, target_failure, final_reproduction]
+
+================================================================
+PROVIDER CONTRACT
+================================================================
+
+interface LlmProvider {
+  complete(req: LlmRequest): Promise<LlmResponse>;
+  capabilities(alias: ModelAlias): Promise<ModelCapabilities>;
+}
+
+type ModelAlias = "FAST_MODEL" | "REASONING_MODEL" | "FALLBACK_MODEL";
+
+interface LlmRequest {
+  alias: ModelAlias;
+  system: string;
+  messages: LlmMessage[];
+  responseSchema?: JsonSchema;
+  tools?: ToolSpec[];
+  maxTokens: number;
+  temperature: number;
+  timeoutMs: number;
+  requestId: string;
+}
+
+interface LlmResponse {
+  rawText: string;
+  parsed?: unknown;
+  toolCalls?: ToolCall[];
+  usage: { promptTokens: number; completionTokens: number; totalTokens: number };
+  provider: string;
+  modelId: string;
+  modelVersion?: string;
+  inferenceMode?: string;
+  latencyMs: number;
+  finishReason: string;
+  warnings: string[];
+}
+
+interface ModelCapabilities {
+  jsonMode: CapabilitySupport;
+  toolCalls: CapabilitySupport;
+  thinkingMode: CapabilitySupport;
+  contextWindow: number;
+  maxOutputTokens: number;
+}
+
+type CapabilitySupport = "supported" | "unsupported" | "unknown";
+
+Rules:
+- Model aliases are config-driven. Never guess. Never silently substitute.
+- Do not assume the provider exposes a model catalog.
+- Run bounded startup probes. Record observed behavior. Disable unsupported functionality.
+- Record provider, model ID, model version, inference mode, prompt version, params, usage, latency, warnings for every call.
+- Provider-specific response shapes never leak past the adapter.
+- Provider unavailability must not corrupt deterministic execution evidence.
+- Error taxonomy: AUTH, RATE_LIMIT, TIMEOUT, INVALID_OUTPUT, SCHEMA_MISMATCH, REFERENCE_MISMATCH, PROVIDER_UNAVAILABLE, COST_EXCEEDED.
+- Retry, backoff, and circuit-breaker policy must be explicit.
+
+JSON mode only guarantees parseable JSON where supported. It does not replace application-side schema validation.
+
+For every AI result:
+1. Parse.
+2. Validate against the versioned application schema.
+3. Reject unknown fields where appropriate.
+4. Validate every reference against actual IDs in the input.
+5. Reject unsupported actions or fabricated evidence references.
+6. Attempt one bounded repair call.
+7. On failure, return typed AI_INVALID_OUTPUT.
+8. Never silently substitute guessed values.
+
+================================================================
+AI FLOW ARTIFACTS
+================================================================
+
+Each flow is a versioned artifact, not an inline prompt:
+
+/ai/flows/<flow-id>/
+  flow.yaml
+  system.md
+  examples.jsonl
+  eval/
+
+flow.yaml example:
+
+id: intake_to_flow
+version: 1.0.0
+modelAlias: FAST_MODEL
+tools: []
+inputSchema: schemas/intake.input.v1.json
+outputSchema: schemas/intake.output.v1.json
+budget:
+  maxTurns: 3
+  maxToolCalls: 0
+  maxEvidenceBytes: 0
+  maxInputTokens: 6000
+  maxOutputTokens: 2000
+  maxCostUsd: 0.05
+  maxWallClockMs: 60000
+validation:
+  schemaStrict: true
+  rejectUnknownFields: true
+  referenceCheck: true
+  repairAttempts: 1
+
+================================================================
+AGENT TOOL ALLOWLIST PER FLOW
+================================================================
+
+intake_to_flow: none
+
+propose_experiments:
+- get_flow
+- get_application_constraints
+- get_previous_experiment_summary
+
+classify_runs:
+- get_run_summary
+- get_action_timeline
+- get_console_events
+- get_exception_events
+- get_failure_signature
+
+analyze_pass_fail:
+- compare_run_timelines
+- get_request
+- get_response_excerpt
+- get_dom_diff
+- get_storage_diff
+
+suggest_minimization:
+- get_failure_signature
+- get_sequence
+- get_previous_minimization_results
+
+generate_report:
+- get_investigation_summary
+- get_approved_findings
+- get_validation_results
+- get_artifact_references
+
+Every tool is read-only for MVP. Every tool returns normalized, redacted, schema-validated facts. No tool returns raw artifacts. No tool triggers execution.
+
+================================================================
+EVIDENCE NORMALIZATION PLANE
+================================================================
+
+Pipeline:
+
+Raw Chrome evidence
+  -> parsing
+  -> normalization
+  -> redaction and policy enforcement
+  -> deterministic feature extraction
+  -> evidence index and session timeline
+  -> AI Gateway
+
+Deterministic extraction must produce:
+- HTTP status distributions
+- request-duration differences
+- request ordering
+- aborted-request counts
+- console-error counts
+- exception fingerprints
+- assertion outcomes
+- DOM-diff summaries
+- storage changes
+- navigation differences
+- evidence completeness
+- artifact integrity
+- run validity
+- basic frequency statistics
+
+DeepSeek receives extracted facts, not raw archives.
+
+Capture completeness must be recorded per run and per category:
+
+{
+  "captureStatus": {
+    "actions": "complete",
+    "console": "complete",
+    "networkMetadata": "complete",
+    "responseBodies": "partial",
+    "domSnapshots": "complete",
+    "webSocketFrames": "unsupported",
+    "video": "complete"
+  },
+  "limitations": [
+    "Three response bodies exceeded the configured size limit.",
+    "WebSocket frame capture is disabled in this collector version."
+  ]
+}
+
+Use precise language: "the configured, technically accessible, authorized, and successfully collected client-observable evidence." Do not claim capture of literally all browser-visible data.
+
+================================================================
+DOMAIN SCHEMAS
+================================================================
+
+Versioned schemas required for:
+Flow, Action, ExperimentProposal, RunManifest, EvidenceEvent, CaptureStatus,
+FailureSignature, RunClassification, Finding (with evidence references),
+LineageRecord, ApprovalRecord, ReproducerPackage, FinalReport, FlowArtifact,
+ToolCall, ToolResult.
+
+Every schema versioned. Every persisted record validated.
+
+================================================================
+EVIDENCE REFERENCE MODEL
+================================================================
+
+Every analytical claim:
+
+{
+  "findingId": "FIND-14",
+  "level": "correlated_difference",
+  "statement": "...",
+  "supportingEvidence": [
+    { "runId": "RUN-17", "eventIds": ["EV-122"], "artifactIds": ["TRACE-17"] }
+  ],
+  "contradictingEvidence": [],
+  "confidence": 0.89
+}
+
+Levels: observed, correlated, probable_trigger, high_confidence_trigger, confirmed_trigger, root_cause_hypothesis, confirmed_root_cause.
+
+Reference validation confirms: investigation exists; run belongs to investigation; event belongs to run; artifact exists; artifact type is valid for the claim; cited field exists and matches; no reference to redacted or inaccessible content.
+
+MVP scope for semantic validation: existence, ownership, type validity, field presence and match. Free-form entailment is out of scope.
+
+Hard fail if the model claims confirmed_root_cause without approved direct evidence: source-code evidence approved by a human, instrumented state demonstrating the faulty transition, approved engineering diagnosis, or a controlled experiment proving the asserted mechanism.
+
+================================================================
+CHROME MOBILE CLARIFICATION
+================================================================
+
+For MVP, "Chrome mobile" means Chromium with explicit mobile-emulation parameters: viewport, screen dimensions, device scale factor, user agent, mobile layout behavior, touch support, locale and timezone when configured, network and CPU profiles when configured.
+
+Each run manifest stores resolved emulation values, not only the device profile name. No claim of real Android Chrome, GPU behavior, physical touch hardware, OS behavior, real-device resource constraints, or native apps.
+
+================================================================
+HUMAN APPROVAL GATES
+================================================================
+
+Gate 1: experiment_selection. Approve none, some, or all ranked sequences. Edit actions, assertions, ordering, repetitions, safety.
+
+Gate 2: target_failure. Approve or correct target failure signature and run clusters.
+
+Gate 3: final_reproduction. Approve, edit, reject, or request further reduction.
+
+All approvals are file-based, checksum-bound, and recorded in lineage.
+
+================================================================
+LINEAGE
+================================================================
+
+Preserve lineage across:
+user-reported flow -> agent interpretation -> proposed experiment -> user-approved experiment -> executed run -> approved failure signature -> minimized candidate -> validated reproduction -> generated static test -> final issue report.
+
+================================================================
+MILESTONES
+================================================================
+
+M0: Architecture, ADRs, schemas, contracts, repo skeleton, milestone specs, acceptance tests.
+M1: Standalone foundation + Playwright execution + run manifest + evidence capture + reliability gate.
+M2: Lineage + approval gates + CLI workflow.
+M3: AI Gateway + AI flow artifacts + intake_to_flow + propose_experiments + eval harness for these two.
+M4: classify_runs + analyze_pass_fail + eval gates.
+M5: Frequency execution + statistics.
+M6: suggest_minimization + revalidation + controls.
+M7: Reproducer package + generate_report.
+M8: Hardening, redaction policy, retention, eval suite expansion.
+
+Each milestone must define: entry criteria, exit criteria, scope, out of scope, interfaces touched, acceptance tests, eval gates (if AI), demo command, risks.
+
+M2 may not begin until M1 Reliability Gate passes in CI.
+
+================================================================
+M1 RELIABILITY GATE
+================================================================
+
+Executable tests, not prose:
+
+/tests/reliability/
+  same_test_100_runs.spec.ts
+  one_manifest_per_run.spec.ts
+  monotonic_timestamps.spec.ts
+  network_action_correlation.spec.ts
+  no_retry_hides_product_failure.spec.ts
+  artifact_integrity_hashes.spec.ts
+  redaction_before_persistence.spec.ts
+  interrupted_worker_typed_outcome.spec.ts
+  fixture_app_classification.spec.ts
+  offline_session_reconstruction.spec.ts
+
+Each has a fixture app, a fixture test, and a pass criterion. All must pass in CI before M2.
+
+Fixture apps required in /packages/test-fixtures:
+- passing app
+- product-failing app (deterministic)
+- product-failing app (intermittent, seeded)
+- automation-failing app
+- infrastructure-failing app
+
+================================================================
+EVAL HARNESS
+================================================================
+
+/eval/datasets: intake, classify, analyze, minimize, report
+/eval/harness: runner.ts, scorer.ts, judge.ts (deterministic first; LLM judge secondary only)
+
+Scoring:
+- intake: structural match + reference validity
+- classify: confusion matrix per class
+- analyze: precision/recall on injected known differences; hard fail on unsupported confirmed_root_cause
+- minimize: reduction ratio vs retained reproduction rate
+- report: required fields present, references valid, no fabricated evidence
+
+M3 is not "integrate DeepSeek." M3 is "pass the eval harness for intake_to_flow and propose_experiments."
+
+================================================================
+SECURITY AND PRIVACY
+================================================================
+
+- DEEPSEEK_API_KEY from environment only. Never logged, never persisted, never written to artifacts.
+- Redaction before any evidence is persisted or sent to the provider.
+- Redact cookies, tokens, auth headers, PII, query secrets, session IDs, response bodies.
+- Role-based artifact access is out of MVP scope. Artifact access is local-user only.
+- Configurable retention and cleanup for the local workspace.
+- Destructive actions require explicit approval and per-sequence safety flags.
+- Execution budgets, stop conditions, and production-impact guards.
+
+================================================================
+EXECUTION PLAN
+================================================================
+
+Phase A — Plan mode only. No production code.
+1. Produce M0 artifacts under /docs and /schemas, with ADRs under /docs/adrs:
+   - architecture overview and components
+   - CLI contract and config schema
+   - domain schemas (all listed above, versioned)
+   - LlmProvider contract and DeepSeek adapter design
+   - AI flow artifact structure and per-flow specs
+   - agent tool allowlists and budgets per flow
+   - Evidence Normalization Plane design
+   - evidence reference model and root-cause vocabulary
+   - capture completeness model
+   - approval state machine and CLI UX
+   - lineage model
+   - security and redaction model
+   - test-data, setup, cleanup, side-effect controls
+   - reliability strategy and M1 Reliability Gate test list
+   - eval harness design and per-milestone eval gates
+   - milestone plan M0–M8 with entry/exit criteria and demo commands
+   - build-vs-buy decisions
+   - risks, failure modes, mitigations
+   - acceptance criteria and success metrics
+   - end-to-end example covering every stage
+   - open questions requiring human decisions
+
+2. Write CLAUDE.md with the governing principle and repo-wide rules.
+3. Create /docs/FREEZE-M0.md template for review.
+4. Do not scaffold the repository yet. Do not write production code.
+
+HALT. Report M0 artifacts, open questions, and await `proceed`.
+
+Phase B — Scaffold and M1. After `proceed`:
+1. Scaffold the monorepo foundation: pnpm workspace, Turborepo, all packages, CLI with `--help`, TypeScript config, ESLint, Prettier, Vitest, .gitignore excluding .investigator/, node_modules/, dist/, and CLAUDE.md.
+2. Implement M1 only:
+   - config loader (config.yaml + env overrides)
+   - SQLite adapter (WAL, single writer, busy timeout, migrations)
+   - local filesystem artifact adapter with integrity hashes
+   - SQLite-backed durable job queue with JobState / JobTerminalReason / RunOutcome separation
+   - one Playwright worker with bounded concurrency
+   - immutable run manifest writer
+   - evidence collector: actions, navigation, console, exceptions, network metadata, DOM snapshots, screenshots, video, trace
+   - redaction layer applied before persistence
+   - capture completeness recorded per category
+   - five fixture apps (passing, product-failing deterministic, product-failing intermittent seeded, automation-failing, infrastructure-failing)
+   - all ten reliability tests implemented and passing
+3. Do not implement AI flows. Do not call DeepSeek. Do not implement approval gates. Do not implement lineage beyond run manifests.
+
+Rules during Phase B:
+- Do not implement functionality assigned to later milestones.
+- Do not hard-code DeepSeek model names, endpoints, or capability assumptions.
+- Do not call the LlmProvider from the execution loop, evidence collector, or browser worker.
+- Do not persist unredacted evidence.
+- Do not log or persist DEEPSEEK_API_KEY.
+- Keep provider-specific code behind the adapter interface even if unused in M1.
+- Add unit, integration, and end-to-end tests required by M1.
+
+HALT. Report files changed, tests added, commands run, test results, known limitations, demo procedure, and evidence that every M1 exit criterion was met. Await `proceed`.
+
+Phase C — After M1 passes in CI, proceed milestone by milestone. For each subsequent milestone:
+1. Read CLAUDE.md, the milestone doc, applicable ADRs, applicable schemas.
+2. Summarize intended changes.
+3. List inconsistencies or missing dependencies.
+4. Resolve in favor of approved architecture; record deviations as ADRs.
+5. Implement only the current milestone.
+6. Add required unit, integration, and end-to-end tests.
+7. Add eval cases if the milestone touches AI flows.
+8. Run all acceptance tests. Run eval gates for AI milestones.
+9. HALT. Report and await `proceed` before the next milestone.
+
+================================================================
+REPORTING FORMAT AFTER EACH PHASE
+================================================================
+
+Files changed
+Architecture decisions made
+Tests added and commands run
+Test results
+Eval results (if applicable)
+Known limitations
+Unfinished requirements for this milestone
+Demo procedure
+Evidence that every exit criterion was met
+
+Do not begin the next milestone without explicit `proceed`.
+
+================================================================
+FIRST ACTION
+================================================================
+
+Begin Phase A now. Produce M0 artifacts only. Then HALT and wait.

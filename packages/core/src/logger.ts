@@ -129,7 +129,9 @@ export class Logger {
       .filter(([, v]) => v !== null)
       .map(([k, v]) => `${k}=${typeof v === "string" ? v : String(v)}`)
       .join(" ");
-    this.sink.write(`${level.toUpperCase().padEnd(5)} ${safeMessage}${rendered ? "  " + rendered : ""}`);
+    this.sink.write(
+      `${level.toUpperCase().padEnd(5)} ${safeMessage}${rendered ? "  " + rendered : ""}`
+    );
   }
 
   error(message: string, fields: LogFields = {}): void {
@@ -172,7 +174,9 @@ export interface UnsafeDiagnosticsReport {
   findings: string[];
 }
 
-export function detectUnsafeDiagnostics(env: NodeJS.ProcessEnv = process.env): UnsafeDiagnosticsReport {
+export function detectUnsafeDiagnostics(
+  env: NodeJS.ProcessEnv = process.env
+): UnsafeDiagnosticsReport {
   const findings: string[] = [];
   const nodeOptions = env["NODE_OPTIONS"] ?? "";
   const dangerous = [

@@ -88,7 +88,11 @@ export interface RawRequestEvent extends RawEventBase {
   headerValues?: Record<string, string>;
   requestBodyBytes?: number | null;
   responseBodyBytes?: number | null;
-  timing?: { startDeltaMs: number; responseStartDeltaMs?: number | null; responseEndDeltaMs?: number | null };
+  timing?: {
+    startDeltaMs: number;
+    responseStartDeltaMs?: number | null;
+    responseEndDeltaMs?: number | null;
+  };
 }
 
 export interface RawResponseBodyEvent extends RawEventBase {

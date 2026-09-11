@@ -32,14 +32,18 @@ function mapJob(row: Row): JobRow {
     experimentId: String(row["experiment_id"]),
     repetitionIndex: Number(row["repetition_index"]),
     attemptIndex: Number(row["attempt_index"]),
-    previousAttemptJobId: row["previous_attempt_job_id"] == null ? null : String(row["previous_attempt_job_id"]),
+    previousAttemptJobId:
+      row["previous_attempt_job_id"] == null ? null : String(row["previous_attempt_job_id"]),
     seq: Number(row["seq"]),
     approvalId: row["approval_id"] == null ? null : String(row["approval_id"]),
     effectiveProposalChecksum:
-      row["effective_proposal_checksum"] == null ? null : String(row["effective_proposal_checksum"]),
+      row["effective_proposal_checksum"] == null
+        ? null
+        : String(row["effective_proposal_checksum"]),
     payloadJson: String(row["payload_json"]),
     state: String(row["state"]) as JobState,
-    terminalReason: row["terminal_reason"] == null ? null : (String(row["terminal_reason"]) as JobTerminalReason),
+    terminalReason:
+      row["terminal_reason"] == null ? null : (String(row["terminal_reason"]) as JobTerminalReason),
     runOutcome: row["run_outcome"] == null ? null : (String(row["run_outcome"]) as RunOutcome),
     workerId: row["worker_id"] == null ? null : String(row["worker_id"]),
     leaseExpiresAt: row["lease_expires_at"] == null ? null : Number(row["lease_expires_at"]),
@@ -234,7 +238,8 @@ export class SqliteWorkQueue implements WorkQueue {
         )
         .run(terminal.reason, terminal.runOutcome, this.clock.nowIso(), jobId);
       if (res.changes === 0) {
-        const row = this.db.prepare("SELECT state FROM jobs WHERE job_id = ?").get(jobId) as Row | undefined;
+        const row = this.db.prepare("SELECT state FROM jobs WHERE job_id = ?").get(jobId) as
+          Row | undefined;
         if (!row) fail("INTERNAL", "Cannot finish an unknown job", { context: { jobId } });
         fail("INTERNAL", "Job is already TERMINAL. TERMINAL is absorbing.", {
           context: { jobId, state: String(row["state"]) },
@@ -278,7 +283,8 @@ export class SqliteWorkQueue implements WorkQueue {
   }
 
   async getJob(jobId: string): Promise<JobRow | null> {
-    const row = this.db.prepare("SELECT * FROM jobs WHERE job_id = ?").get(jobId) as Row | undefined;
+    const row = this.db.prepare("SELECT * FROM jobs WHERE job_id = ?").get(jobId) as
+      Row | undefined;
     return row ? mapJob(row) : null;
   }
 
@@ -324,7 +330,8 @@ export class SqliteWorkQueue implements WorkQueue {
       }
       const outcome = r["run_outcome"] == null ? null : (String(r["run_outcome"]) as RunOutcome);
       if (outcome) out.byOutcome[outcome] = (out.byOutcome[outcome] ?? 0) + count;
-      const reason = r["terminal_reason"] == null ? null : (String(r["terminal_reason"]) as JobTerminalReason);
+      const reason =
+        r["terminal_reason"] == null ? null : (String(r["terminal_reason"]) as JobTerminalReason);
       if (reason) out.byTerminalReason[reason] = (out.byTerminalReason[reason] ?? 0) + count;
     }
     return out;
@@ -340,7 +347,10 @@ export class SqliteWorkQueue implements WorkQueue {
     investigationId: string,
     experimentId?: string
   ): Promise<{
-    perRepetition: Map<number, { outcome: RunOutcome | null; jobId: string | null; attemptIndex: number }>;
+    perRepetition: Map<
+      number,
+      { outcome: RunOutcome | null; jobId: string | null; attemptIndex: number }
+    >;
     noValidObservation: number[];
   }> {
     const rows = (

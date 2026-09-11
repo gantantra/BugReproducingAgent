@@ -1,13 +1,19 @@
-# M1 Reliability Gate.
+# ============================================================================================
+# NON-AUTHORITATIVE. This workflow is NOT the gate.
 #
-# UNVERIFIED: open question Q3 (which CI, which runner class) is unanswered, so this workflow
-# has never executed. It is the reference implementation of the gate, written so that answering
-# Q3 is a matter of pointing it at a runner rather than designing the pipeline.
+# Open question Q3 was answered on 2026-09-11: GitLab CI is the authoritative CI provider
+# (docs/m0-decisions.md, decision 5). The gate lives in `.gitlab-ci.yml`.
 #
-# The stated M2 entry criterion is "M1 Reliability Gate passes in CI". Until this runs green on
-# a real runner, that criterion is NOT met, regardless of local results.
+# This file is retained only as a reference translation for anyone mirroring the repository to
+# GitHub. It has never executed. Nothing in the project's exit criteria reads it, and a green run
+# here would not satisfy any milestone gate. Do not add stages here expecting them to be enforced:
+# add them to `.gitlab-ci.yml`, which is the file that runs.
+#
+# If the mirror is ever retired, delete this file rather than leaving two configurations that
+# both look like the main gate.
+# ============================================================================================
 
-name: reliability-gate
+name: reliability-gate (non-authoritative mirror)
 
 on:
   push:

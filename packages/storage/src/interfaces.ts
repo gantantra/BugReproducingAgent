@@ -141,7 +141,12 @@ export interface MetadataTx extends MetadataReadTx {
     runId: string,
     fields: Pick<
       RunRecord,
-      "outcome" | "outcomeRuleId" | "manifestArtifactId" | "manifestSealHash" | "finishedAt" | "durationMs"
+      | "outcome"
+      | "outcomeRuleId"
+      | "manifestArtifactId"
+      | "manifestSealHash"
+      | "finishedAt"
+      | "durationMs"
     >
   ): Promise<void>;
   insertArtifactRef(rec: ArtifactRefRecord): Promise<void>;

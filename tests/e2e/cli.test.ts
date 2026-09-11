@@ -125,7 +125,12 @@ describe("investigate CLI", () => {
     expect(combined).not.toContain("sk-must-not-appear-in-output-123456");
 
     const parsed = JSON.parse(r.stdout) as {
-      config: { apiKeyConfigured: boolean; apiKeyEnv: string; baseUrlHost: string; journalMode: string };
+      config: {
+        apiKeyConfigured: boolean;
+        apiKeyEnv: string;
+        baseUrlHost: string;
+        journalMode: string;
+      };
       redaction: { policyId: string; mode: string };
     };
     // The variable NAME and the fact it is configured are safe and useful. The value is not.
@@ -147,7 +152,9 @@ describe("investigate CLI", () => {
     };
     const r = invoke(["doctor", "--json"], dir, env);
     expect(r.status).toBe(EXIT.OK);
-    expect((JSON.parse(r.stdout) as { config: { apiKeyConfigured: boolean } }).config.apiKeyConfigured).toBe(false);
+    expect(
+      (JSON.parse(r.stdout) as { config: { apiKeyConfigured: boolean } }).config.apiKeyConfigured
+    ).toBe(false);
   });
 
   it("unimplemented commands exit 1 and name their milestone", () => {
@@ -207,7 +214,10 @@ describe("investigate CLI", () => {
       DEEPSEEK_FALLBACK_MODEL: "m3",
     });
     expect(allowed.status).toBe(EXIT.OK);
-    expect((JSON.parse(allowed.stdout) as { safety: { unsafeDiagnostics: boolean } }).safety.unsafeDiagnostics).toBe(true);
+    expect(
+      (JSON.parse(allowed.stdout) as { safety: { unsafeDiagnostics: boolean } }).safety
+        .unsafeDiagnostics
+    ).toBe(true);
   });
 
   it("reports a missing workspace as WORKSPACE_NOT_FOUND", () => {

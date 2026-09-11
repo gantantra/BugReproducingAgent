@@ -60,7 +60,9 @@ export async function resolveEmulation(args: ResolveEmulationArgs): Promise<Reso
   const { profile } = args;
   const discrepancies: EmulationDiscrepancy[] = [];
 
-  let observed: Awaited<ReturnType<typeof args.page.evaluate<ReturnType<typeof READ_BACK>>>> | null = null;
+  let observed: Awaited<
+    ReturnType<typeof args.page.evaluate<ReturnType<typeof READ_BACK>>>
+  > | null = null;
   try {
     observed = await args.page.evaluate(READ_BACK);
   } catch {
@@ -69,7 +71,11 @@ export async function resolveEmulation(args: ResolveEmulationArgs): Promise<Reso
     discrepancies.push({ field: "readBack", requested: "available", observed: "unavailable" });
   }
 
-  const note = (field: string, requested: string | number | boolean | null, got: string | number | boolean | null): void => {
+  const note = (
+    field: string,
+    requested: string | number | boolean | null,
+    got: string | number | boolean | null
+  ): void => {
     if (requested !== got) discrepancies.push({ field, requested, observed: got });
   };
 
@@ -114,7 +120,11 @@ export async function resolveEmulation(args: ResolveEmulationArgs): Promise<Reso
           ? "reduce"
           : "no-preference"
         : (profile.reducedMotion ?? "no-preference"),
-      forcedColors: observed ? (observed.forcedColors ? "active" : "none") : (profile.forcedColors ?? "none"),
+      forcedColors: observed
+        ? observed.forcedColors
+          ? "active"
+          : "none"
+        : (profile.forcedColors ?? "none"),
       network: profile.network ?? null,
       cpu: profile.cpu ?? null,
       geolocation: null,
