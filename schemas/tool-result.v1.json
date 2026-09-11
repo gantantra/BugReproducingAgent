@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://investigator.local/schemas/tool-result.v1.json",
+  "title": "ToolResult",
+  "description": "The envelope every tool returns. Normalized, redacted, schema-validated facts only. No raw artifact bytes, no base64 blobs. Provenance carries the redaction stamp and the capture-status slice for every category the tool read, so the model can see incompleteness rather than infer absence. Truncation is always explicit.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "toolId", "toolVersion", "ok", "provenance"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "toolId": { "type": "string", "minLength": 1 },
+    "toolVersion": { "type": "string", "minLength": 1 },
+    "ok": { "type": "boolean" },
+    "data": {
+      "description": "Tool-specific payload, validated against that tool result schema. Every citable datum carries an eventId, artifactId, statisticId, or comparisonId so any claim built on it is reference-validatable."
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "enum": ["TOOL_NOT_ALLOWED", "TOOL_INPUT_INVALID", "TOOL_NOT_FOUND", "TOOL_NOT_OWNED",
+                   "TOOL_EVIDENCE_UNAVAILABLE", "TOOL_EVIDENCE_REDACTED", "TOOL_BUDGET_EXCEEDED"]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "detail": {
+          "type": "object",
+          "description": "Primitives only. Never a payload.",
+          "additionalProperties": { "$ref": "common.v1.json#/$defs/jsonPrimitive" }
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["investigationId", "runIds", "normalizerVersion", "extractorVersion",
+                   "redaction", "captureStatusSlice"],
+      "properties": {
+        "investigationId": { "$ref": "common.v1.json#/$defs/investigationId" },
+        "runIds": { "type": "array", "items": { "$ref": "common.v1.json#/$defs/runId" } },
+        "normalizerVersion": { "type": "string", "minLength": 1 },
+        "extractorVersion": { "type": "string", "minLength": 1 },
+        "redaction": { "$ref": "common.v1.json#/$defs/redactionStamp" },
+        "captureStatusSlice": {
+          "type": "object",
+          "description": "Covers every category this tool read. Keyed by category, valued by status.",
+          "minProperties": 0,
+          "additionalProperties": { "$ref": "common.v1.json#/$defs/captureStatusValue" }
+        }
+      }
+    },
+    "truncation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["truncated", "omittedCount", "reason"],
+      "properties": {
+        "truncated": { "const": true },
+        "omittedCount": { "type": "integer", "minimum": 1 },
+        "reason": { "enum": ["MAX_EVIDENCE_BYTES", "MAX_ITEMS"] }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "description": "A successful result carries data; a failed one carries an error.",
+      "if": { "properties": { "ok": { "const": true } }, "required": ["ok"] },
+      "then": { "required": ["ok", "data"], "not": { "required": ["error"] } },
+      "else": { "required": ["ok", "error"] }
+    }
+  ]
+}

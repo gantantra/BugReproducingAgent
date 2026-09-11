@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://investigator.local/schemas/reproducer-package.v1.json",
+  "title": "ReproducerPackage",
+  "description": "A self-contained, standalone-runnable reproduction. Contains the emitted Playwright spec, the resolved emulation values, the seed, the approved signature predicate as an executable assertion, the passing control, and the artifact manifest with hashes. It runs under the Playwright runner with no dependency on the agent.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "reproductionId", "investigationId", "approvalId",
+               "signature", "sequence", "emulation", "seed", "measured", "control",
+               "emittedTest", "artifacts", "boundaryStatement"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "reproductionId": { "$ref": "common.v1.json#/$defs/reproductionId" },
+    "investigationId": { "$ref": "common.v1.json#/$defs/investigationId" },
+    "approvalId": {
+      "$ref": "common.v1.json#/$defs/approvalId",
+      "description": "The gate-3 approval. A package without one cannot be exported."
+    },
+    "candidateId": { "$ref": "common.v1.json#/$defs/candidateId" },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["signatureId", "predicate"],
+      "properties": {
+        "signatureId": { "$ref": "common.v1.json#/$defs/signatureId" },
+        "predicate": { "$ref": "failure-signature.v1.json#/$defs/predicate" }
+      }
+    },
+    "sequence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actions", "assertions", "repetitions"],
+      "properties": {
+        "actions": { "type": "array", "minItems": 1, "items": { "$ref": "action.v1.json" } },
+        "assertions": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "action.v1.json#/$defs/assertion" }
+        },
+        "repetitions": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "emulation": { "$ref": "common.v1.json#/$defs/resolvedEmulation" },
+    "seed": { "type": "integer" },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "baseUrl", "classification"],
+      "properties": {
+        "name": { "type": "string" },
+        "baseUrl": { "type": "string", "format": "uri" },
+        "classification": { "$ref": "common.v1.json#/$defs/targetClassification" },
+        "resetStrategy": { "type": "string" }
+      }
+    },
+    "measured": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["statisticId", "achievedN", "matches", "rate", "interval"],
+      "properties": {
+        "statisticId": { "$ref": "common.v1.json#/$defs/statisticId" },
+        "achievedN": { "type": "integer", "minimum": 1 },
+        "matches": { "type": "integer", "minimum": 0 },
+        "rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "interval": { "$ref": "common.v1.json#/$defs/wilsonInterval" }
+      }
+    },
+    "control": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["variedFactor", "actions", "statisticId", "achievedN", "matches", "rate", "interval"],
+      "description": "The passing control. Null only when none could be constructed, which the report must state explicitly.",
+      "properties": {
+        "variedFactor": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The single factor by which the control differs. Asserted by test to be exactly this factor."
+        },
+        "actions": { "type": "array", "minItems": 1, "items": { "$ref": "action.v1.json" } },
+        "statisticId": { "$ref": "common.v1.json#/$defs/statisticId" },
+        "achievedN": { "type": "integer", "minimum": 1 },
+        "matches": { "type": "integer", "minimum": 0 },
+        "rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "interval": { "$ref": "common.v1.json#/$defs/wilsonInterval" },
+        "intervalsDisjointFromReproduction": { "type": "boolean" }
+      }
+    },
+    "minimization": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "originalActionCount": { "type": "integer", "minimum": 1 },
+        "minimizedActionCount": { "type": "integer", "minimum": 1 },
+        "reductionRatio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "baselineRate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "retentionFraction": { "type": "number", "minimum": 0 },
+        "thresholdMet": { "type": "boolean" },
+        "thresholdWarning": {
+          "type": ["string", "null"],
+          "description": "Set when no candidate met the retention threshold and the operator accepted the best available with the warning recorded."
+        }
+      }
+    },
+    "emittedTest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["filename", "artifactId", "runner"],
+      "properties": {
+        "filename": { "type": "string", "minLength": 1 },
+        "artifactId": { "$ref": "common.v1.json#/$defs/artifactId" },
+        "runner": { "const": "playwright" },
+        "generatorVersion": { "type": "string" }
+      }
+    },
+    "artifacts": { "type": "array", "items": { "$ref": "common.v1.json#/$defs/artifactRef" } },
+    "captureStatusAggregate": {
+      "type": "object",
+      "additionalProperties": { "$ref": "common.v1.json#/$defs/captureStatusValue" }
+    },
+    "boundaryStatement": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The verbatim emulation boundary statement. Required in the package README as well as the report."
+    }
+  }
+}

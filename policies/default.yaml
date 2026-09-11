@@ -1,0 +1,189 @@
+# Default redaction policy.
+#
+# Priority order, from docs/security/redaction-policy.md:
+#   1. Never persist or transmit a secret or PII.
+#   2. Preserve enough structure that the evidence is still diagnostically useful.
+#   3. Be deterministic, versioned, and auditable.
+#   4. Fail closed on anything it cannot classify.
+#
+# Goal 1 outranks goal 2. Where they conflict the value is removed and the category is marked
+# `redacted`, which caps dependent findings at `correlated` (ADR-0016).
+#
+# `stage: collection` rules run at capture time, so the highest-risk values never reach a buffer
+# that outlives the event. Everything else runs at normalization stage 3.
+#
+# The India-specific PII shapes below were inferred from the operating context (open question Q15).
+
+policyId: default
+policyVersion: 1.0.0
+mode: strict
+
+defaults:
+  unknownFieldAction: mask-value
+  valueReplacement: "[redacted]"
+  shapeDescriptor: true
+  maxFieldBytesScanned: 1048576
+
+rules:
+  # --- credentials in transit -------------------------------------------------
+  - id: http-auth-headers
+    appliesTo: [network.requestHeaders, network.responseHeaders]
+    match:
+      headerNameIn:
+        - authorization
+        - proxy-authorization
+        - cookie
+        - set-cookie
+        - x-api-key
+        - x-auth-token
+        - x-csrf-token
+        - x-xsrf-token
+        - x-session-token
+    action: mask-value
+    keepName: true
+    stage: collection
+
+  - id: cookie-values
+    appliesTo: [storage.cookies]
+    match: { any: true }
+    action: hash-value
+    keepName: true
+    keepMetadata: [domain, path, expires, httpOnly, secure, sameSite, size]
+    stage: collection
+    note: >
+      hash-value rather than mask-value so two runs can be shown to have used different session
+      cookies without either value being disclosed.
+
+  - id: url-query-secrets
+    appliesTo: [network.url, navigation.url, action.url]
+    match:
+      queryKeyMatches: "(?i)^(token|access_token|id_token|refresh_token|code|state|nonce|signature|sig|key|apikey|api_key|password|passwd|pwd|secret|session|sid|sessionid|auth|otp|jwt)$"
+    action: mask-value
+    keepName: true
+    stage: collection
+
+  - id: bearer-and-jwt-anywhere
+    appliesTo:
+      [console.text, network.responseBody, dom.text, storage.values, exception.message]
+    match:
+      valueMatches: "(?i)bearer\\s+[A-Za-z0-9._~+/=-]{16,}|eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}"
+    action: mask-match
+
+  - id: private-key-blocks
+    appliesTo: [console.text, network.responseBody, dom.text, storage.values]
+    match:
+      valueMatches: "-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----"
+    action: mask-match
+
+  # --- PII -------------------------------------------------------------------
+  - id: pii-email
+    appliesTo:
+      [console.text, network.responseBody, dom.text, storage.values, network.url, exception.message]
+    match:
+      valueMatches: "[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\\.[A-Za-z]{2,24}"
+    action: mask-match
+    exceptions:
+      domainIn: [example.invalid, example.test, test.invalid, localhost]
+
+  - id: pii-phone-in
+    appliesTo: [console.text, network.responseBody, dom.text, storage.values]
+    match:
+      valueMatches: "(?:\\+91[- ]?)?[6-9]\\d{9}"
+    action: mask-match
+
+  - id: pii-card
+    appliesTo: [console.text, network.responseBody, dom.text, storage.values, action.inputValue]
+    # The regex bounds WHAT gets masked; luhnCandidate alone matches the whole value, which
+    # under mask-match would wipe an entire page body rather than the number inside it.
+    match:
+      valueMatches: '(?<![0-9])(?:[0-9][ -]?){12,18}[0-9](?![0-9])'
+    action: mask-match
+
+  - id: pii-govt-id-in
+    appliesTo: [console.text, network.responseBody, dom.text, storage.values]
+    match:
+      valueMatches: "[A-Z]{5}\\d{4}[A-Z]|\\d{4}\\s?\\d{4}\\s?\\d{4}"
+    action: mask-match
+    note: PAN-shaped and Aadhaar-shaped tokens. Deliberately broad; false positives cost nothing.
+
+  # --- generic high-entropy --------------------------------------------------
+  - id: generic-high-entropy
+    appliesTo:
+      [network.url, storage.values, console.text, network.responseBody, dom.text, exception.message]
+    match:
+      entropyBitsPerCharAtLeast: 3.5
+      minLength: 24
+      charsetIn: [base64url, hex]
+    action: mask-match
+
+  - id: query-secrets-in-text
+    appliesTo: [network.responseBody, dom.text, console.text, exception.message]
+    # Single-quoted so YAML performs no backslash processing and the regex reaches the engine
+    # exactly as written. A doubled '' is a literal apostrophe.
+    match:
+      valueMatches: '(?i)[?&](?:access_token|id_token|refresh_token|api_key|apikey|token|secret|password|auth|jwt|sig|signature|session|sid)=[^&\s"''<>]{8,}'
+    action: mask-match
+    note: >
+      A credential embedded in a captured page body or DOM text is just as persisted as one in a
+      URL. The url-query-secrets rule only sees parsed URL fields, so text needs its own rule.
+
+  - id: aws-key-shaped
+    appliesTo: [network.responseBody, dom.text, console.text, storage.values, network.url]
+    match:
+      valueMatches: "(?:A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{12,}"
+    action: mask-match
+
+  # --- bodies ---------------------------------------------------------------
+  - id: response-bodies-default
+    appliesTo: [network.responseBody]
+    match: { any: true }
+    action: drop-value
+    keepMetadata: [contentType, byteLength, sha256]
+    unless:
+      contentTypeIn: [application/json, text/plain, text/html]
+      andOptIn: captureBodies
+    stage: collection
+    note: >
+      Bodies are dropped unless their content type is in the capture list AND the run opted in.
+      A dropped body still records its type, length, and hash, so a difference remains visible.
+
+  - id: request-bodies-default
+    appliesTo: [network.requestBody]
+    match: { any: true }
+    action: drop-value
+    keepMetadata: [contentType, byteLength]
+    stage: collection
+
+  # --- form input ----------------------------------------------------------
+  - id: password-inputs
+    appliesTo: [action.inputValue]
+    match:
+      inputTypeIn: [password]
+    action: drop-value
+    stage: collection
+
+  - id: form-input-values
+    appliesTo: [action.inputValue]
+    match: { any: true }
+    action: mask-value
+    keepMetadata: [length, isEmpty]
+    stage: collection
+    note: >
+      Masked even though typed values come from declared test data, because the declared value is
+      already recorded in the approved proposal where it belongs.
+
+  # --- storage -------------------------------------------------------------
+  - id: session-ids-in-storage
+    appliesTo: [storage.localStorage, storage.sessionStorage]
+    match:
+      keyMatches: "(?i)(token|auth|session|jwt|credential|secret|key|password)"
+    action: hash-value
+    keepName: true
+    keepMetadata: [length, type]
+    stage: collection
+
+  - id: indexeddb
+    appliesTo: [storage.indexedDb]
+    match: { any: true }
+    action: names-only
+    note: Database and store names only. No record contents in MVP.

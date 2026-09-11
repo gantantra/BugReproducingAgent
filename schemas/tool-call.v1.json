@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://investigator.local/schemas/tool-call.v1.json",
+  "title": "ToolCall",
+  "description": "One model-requested tool invocation, recorded whether or not it was executed. A call for a tool outside the flow allowlist is recorded with allowed false, charged against the flow budget, warned, never executed, and raised at flow completion.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "callId", "investigationId", "flowId", "flowVersion",
+               "turnIndex", "toolId", "input", "allowed"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "callId": { "type": "string", "minLength": 1 },
+    "investigationId": { "$ref": "common.v1.json#/$defs/investigationId" },
+    "flowId": { "type": "string", "minLength": 1 },
+    "flowVersion": { "$ref": "common.v1.json#/$defs/semver" },
+    "flowHash": { "$ref": "common.v1.json#/$defs/sha256" },
+    "aiCallId": { "$ref": "common.v1.json#/$defs/aiCallId" },
+    "turnIndex": { "type": "integer", "minimum": 1 },
+    "toolId": { "type": "string", "minLength": 1 },
+    "input": {
+      "type": "object",
+      "description": "Validated against the tool input schema. An invalid input is TOOL_INPUT_INVALID, returned in band."
+    },
+    "allowed": {
+      "type": "boolean",
+      "description": "False when the tool is not in the flow allowlist. Such a call is never executed."
+    },
+    "executed": { "type": "boolean" },
+    "requestedAt": { "$ref": "common.v1.json#/$defs/timestamp" },
+    "durationMs": { "type": "integer", "minimum": 0 },
+    "resultBytes": { "type": "integer", "minimum": 0 },
+    "chargedToolCallCount": { "type": "integer", "minimum": 0 },
+    "chargedEvidenceBytes": { "type": "integer", "minimum": 0 }
+  }
+}

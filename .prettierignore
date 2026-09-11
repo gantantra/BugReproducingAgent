@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.investigator/
+demo-ws/
+*.tsbuildinfo
+coverage/
+package-lock.json
+eval/reports/
+docs/
+schemas/
+scripts/workspace-graph.json

@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://investigator.local/schemas/redaction-policy.v1.json",
+  "title": "RedactionPolicy",
+  "description": "Validates policies/*.yaml. Rules are pure functions of a field value plus declared metadata: no time, no randomness, no network. Patterns are linear-time-linted at load and applied under a per-field length cap. The policy file bytes are hashed into policyHash, which every RedactionStamp records.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["policyId", "policyVersion", "mode", "defaults", "rules"],
+  "properties": {
+    "policyId": { "type": "string", "minLength": 1 },
+    "policyVersion": { "$ref": "common.v1.json#/$defs/semver" },
+    "mode": {
+      "enum": ["strict", "permissive"],
+      "description": "strict treats any unclassifiable field as sensitive. permissive is permitted only when every target is classified fixture, and is rejected at config load otherwise."
+    },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unknownFieldAction", "valueReplacement"],
+      "properties": {
+        "unknownFieldAction": { "$ref": "#/$defs/action" },
+        "valueReplacement": { "type": "string" },
+        "shapeDescriptor": {
+          "type": "boolean",
+          "default": true,
+          "description": "When true a masked value is accompanied by type, length, and a sha256 prefix, so differences stay comparable without disclosure."
+        },
+        "maxFieldBytesScanned": {
+          "type": "integer",
+          "minimum": 1024,
+          "default": 1048576,
+          "description": "Per-field length cap that bounds regex work on large bodies."
+        }
+      }
+    },
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "appliesTo", "match", "action"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "appliesTo": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/$defs/fieldScope" }
+          },
+          "match": { "$ref": "#/$defs/match" },
+          "action": { "$ref": "#/$defs/action" },
+          "keepName": { "type": "boolean", "default": true },
+          "keepMetadata": { "type": "array", "items": { "type": "string" } },
+          "exceptions": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "domainIn": { "type": "array", "items": { "type": "string" } },
+              "keyIn": { "type": "array", "items": { "type": "string" } }
+            }
+          },
+          "unless": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "contentTypeIn": { "type": "array", "items": { "type": "string" } },
+              "andOptIn": { "type": "string" }
+            }
+          },
+          "stage": {
+            "enum": ["collection", "normalization"],
+            "description": "collection is for rules decidable per event without whole-run context, so the highest-risk values never reach a buffer that outlives the event."
+          },
+          "note": { "type": "string" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "fieldScope": {
+      "enum": ["network.url", "network.requestHeaders", "network.responseHeaders",
+               "network.responseBody", "network.requestBody", "navigation.url",
+               "action.url", "action.inputValue", "console.text", "exception.message",
+               "dom.text", "dom.attributes", "storage.cookies", "storage.localStorage",
+               "storage.sessionStorage", "storage.indexedDb", "storage.values"]
+    },
+    "action": {
+      "enum": ["keep", "mask-value", "mask-match", "drop-value", "names-only", "hash-value"]
+    },
+    "match": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "description": "A closed set of match terms. There is no free-form expression term.",
+      "properties": {
+        "any": { "const": true },
+        "headerNameIn": { "type": "array", "items": { "type": "string" } },
+        "queryKeyMatches": { "type": "string" },
+        "keyMatches": { "type": "string" },
+        "valueMatches": { "type": "string" },
+        "contentTypeIn": { "type": "array", "items": { "type": "string" } },
+        "inputTypeIn": { "type": "array", "items": { "type": "string" } },
+        "orAttributeNameIn": { "type": "array", "items": { "type": "string" } },
+        "andInputTypeIn": { "type": "array", "items": { "type": "string" } },
+        "luhnCandidate": { "type": "boolean" },
+        "digitsBetween": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "type": "integer", "minimum": 1 }
+        },
+        "entropyBitsPerCharAtLeast": { "type": "number", "exclusiveMinimum": 0 },
+        "minLength": { "type": "integer", "minimum": 1 },
+        "charsetIn": {
+          "type": "array",
+          "items": { "enum": ["base64", "base64url", "hex", "alphanumeric"] }
+        }
+      }
+    }
+  }
+}

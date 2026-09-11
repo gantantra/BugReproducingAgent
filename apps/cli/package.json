@@ -1,0 +1,34 @@
+{
+  "name": "@investigator/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "investigate": "./dist/bin.js"
+  },
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
+  },
+  "dependencies": {
+    "commander": "^14.0.1",
+    "@investigator/core": "*",
+    "@investigator/storage": "*",
+    "@investigator/evidence": "*",
+    "@investigator/execution": "*",
+    "@investigator/lineage": "*",
+    "@investigator/approvals": "*",
+    "@investigator/ai-gateway": "*",
+    "@investigator/tools": "*",
+    "@investigator/ai-flows": "*",
+    "@investigator/reporting": "*",
+    "@investigator/test-fixtures": "*"
+  }
+}

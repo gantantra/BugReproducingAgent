@@ -1,0 +1,301 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://investigator.local/schemas/config.v1.json",
+  "title": "Config",
+  "description": "Validates .investigator/config.yaml. Strict at every level: an unknown key is a USAGE error, not a warning, because a typo in a safety field must not silently disable the safety field. Cross-field assertions that JSON Schema cannot express are enforced by a separate assertion layer with its own tests.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["llm", "storage", "execution", "approvals"],
+  "properties": {
+    "llm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "baseUrl", "apiKeyEnv", "aliases", "budgets"],
+      "properties": {
+        "provider": { "const": "deepseek" },
+        "baseUrl": { "$ref": "#/$defs/stringOrEnvRef" },
+        "allowInsecureBaseUrl": { "type": "boolean", "default": false },
+        "apiKeyEnv": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$",
+          "description": "Environment variable NAME only, never an env: reference, so the key never enters the resolved config object."
+        },
+        "aliases": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["FAST_MODEL", "REASONING_MODEL", "FALLBACK_MODEL"],
+          "properties": {
+            "FAST_MODEL": { "$ref": "#/$defs/aliasConfig" },
+            "REASONING_MODEL": { "$ref": "#/$defs/aliasConfig" },
+            "FALLBACK_MODEL": { "$ref": "#/$defs/aliasConfig" }
+          }
+        },
+        "capabilitiesCacheTtlSeconds": { "type": "integer", "minimum": 0, "default": 3600 },
+        "capabilities": {
+          "type": "object",
+          "description": "Optional declarations. May only narrow an observed capability, never widen it. A claim of supported against an observed unsupported is rejected.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "jsonMode": { "enum": ["supported", "unsupported", "unknown"] },
+              "toolCalls": { "enum": ["supported", "unsupported", "unknown"] },
+              "thinkingMode": { "enum": ["supported", "unsupported", "unknown"] },
+              "contextWindow": { "type": "integer", "exclusiveMinimum": 0 },
+              "maxOutputTokens": { "type": "integer", "exclusiveMinimum": 0 }
+            }
+          }
+        },
+        "prices": {
+          "type": "object",
+          "description": "Keyed by concrete model id. An unpriced model records cost as null with an UNPRICED_MODEL warning; the agent never invents a price.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["inputUsdPerMillionTokens", "outputUsdPerMillionTokens"],
+            "properties": {
+              "inputUsdPerMillionTokens": { "type": "number", "minimum": 0 },
+              "outputUsdPerMillionTokens": { "type": "number", "minimum": 0 }
+            }
+          }
+        },
+        "budgets": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["perInvestigationUsd", "perCallTokens"],
+          "properties": {
+            "perInvestigationUsd": { "type": "number", "exclusiveMinimum": 0 },
+            "perCallTokens": { "type": "integer", "exclusiveMinimum": 0 }
+          }
+        },
+        "retry": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "rateLimitAttempts": { "type": "integer", "minimum": 1, "maximum": 10, "default": 4 },
+            "timeoutAttempts": { "type": "integer", "minimum": 1, "maximum": 5, "default": 2 },
+            "unavailableAttempts": { "type": "integer", "minimum": 1, "maximum": 10, "default": 3 },
+            "backoffBaseMs": { "type": "integer", "minimum": 100, "default": 1000 },
+            "backoffCapMs": { "type": "integer", "minimum": 1000, "default": 30000 },
+            "breakerOpenMs": { "type": "integer", "minimum": 1000, "default": 60000 },
+            "breakerMaxOpenMs": { "type": "integer", "minimum": 1000, "default": 600000 }
+          }
+        }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metadata", "artifacts", "queue", "redactionPolicy"],
+      "properties": {
+        "metadata": {
+          "const": "sqlite",
+          "description": "postgres is designed but unimplemented and rejected at load with a message naming ADR-0001."
+        },
+        "artifacts": { "const": "local" },
+        "queue": { "const": "local" },
+        "redactionPolicy": { "type": "string", "minLength": 1 },
+        "sqlite": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "busyTimeoutMs": { "type": "integer", "minimum": 0, "default": 5000 },
+            "journalMode": { "const": "wal" },
+            "synchronous": { "enum": ["FULL", "NORMAL"], "default": "FULL" }
+          }
+        },
+        "retention": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "artifactDays": { "type": "integer", "minimum": 1, "default": 30 },
+            "keepReproducers": { "type": "boolean", "default": true }
+          }
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["browser", "workers", "maxParallelRuns"],
+      "properties": {
+        "browser": { "const": "chromium" },
+        "channel": { "type": ["string", "null"] },
+        "workers": { "type": "integer", "minimum": 1, "maximum": 1, "default": 1 },
+        "maxParallelRuns": { "type": "integer", "minimum": 1, "default": 1 },
+        "perWorkerConcurrency": { "type": "integer", "minimum": 1, "default": 1 },
+        "defaultTimeoutMs": { "type": "integer", "minimum": 1, "default": 30000 },
+        "runWallClockBudgetMs": { "type": "integer", "minimum": 1000, "default": 180000 },
+        "leaseMs": { "type": "integer", "minimum": 1000, "default": 60000 },
+        "heartbeatMs": {
+          "type": "integer",
+          "minimum": 100,
+          "default": 10000,
+          "description": "Must be strictly less than leaseMs divided by three. Enforced by the assertion layer."
+        },
+        "seed": { "type": "integer", "default": 1 },
+        "maxInfraRetriesPerRepetition": { "type": "integer", "minimum": 0, "default": 2 },
+        "video": { "enum": ["off", "on", "on-failure"], "default": "on-failure" },
+        "trace": { "enum": ["off", "on", "on-failure", "retain-on-failure"], "default": "on" },
+        "capture": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "responseBodyMaxBytes": { "type": "integer", "minimum": 0, "default": 262144 },
+            "responseBodyContentTypes": { "type": "array", "items": { "type": "string" } },
+            "domSnapshotOn": {
+              "type": "array",
+              "items": { "enum": ["action", "navigation", "failure"] },
+              "default": ["action", "navigation", "failure"]
+            },
+            "domSnapshotMaxBytes": { "type": "integer", "minimum": 0, "default": 2097152 },
+            "screenshotOn": {
+              "type": "array",
+              "items": { "enum": ["action", "navigation", "failure"] },
+              "default": ["action", "failure"]
+            },
+            "webSocketFrames": { "type": "boolean", "default": false },
+            "tracePolicy": {
+              "enum": ["redacted-pipeline", "withhold", "raw-opt-in"],
+              "default": "withhold",
+              "description": "raw-opt-in is permitted only when every target is classified fixture. See ADR-0008 and open question Q11."
+            },
+            "correlationHeader": { "type": "boolean", "default": false }
+          }
+        },
+        "targets": {
+          "type": "object",
+          "description": "May be empty. A freshly initialized workspace has no target configured, and inventing a placeholder would put a fabricated baseUrl into a safety-relevant field. A command that needs a target rejects a missing one at the point of use.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["baseUrl", "classification"],
+            "properties": {
+              "baseUrl": { "type": "string", "format": "uri" },
+              "classification": {
+                "$ref": "common.v1.json#/$defs/targetClassification",
+                "description": "production is not a member of this enum. A target declaring it is rejected at load."
+              },
+              "resetStrategy": {
+                "enum": ["none", "fresh-context", "seeded-storage-state", "scripted-reset",
+                         "per-run-tenant", "idempotent-only"],
+                "default": "fresh-context"
+              },
+              "resetScriptPath": {
+                "type": "string",
+                "description": "Human-authored, version-controlled file. Never generated, never AI-editable."
+              },
+              "tenantPool": { "type": "array", "items": { "type": "string" } },
+              "auth": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["strategy"],
+                "properties": {
+                  "strategy": { "enum": ["none", "storageState", "scriptedLogin"] },
+                  "credentialEnvVars": {
+                    "type": "array",
+                    "description": "Environment variable NAMES only. Config never contains a credential value.",
+                    "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" }
+                  },
+                  "storageStatePath": { "type": "string" }
+                }
+              },
+              "correlationHeaderAllowed": { "type": "boolean", "default": false }
+            }
+          }
+        },
+        "emulation": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "defaultProfile": { "type": "string" },
+            "profiles": {
+              "type": "object",
+              "description": "Profiles are materialised with concrete values so a Playwright upgrade cannot change what a profile meant in a past investigation.",
+              "additionalProperties": { "type": "object" }
+            }
+          }
+        }
+      }
+    },
+    "approvals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required"],
+      "properties": {
+        "required": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": { "$ref": "common.v1.json#/$defs/gate" },
+          "description": "All three gates are mandatory. Fewer than three is rejected at load; there is no auto-approval path."
+        },
+        "approvalDir": { "type": "string", "default": "approvals" },
+        "expiryHours": { "type": "integer", "minimum": 1, "default": 168 }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowedOrigins": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Navigation outside this list aborts the run as AUTOMATION_FAILED. Every target baseUrl origin must appear here."
+        },
+        "productionOriginPatterns": { "type": "array", "items": { "type": "string" } },
+        "productionGuard": { "type": "boolean", "default": true },
+        "blockDestructiveActions": { "type": "boolean", "default": true },
+        "destructivePatterns": { "type": "array", "items": { "type": "string" } },
+        "maxRunsPerInvestigation": { "type": "integer", "minimum": 1, "default": 500 },
+        "maxWallClockMsPerInvestigation": { "type": "integer", "minimum": 1000, "default": 7200000 },
+        "minRunsForRate": { "type": "integer", "minimum": 2, "default": 10 },
+        "unreachabilityBreakerConsecutive": { "type": "integer", "minimum": 1, "default": 5 }
+      }
+    },
+    "minimization": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxRounds": { "type": "integer", "minimum": 1, "default": 3 },
+        "repeatPerCandidate": { "type": "integer", "minimum": 1, "default": 40 },
+        "retentionFractionTarget": { "type": "number", "exclusiveMinimum": 0, "maximum": 1, "default": 0.8 }
+      }
+    },
+    "logging": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "level": { "enum": ["error", "warn", "info", "debug"], "default": "info" },
+        "redactLogs": {
+          "const": true,
+          "description": "Cannot be disabled. The field exists only so that an attempt to disable it fails loudly."
+        },
+        "disableCrashDumps": { "const": true }
+      }
+    }
+  },
+  "$defs": {
+    "stringOrEnvRef": {
+      "type": "string",
+      "minLength": 1,
+      "description": "A literal value, or env:NAME resolved strictly at load. An unresolvable reference is a USAGE error naming the variable; the value is never printed."
+    },
+    "aliasConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modelId", "inferenceMode"],
+      "properties": {
+        "modelId": {
+          "$ref": "#/$defs/stringOrEnvRef",
+          "description": "Never defaulted, never guessed, never silently substituted."
+        },
+        "inferenceMode": { "enum": ["thinking", "non-thinking", "unspecified"] },
+        "maxOutputTokensOverride": { "type": "integer", "exclusiveMinimum": 0 },
+        "temperatureDefault": { "type": "number", "minimum": 0, "maximum": 2 }
+      }
+    }
+  }
+}

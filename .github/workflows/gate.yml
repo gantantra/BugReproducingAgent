@@ -1,0 +1,85 @@
+# M1 Reliability Gate.
+#
+# UNVERIFIED: open question Q3 (which CI, which runner class) is unanswered, so this workflow
+# has never executed. It is the reference implementation of the gate, written so that answering
+# Q3 is a matter of pointing it at a runner rather than designing the pipeline.
+#
+# The stated M2 entry criterion is "M1 Reliability Gate passes in CI". Until this runs green on
+# a real runner, that criterion is NOT met, regardless of local results.
+
+name: reliability-gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    strategy:
+      fail-fast: false
+      # Path handling, file locking, and process termination differ enough between these that a
+      # Windows-only developer machine is not sufficient evidence (reliability strategy, R19).
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+
+    env:
+      # The gate proves the execution path never reads the key and never leaks it.
+      DEEPSEEK_API_KEY: sk-dummy-DO-NOT-LEAK-4f3a91c7e2b85d06
+      DEEPSEEK_BASE_URL: https://api.example.invalid/v1
+      DEEPSEEK_FAST_MODEL: fixture-fast
+      DEEPSEEK_REASONING_MODEL: fixture-reasoning
+      DEEPSEEK_FALLBACK_MODEL: fixture-fallback
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium chromium-headless-shell
+
+      - name: Build
+        run: npm run build
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Documentation and schema invariants
+        run: npm run test:docs
+
+      - name: Unit and integration tests
+        run: npm test
+
+      - name: CLI end-to-end tests
+        run: npm run test:e2e
+
+      # The reliability gate runs TWICE for the nine non-performance specs: a test that passes
+      # once and fails once fails the gate. Caching is deliberately not used here, since a
+      # cached green gate proves nothing about the current tree.
+      - name: Reliability gate (twice)
+        run: node scripts/run-gate-twice.mjs
+
+      - name: Upload gate artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-diagnostics-${{ matrix.os }}
+          path: |
+            test-results/
+            *.log
+          retention-days: 7
+          if-no-files-found: ignore

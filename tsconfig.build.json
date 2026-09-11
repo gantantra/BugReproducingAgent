@@ -1,0 +1,17 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/core" },
+    { "path": "packages/storage" },
+    { "path": "packages/evidence" },
+    { "path": "packages/execution" },
+    { "path": "packages/lineage" },
+    { "path": "packages/approvals" },
+    { "path": "packages/ai-gateway" },
+    { "path": "packages/tools" },
+    { "path": "packages/ai-flows" },
+    { "path": "packages/reporting" },
+    { "path": "packages/test-fixtures" },
+    { "path": "apps/cli" }
+  ]
+}

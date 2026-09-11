@@ -1,0 +1,303 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://investigator.local/schemas/evidence-event.v1.json",
+  "title": "EvidenceEvent",
+  "description": "The atomic unit of normalized, redacted evidence exposed upward to tools. Event ids are scoped to their run. Ordering is by seq, assigned by a single in-process counter, and correlation to actions is by seq window, never by timestamp.",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": ["schemaVersion", "eventId", "runId", "category", "seq", "tDeltaMs", "redaction"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "eventId": { "$ref": "common.v1.json#/$defs/eventId" },
+    "runId": { "$ref": "common.v1.json#/$defs/runId" },
+    "category": { "$ref": "common.v1.json#/$defs/evidenceCategory" },
+    "seq": { "type": "integer", "minimum": 1 },
+    "tDeltaMs": { "type": "number", "minimum": 0, "description": "Delta from run start. Comparison uses this, not absolute time." },
+    "tMonoMs": { "type": "number", "minimum": 0 },
+    "tWallMs": { "type": "integer" },
+    "actionId": {
+      "$ref": "common.v1.json#/$defs/actionId",
+      "description": "The action window containing this seq, or absent for the synthetic pre-first-action and post-last-action windows."
+    },
+    "window": { "enum": ["pre-first-action", "in-action", "post-last-action"] },
+    "artifactIds": { "type": "array", "items": { "$ref": "common.v1.json#/$defs/artifactId" } },
+    "redaction": { "$ref": "common.v1.json#/$defs/redactionStamp" },
+    "redactedFields": {
+      "type": "array",
+      "description": "Field pointers whose values were masked, dropped, or hashed by policy.",
+      "items": { "$ref": "common.v1.json#/$defs/jsonPointer" }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "category": { "const": "actions" } }, "required": ["category"] },
+      "then": {
+        "required": ["action"],
+        "properties": {
+          "action": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["actionId", "type", "phase"],
+            "properties": {
+              "actionId": { "$ref": "common.v1.json#/$defs/actionId" },
+              "type": { "type": "string" },
+              "phase": { "enum": ["start", "end"] },
+              "selectorCanonical": { "type": ["string", "null"] },
+              "status": { "enum": ["ok", "failed", "timeout", "skipped"] },
+              "failureReason": { "type": ["string", "null"] }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "category": { "const": "navigation" } }, "required": ["category"] },
+      "then": {
+        "required": ["navigation"],
+        "properties": {
+          "navigation": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "url"],
+            "properties": {
+              "kind": { "enum": ["framenavigated", "domcontentloaded", "load", "popup", "reload", "history"] },
+              "url": { "$ref": "#/$defs/normalizedUrl" },
+              "isMainFrame": { "type": "boolean" },
+              "historyDepth": { "type": "integer", "minimum": 0 },
+              "redirectChain": { "type": "array", "items": { "$ref": "#/$defs/normalizedUrl" } }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "category": { "const": "console" } }, "required": ["category"] },
+      "then": {
+        "required": ["console"],
+        "properties": {
+          "console": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["level", "textFingerprint"],
+            "properties": {
+              "level": { "enum": ["log", "info", "warn", "error", "debug", "trace", "assert"] },
+              "text": { "type": ["string", "null"], "description": "Present only where the redaction policy permits." },
+              "textNormalized": { "type": ["string", "null"] },
+              "textFingerprint": { "type": "string", "minLength": 4 },
+              "location": {
+                "type": ["object", "null"],
+                "additionalProperties": false,
+                "properties": {
+                  "file": { "type": "string" },
+                  "line": { "type": "integer" },
+                  "column": { "type": "integer" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "category": { "const": "exceptions" } }, "required": ["category"] },
+      "then": {
+        "required": ["exception"],
+        "properties": {
+          "exception": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "messageNormalized", "fingerprint"],
+            "properties": {
+              "kind": { "enum": ["pageerror", "unhandledrejection"] },
+              "name": { "type": ["string", "null"] },
+              "messageNormalized": { "type": "string" },
+              "fingerprint": {
+                "type": "string",
+                "description": "Stable hash of the normalized message plus the top N normalized frames."
+              },
+              "frames": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["function", "file", "line"],
+                  "properties": {
+                    "function": { "type": "string" },
+                    "file": { "type": "string" },
+                    "line": { "type": "integer" },
+                    "column": { "type": ["integer", "null"] }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "category": { "const": "networkMetadata" } }, "required": ["category"] },
+      "then": {
+        "required": ["request"],
+        "properties": {
+          "request": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["requestKey", "method", "url", "phase"],
+            "properties": {
+              "requestKey": {
+                "type": "string",
+                "description": "Normalized stable key: method plus origin plus path template. Used for cross-run comparison."
+              },
+              "method": { "type": "string" },
+              "url": { "$ref": "#/$defs/normalizedUrl" },
+              "phase": { "enum": ["request", "response", "requestfinished", "requestfailed"] },
+              "resourceType": { "type": "string" },
+              "status": { "type": ["integer", "null"] },
+              "statusClass": { "type": ["integer", "null"] },
+              "fromServiceWorker": { "type": "boolean" },
+              "fromCache": { "type": "boolean" },
+              "failureReason": { "type": ["string", "null"] },
+              "aborted": { "type": "boolean" },
+              "timing": {
+                "type": ["object", "null"],
+                "additionalProperties": false,
+                "properties": {
+                  "startDeltaMs": { "type": "number" },
+                  "responseStartDeltaMs": { "type": ["number", "null"] },
+                  "responseEndDeltaMs": { "type": ["number", "null"] },
+                  "durationMs": { "type": ["number", "null"] },
+                  "durationBucket": { "type": ["string", "null"] }
+                }
+              },
+              "sizes": {
+                "type": ["object", "null"],
+                "additionalProperties": false,
+                "properties": {
+                  "requestBodyBytes": { "type": ["integer", "null"] },
+                  "responseBodyBytes": { "type": ["integer", "null"] },
+                  "responseHeadersBytes": { "type": ["integer", "null"] }
+                }
+              },
+              "requestHeaderNames": { "type": "array", "items": { "type": "string" } },
+              "responseHeaderNames": { "type": "array", "items": { "type": "string" } },
+              "finishedInActionId": {
+                "$ref": "common.v1.json#/$defs/actionId",
+                "description": "Set when a request started in one action window and finished in a later one. Attribution is always to the start window."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "category": { "const": "responseBodies" } }, "required": ["category"] },
+      "then": {
+        "required": ["responseBody"],
+        "properties": {
+          "responseBody": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["requestEventId", "contentType", "byteLength", "truncatedAtCapture"],
+            "properties": {
+              "requestEventId": { "$ref": "common.v1.json#/$defs/eventId" },
+              "contentType": { "type": "string" },
+              "byteLength": { "type": "integer", "minimum": 0 },
+              "truncatedAtCapture": { "type": "boolean" },
+              "sha256": { "$ref": "common.v1.json#/$defs/hexSha256" },
+              "excerptAvailable": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "category": { "const": "domSnapshots" } }, "required": ["category"] },
+      "then": {
+        "required": ["domSnapshot"],
+        "properties": {
+          "domSnapshot": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["snapshotId", "trigger", "nodeCount", "structureHash"],
+            "properties": {
+              "snapshotId": { "type": "string" },
+              "trigger": { "enum": ["action", "navigation", "failure", "manual"] },
+              "nodeCount": { "type": "integer", "minimum": 0 },
+              "structureHash": { "$ref": "common.v1.json#/$defs/hexSha256" },
+              "maskedAttributes": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "category": { "const": "storage" } }, "required": ["category"] },
+      "then": {
+        "required": ["storage"],
+        "properties": {
+          "storage": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["area", "entries"],
+            "properties": {
+              "area": { "enum": ["localStorage", "sessionStorage", "cookies", "indexedDb"] },
+              "entries": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["key"],
+                  "properties": {
+                    "key": { "type": "string" },
+                    "value": { "type": ["string", "null"], "description": "Present only where policy permits." },
+                    "valueShape": {
+                      "type": ["object", "null"],
+                      "additionalProperties": false,
+                      "description": "Substituted for a redacted value so differences remain comparable without disclosure.",
+                      "properties": {
+                        "type": { "type": "string" },
+                        "length": { "type": "integer", "minimum": 0 },
+                        "sha256Prefix": { "type": "string" }
+                      }
+                    },
+                    "metadata": { "type": "object" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "category": { "enum": ["screenshots", "video", "trace", "webSocketFrames"] } },
+        "required": ["category"]
+      },
+      "then": { "required": ["artifactIds"], "properties": { "artifactIds": { "minItems": 1 } } }
+    }
+  ],
+  "$defs": {
+    "normalizedUrl": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["origin", "path"],
+      "properties": {
+        "origin": { "type": "string" },
+        "path": { "type": "string" },
+        "pathTemplate": {
+          "type": "string",
+          "description": "Path with id-shaped segments replaced by typed placeholders, for cross-run comparability."
+        },
+        "queryKeys": { "type": "array", "items": { "type": "string" } },
+        "query": {
+          "type": "object",
+          "description": "Sorted keys. Values present only where policy permits.",
+          "additionalProperties": { "type": ["string", "null"] }
+        },
+        "fragmentPresent": { "type": "boolean" },
+        "raw": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

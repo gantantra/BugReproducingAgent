@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://investigator.local/schemas/failure-signature.v1.json",
+  "title": "FailureSignature",
+  "description": "A deterministic, machine-checkable predicate that decides whether a given run exhibits the target failure. Candidates are computed by the extractor from fingerprints; the model may name and cluster them but may not compute them. A human may tighten the predicate at gate 2 but may never alter a recorded RunOutcome or fingerprint.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "signatureId", "investigationId", "label", "predicate",
+               "matchedRunIds", "approved", "source"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "signatureId": { "$ref": "common.v1.json#/$defs/signatureId" },
+    "investigationId": { "$ref": "common.v1.json#/$defs/investigationId" },
+    "label": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "predicate": { "$ref": "#/$defs/predicate" },
+    "matchedRunIds": { "type": "array", "items": { "$ref": "common.v1.json#/$defs/runId" } },
+    "unmatchedRunIds": { "type": "array", "items": { "$ref": "common.v1.json#/$defs/runId" } },
+    "approved": { "type": "boolean" },
+    "approvalId": { "$ref": "common.v1.json#/$defs/approvalId" },
+    "supersedesSignatureId": { "$ref": "common.v1.json#/$defs/signatureId" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actorKind", "component"],
+      "properties": {
+        "actorKind": { "$ref": "common.v1.json#/$defs/actorKind" },
+        "component": { "type": "string" },
+        "version": { "type": "string" },
+        "aiCallId": { "$ref": "common.v1.json#/$defs/aiCallId" }
+      }
+    },
+    "createdAt": { "$ref": "common.v1.json#/$defs/timestamp" }
+  },
+  "$defs": {
+    "predicate": {
+      "description": "A closed grammar. No free-form expression, no code, no regex over arbitrary fields beyond the declared term types.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "terms"],
+          "properties": {
+            "op": { "enum": ["and", "or"] },
+            "terms": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/predicate" } }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "term"],
+          "properties": {
+            "op": { "const": "not" },
+            "term": { "$ref": "#/$defs/predicate" }
+          }
+        },
+        { "$ref": "#/$defs/term" }
+      ]
+    },
+    "term": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["op"],
+      "properties": {
+        "op": {
+          "enum": ["assertionFailed", "consoleFingerprintPresent", "exceptionFingerprintPresent",
+                   "consoleLevelCountAtLeast", "requestStatusObserved", "requestAborted",
+                   "requestOrderingInverted", "requestDurationExceeds",
+                   "domStructureHashDiffers", "storageKeyChanged", "navigationCountEquals",
+                   "outcomeEquals"]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "op": { "const": "assertionFailed" } }, "required": ["op"] },
+          "then": { "required": ["assertionId"], "properties": { "assertionId": { "type": "string" } } }
+        },
+        {
+          "if": {
+            "properties": { "op": { "enum": ["consoleFingerprintPresent", "exceptionFingerprintPresent"] } },
+            "required": ["op"]
+          },
+          "then": { "required": ["fingerprint"], "properties": { "fingerprint": { "type": "string", "minLength": 4 } } }
+        },
+        {
+          "if": { "properties": { "op": { "const": "consoleLevelCountAtLeast" } }, "required": ["op"] },
+          "then": {
+            "required": ["level", "count"],
+            "properties": {
+              "level": { "enum": ["log", "info", "warn", "error", "debug", "trace", "assert"] },
+              "count": { "type": "integer", "minimum": 1 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "op": { "const": "requestStatusObserved" } }, "required": ["op"] },
+          "then": {
+            "required": ["requestKey", "statuses"],
+            "properties": {
+              "requestKey": { "type": "string" },
+              "statuses": { "type": "array", "minItems": 1, "items": { "type": "integer" } }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "op": { "const": "requestAborted" } }, "required": ["op"] },
+          "then": { "required": ["requestKey"], "properties": { "requestKey": { "type": "string" } } }
+        },
+        {
+          "if": { "properties": { "op": { "const": "requestOrderingInverted" } }, "required": ["op"] },
+          "then": {
+            "required": ["earlierRequestKey", "laterRequestKey"],
+            "properties": {
+              "earlierRequestKey": { "type": "string" },
+              "laterRequestKey": { "type": "string" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "op": { "const": "requestDurationExceeds" } }, "required": ["op"] },
+          "then": {
+            "required": ["requestKey", "ms"],
+            "properties": { "requestKey": { "type": "string" }, "ms": { "type": "number", "minimum": 0 } }
+          }
+        },
+        {
+          "if": { "properties": { "op": { "const": "domStructureHashDiffers" } }, "required": ["op"] },
+          "then": {
+            "required": ["snapshotTrigger", "referenceHash"],
+            "properties": {
+              "snapshotTrigger": { "enum": ["action", "navigation", "failure", "manual"] },
+              "referenceHash": { "$ref": "common.v1.json#/$defs/hexSha256" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "op": { "const": "storageKeyChanged" } }, "required": ["op"] },
+          "then": {
+            "required": ["area", "key"],
+            "properties": {
+              "area": { "enum": ["localStorage", "sessionStorage", "cookies", "indexedDb"] },
+              "key": { "type": "string" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "op": { "const": "navigationCountEquals" } }, "required": ["op"] },
+          "then": { "required": ["count"], "properties": { "count": { "type": "integer", "minimum": 0 } } }
+        },
+        {
+          "if": { "properties": { "op": { "const": "outcomeEquals" } }, "required": ["op"] },
+          "then": {
+            "required": ["outcome"],
+            "properties": { "outcome": { "$ref": "common.v1.json#/$defs/runOutcome" } }
+          }
+        }
+      ]
+    }
+  }
+}

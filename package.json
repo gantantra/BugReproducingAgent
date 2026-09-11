@@ -1,0 +1,50 @@
+{
+  "name": "investigator-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local CLI agent that investigates intermittent Chrome-based web issues",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "clean": "node scripts/clean.mjs",
+    "build": "tsc --build tsconfig.build.json",
+    "build:force": "tsc --build tsconfig.build.json --force",
+    "typecheck": "tsc --build tsconfig.build.json --dry",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run --project unit",
+    "test:watch": "vitest --project unit",
+    "test:reliability": "vitest run --project reliability",
+    "test:e2e": "vitest run --project e2e",
+    "test:all": "vitest run",
+    "test:docs": "vitest run --project docs",
+    "gate": "npm run build && npm run lint && npm run test:docs && npm run test && npm run test:e2e && npm run test:reliability",
+    "gate:twice": "node scripts/run-gate-twice.mjs",
+    "investigate": "node apps/cli/dist/bin.js"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.37.0",
+    "@types/node": "^24.7.0",
+    "eslint": "^9.37.0",
+    "eslint-plugin-import-x": "^4.16.1",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.46.0",
+    "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "commander": "^14.0.1",
+    "playwright": "^1.56.0",
+    "yaml": "^2.8.1"
+  }
+}

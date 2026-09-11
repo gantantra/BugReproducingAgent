@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://investigator.local/schemas/run-manifest.v1.json",
+  "title": "RunManifest",
+  "description": "Immutable record of one run. Opened before the first browser action, sealed after. A second write raises MANIFEST_IMMUTABLE. The seal hash covers every recorded field including the artifact digest list.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "runId", "jobId", "investigationId", "experimentId",
+               "approvalId", "effectiveProposalChecksum", "repetitionIndex", "attemptIndex",
+               "seed", "emulation", "versions", "target", "configSources", "openedAt",
+               "sealed"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "runId": { "$ref": "common.v1.json#/$defs/runId" },
+    "jobId": { "$ref": "common.v1.json#/$defs/jobId" },
+    "investigationId": { "$ref": "common.v1.json#/$defs/investigationId" },
+    "experimentId": { "$ref": "common.v1.json#/$defs/experimentId" },
+    "approvedExperimentId": { "$ref": "common.v1.json#/$defs/approvedExperimentId" },
+    "approvalId": {
+      "$ref": "common.v1.json#/$defs/approvalId",
+      "description": "The gate-1 approval that authorised this run. A run without one is impossible from M2 onward."
+    },
+    "effectiveProposalChecksum": {
+      "$ref": "common.v1.json#/$defs/sha256",
+      "description": "Hash of the post-edit proposal the executor actually consumed, not the pre-edit proposal."
+    },
+    "repetitionIndex": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Test repetition. Kept strictly separate from attemptIndex."
+    },
+    "attemptIndex": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Infrastructure retry attempt of this repetition. A retry is a new job and a new manifest, never a mutation."
+    },
+    "previousAttemptJobId": { "type": ["string", "null"] },
+    "seed": { "type": "integer", "description": "Derived deterministically from the base seed and the indices." },
+    "emulation": { "$ref": "common.v1.json#/$defs/resolvedEmulation" },
+    "versions": { "$ref": "common.v1.json#/$defs/versionStamps" },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "baseUrl", "classification"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "baseUrl": { "type": "string", "format": "uri" },
+        "classification": { "$ref": "common.v1.json#/$defs/targetClassification" },
+        "resetStrategy": { "type": "string" },
+        "allowedOrigins": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "configSources": {
+      "type": "object",
+      "description": "Per-leaf effective value and its source, so any result can be explained later.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["value", "source"],
+        "properties": {
+          "value": { "$ref": "common.v1.json#/$defs/jsonPrimitive" },
+          "source": { "enum": ["cli-flag", "env", "config-file", "built-in-default"] }
+        }
+      }
+    },
+    "declaredFactors": {
+      "type": "array",
+      "description": "Any deliberate intervention that alters the application under test, for example a fixed action delay or a mid-run emulation change. Nothing is altered silently.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "value"],
+        "properties": {
+          "kind": { "type": "string" },
+          "value": { "$ref": "common.v1.json#/$defs/jsonPrimitive" },
+          "actionId": { "$ref": "common.v1.json#/$defs/actionId" }
+        }
+      }
+    },
+    "openedAt": { "$ref": "common.v1.json#/$defs/timestamp" },
+    "startedAt": { "$ref": "common.v1.json#/$defs/timestamp" },
+    "finishedAt": { "$ref": "common.v1.json#/$defs/timestamp" },
+    "durationMs": { "type": "integer", "minimum": 0 },
+    "sealed": { "type": "boolean" },
+    "sealedAt": { "$ref": "common.v1.json#/$defs/timestamp" },
+    "sealHash": {
+      "$ref": "common.v1.json#/$defs/sha256",
+      "description": "SHA-256 over the canonical form of every field except sealHash itself."
+    },
+    "jobState": { "$ref": "common.v1.json#/$defs/jobState" },
+    "jobTerminalReason": { "$ref": "common.v1.json#/$defs/jobTerminalReason" },
+    "runOutcome": { "$ref": "common.v1.json#/$defs/runOutcome" },
+    "outcomeRuleId": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 6,
+      "description": "Which ordered RunOutcome decision rule fired. Recomputed independently by the extractor; disagreement is an integrity failure."
+    },
+    "outcomeDetail": { "type": "string" },
+    "assertionOutcomes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["assertionId", "result"],
+        "properties": {
+          "assertionId": { "type": "string" },
+          "actionId": { "$ref": "common.v1.json#/$defs/actionId" },
+          "result": { "enum": ["pass", "fail", "not-evaluated"] },
+          "detail": { "type": "string" },
+          "isFailurePredicate": { "type": "boolean" }
+        }
+      }
+    },
+    "captureStatus": { "$ref": "capture-status.v1.json" },
+    "artifacts": { "type": "array", "items": { "$ref": "common.v1.json#/$defs/artifactRef" } },
+    "warnings": { "type": "array", "items": { "type": "string" } },
+    "unsafeDebug": { "type": "boolean" },
+    "unsafeTrace": { "type": "boolean" }
+  },
+  "allOf": [
+    {
+      "description": "A sealed manifest must carry its outcome, the rule that decided it, completeness, and the seal hash.",
+      "if": { "properties": { "sealed": { "const": true } }, "required": ["sealed"] },
+      "then": {
+        "required": ["sealed", "sealedAt", "sealHash", "runOutcome", "outcomeRuleId",
+                     "captureStatus", "artifacts", "jobState", "jobTerminalReason"]
+      }
+    },
+    {
+      "description": "INTERRUPTED is the only outcome permitted for an interrupted job.",
+      "if": {
+        "properties": { "jobTerminalReason": { "const": "INTERRUPTED" } },
+        "required": ["jobTerminalReason"]
+      },
+      "then": { "properties": { "runOutcome": { "const": "INTERRUPTED" } } }
+    },
+    {
+      "description": "A completed worker execution observed one of four outcomes. PRODUCT_FAILED here is a success.",
+      "if": {
+        "properties": { "jobTerminalReason": { "const": "COMPLETED" } },
+        "required": ["jobTerminalReason"]
+      },
+      "then": {
+        "properties": {
+          "runOutcome": {
+            "enum": ["VALID_COMPLETED", "PRODUCT_FAILED", "AUTOMATION_FAILED", "INCONCLUSIVE"]
+          }
+        }
+      }
+    },
+    {
+      "description": "A worker error cannot yield a product observation.",
+      "if": {
+        "properties": { "jobTerminalReason": { "const": "WORKER_ERROR" } },
+        "required": ["jobTerminalReason"]
+      },
+      "then": {
+        "properties": {
+          "runOutcome": {
+            "enum": ["INFRASTRUCTURE_FAILED", "AUTOMATION_FAILED", "INCONCLUSIVE"]
+          }
+        }
+      }
+    }
+  ]
+}

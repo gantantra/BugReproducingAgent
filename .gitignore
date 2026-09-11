@@ -1,0 +1,38 @@
+# Local investigator workspaces — evidence, database, config. Never committed.
+.investigator/
+demo-ws/
+*.investigator-ws/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Dependencies
+node_modules/
+
+# Agent instructions (per project convention)
+CLAUDE.md
+
+# Test and tool scratch
+coverage/
+.vitest/
+test-results/
+playwright-report/
+.tmp/
+tmp/
+
+# Eval outputs that are regenerated
+eval/reports/*.json
+!eval/reports/baselines.json
+
+# Editor and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Secrets — belt and braces. The CLI never writes these, but never commit one either.
+.env
+.env.*
+!.env.example

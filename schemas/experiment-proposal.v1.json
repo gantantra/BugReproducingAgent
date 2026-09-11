@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://investigator.local/schemas/experiment-proposal.v1.json",
+  "title": "ExperimentProposal",
+  "description": "One ranked candidate experiment. Every proposal must state a hypothesis, the single varied factor, and what observation would falsify it. A proposal without a falsifier is invalid.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "experimentId", "investigationId", "flowId", "rank",
+               "hypothesis", "variedFactor", "falsifier", "actions", "assertions",
+               "repetitions", "requiredEvidence", "safety", "expectedDiscriminatingSignal",
+               "rankRationale"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "experimentId": { "$ref": "common.v1.json#/$defs/experimentId" },
+    "investigationId": { "$ref": "common.v1.json#/$defs/investigationId" },
+    "flowId": { "type": "string", "pattern": "^FLOW-[0-9]{3,}$" },
+    "rank": { "type": "integer", "minimum": 1 },
+    "hypothesis": { "type": "string", "minLength": 10 },
+    "variedFactor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "description", "baselineValue", "variantValue"],
+      "properties": {
+        "kind": {
+          "enum": ["actionTiming", "networkProfile", "cpuProfile", "emulationProfile",
+                   "cacheState", "storageState", "actionOrder", "actionPresence",
+                   "viewport", "headlessMode", "repetitionOnly"]
+        },
+        "description": { "type": "string", "minLength": 1 },
+        "baselineValue": { "$ref": "common.v1.json#/$defs/jsonPrimitive" },
+        "variantValue": { "$ref": "common.v1.json#/$defs/jsonPrimitive" },
+        "groundedIn": {
+          "type": "array",
+          "description": "Flow step ids, unknown ids, or prior experiment ids this factor is grounded in. An ungrounded factor is invalid.",
+          "minItems": 1,
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "falsifier": {
+      "type": "string",
+      "minLength": 10,
+      "description": "The concrete observation that would refute the hypothesis. Required by schema."
+    },
+    "actions": { "type": "array", "minItems": 1, "items": { "$ref": "action.v1.json" } },
+    "assertions": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "action.v1.json#/$defs/assertion" }
+    },
+    "repetitions": { "type": "integer", "minimum": 1, "maximum": 500 },
+    "requiredEvidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "common.v1.json#/$defs/evidenceCategory" }
+    },
+    "emulationProfile": { "type": "string" },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxSideEffectClass", "destructiveActionIds", "resetStrategy"],
+      "properties": {
+        "maxSideEffectClass": { "$ref": "common.v1.json#/$defs/sideEffectClass" },
+        "destructiveActionIds": {
+          "type": "array",
+          "description": "Declared destructive actions. Must equal or exceed the deterministic classifier result; a weaker declaration fails validation.",
+          "items": { "$ref": "common.v1.json#/$defs/actionId" }
+        },
+        "resetStrategy": {
+          "enum": ["none", "fresh-context", "seeded-storage-state", "scripted-reset",
+                   "per-run-tenant", "idempotent-only"]
+        },
+        "notes": { "type": "string" }
+      }
+    },
+    "expectedDiscriminatingSignal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category", "description"],
+      "properties": {
+        "category": { "$ref": "common.v1.json#/$defs/evidenceCategory" },
+        "description": { "type": "string", "minLength": 1 }
+      }
+    },
+    "rankRationale": { "type": "string", "minLength": 10 },
+    "estimatedRunSeconds": { "type": "number", "exclusiveMinimum": 0 },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actorKind"],
+      "properties": {
+        "actorKind": { "$ref": "common.v1.json#/$defs/actorKind" },
+        "aiCallId": { "$ref": "common.v1.json#/$defs/aiCallId" },
+        "flowArtifactId": { "type": "string" },
+        "flowArtifactVersion": { "$ref": "common.v1.json#/$defs/semver" },
+        "flowHash": { "$ref": "common.v1.json#/$defs/sha256" },
+        "createdAt": { "$ref": "common.v1.json#/$defs/timestamp" }
+      }
+    }
+  }
+}

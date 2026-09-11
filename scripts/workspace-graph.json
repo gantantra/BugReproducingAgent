@@ -1,0 +1,106 @@
+{
+  "packages/core": {
+    "deps": [],
+    "external": [
+      "ajv",
+      "ajv-formats",
+      "yaml"
+    ]
+  },
+  "packages/storage": {
+    "deps": [
+      "core"
+    ],
+    "external": []
+  },
+  "packages/evidence": {
+    "deps": [
+      "core",
+      "storage"
+    ],
+    "external": [
+      "yaml"
+    ]
+  },
+  "packages/execution": {
+    "deps": [
+      "core",
+      "storage",
+      "evidence"
+    ],
+    "external": [
+      "playwright"
+    ]
+  },
+  "packages/lineage": {
+    "deps": [
+      "core",
+      "storage"
+    ],
+    "external": []
+  },
+  "packages/approvals": {
+    "deps": [
+      "core",
+      "storage"
+    ],
+    "external": [
+      "yaml"
+    ]
+  },
+  "packages/ai-gateway": {
+    "deps": [
+      "core"
+    ],
+    "external": []
+  },
+  "packages/tools": {
+    "deps": [
+      "core",
+      "storage",
+      "evidence"
+    ],
+    "external": []
+  },
+  "packages/ai-flows": {
+    "deps": [
+      "core",
+      "ai-gateway",
+      "tools"
+    ],
+    "external": []
+  },
+  "packages/reporting": {
+    "deps": [
+      "core",
+      "storage",
+      "evidence",
+      "lineage"
+    ],
+    "external": []
+  },
+  "packages/test-fixtures": {
+    "deps": [
+      "core"
+    ],
+    "external": []
+  },
+  "apps/cli": {
+    "deps": [
+      "core",
+      "storage",
+      "evidence",
+      "execution",
+      "lineage",
+      "approvals",
+      "ai-gateway",
+      "tools",
+      "ai-flows",
+      "reporting",
+      "test-fixtures"
+    ],
+    "external": [
+      "commander"
+    ]
+  }
+}

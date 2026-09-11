@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://investigator.local/schemas/minimization-candidate.v1.json",
+  "title": "MinimizationCandidate",
+  "description": "One proposed reduction of the current reproduction sequence. Every candidate must be a strict subsequence of the current sequence or a declared substitution from the closed set. The model may remove, reorder, or substitute; it may never introduce an action. Execution and measurement happen deterministically outside the flow.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "candidateId", "investigationId", "round", "basisSequenceId",
+               "reduction", "actions", "assertions", "expectedRetainedSignatureId",
+               "removalRationale"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "candidateId": { "$ref": "common.v1.json#/$defs/candidateId" },
+    "investigationId": { "$ref": "common.v1.json#/$defs/investigationId" },
+    "round": { "type": "integer", "minimum": 1 },
+    "basisSequenceId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The sequence this candidate reduces. Subsequence validity is checked against it."
+    },
+    "reduction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["remove-actions", "reorder-actions", "substitute-action", "reduce-repetitions"] },
+        "removedActionIds": {
+          "type": "array",
+          "items": { "$ref": "common.v1.json#/$defs/actionId" }
+        },
+        "substitution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["fromActionId", "toActionType", "equivalenceRationale"],
+          "properties": {
+            "fromActionId": { "$ref": "common.v1.json#/$defs/actionId" },
+            "toActionType": { "type": "string" },
+            "equivalenceRationale": { "type": "string", "minLength": 1 }
+          }
+        },
+        "newRepetitions": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "actions": {
+      "type": "array",
+      "minItems": 1,
+      "description": "The resulting sequence. Validated to be a strict subsequence of the basis sequence, or the basis with exactly the declared substitutions applied. Introducing a new action fails schema validation.",
+      "items": { "$ref": "action.v1.json" }
+    },
+    "assertions": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "action.v1.json#/$defs/assertion" }
+    },
+    "expectedRetainedSignatureId": {
+      "$ref": "common.v1.json#/$defs/signatureId",
+      "description": "The approved signature this candidate is expected to still reproduce. Retention is measured against this predicate, not merely against the run failing."
+    },
+    "removalRationale": { "type": "string", "minLength": 10 },
+    "measurement": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "description": "Filled deterministically after execution. Never supplied by the model.",
+      "required": ["statisticId", "achievedN", "matches", "rate", "interval", "verdict"],
+      "properties": {
+        "statisticId": { "$ref": "common.v1.json#/$defs/statisticId" },
+        "achievedN": { "type": "integer", "minimum": 0 },
+        "matches": { "type": "integer", "minimum": 0 },
+        "rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "interval": { "$ref": "common.v1.json#/$defs/wilsonInterval" },
+        "verdict": {
+          "enum": ["retained", "lost", "inconclusive"],
+          "description": "lost includes the case where the candidate still fails but under a different signature, which is itself reported."
+        },
+        "observedSignatureIds": {
+          "type": "array",
+          "items": { "$ref": "common.v1.json#/$defs/signatureId" }
+        },
+        "reductionRatio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "retentionFraction": { "type": "number", "minimum": 0 },
+        "thresholdMet": { "type": "boolean" }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actorKind"],
+      "properties": {
+        "actorKind": { "$ref": "common.v1.json#/$defs/actorKind" },
+        "aiCallId": { "$ref": "common.v1.json#/$defs/aiCallId" },
+        "flowArtifactId": { "type": "string" },
+        "flowArtifactVersion": { "$ref": "common.v1.json#/$defs/semver" },
+        "flowHash": { "$ref": "common.v1.json#/$defs/sha256" },
+        "createdAt": { "$ref": "common.v1.json#/$defs/timestamp" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "reduction": { "properties": { "kind": { "const": "remove-actions" } }, "required": ["kind"] } },
+        "required": ["reduction"]
+      },
+      "then": {
+        "properties": {
+          "reduction": {
+            "required": ["kind", "removedActionIds"],
+            "properties": { "removedActionIds": { "minItems": 1 } }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "reduction": { "properties": { "kind": { "const": "substitute-action" } }, "required": ["kind"] } },
+        "required": ["reduction"]
+      },
+      "then": { "properties": { "reduction": { "required": ["kind", "substitution"] } } }
+    }
+  ]
+}

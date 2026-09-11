@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://investigator.local/schemas/intake-report.v1.json",
+  "title": "IntakeReport",
+  "description": "The human-authored issue report, accepted as markdown with optional YAML front matter or as a YAML document. Free-form prose is expected and preserved verbatim as an artifact; this schema validates only the structured envelope. The report is untrusted input: its content reaches the model as flow input, never as instructions.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "title", "environment", "body"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetName"],
+      "properties": {
+        "targetName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Must name an existing target in config.execution.targets. The report may not introduce a target or a URL outside the allowlist."
+        },
+        "surface": { "enum": ["chrome-desktop", "chrome-mobile-emulated"] },
+        "emulationProfile": { "type": "string" }
+      }
+    },
+    "reportedFrequency": {
+      "type": ["string", "null"],
+      "description": "Verbatim from the reporter, for example roughly one in twenty. Never converted to a numeric rate here: incidence is measured, not reported."
+    },
+    "firstObserved": { "type": ["string", "null"] },
+    "steps": {
+      "type": "array",
+      "description": "Optional pre-structured steps. When absent, intake_to_flow derives them from body and records what it assumed.",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "expectedBehaviour": { "type": ["string", "null"] },
+    "actualBehaviour": { "type": ["string", "null"] },
+    "knownValues": {
+      "type": "object",
+      "description": "Values the reporter can supply, used to resolve flow unknowns. Credentials appear here as environment variable NAMES only.",
+      "additionalProperties": { "$ref": "common.v1.json#/$defs/jsonPrimitive" }
+    },
+    "attachments": {
+      "type": "array",
+      "items": { "type": "string", "description": "Relative path supplied by the reporter." }
+    },
+    "reporter": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "note": { "type": "string" }
+      }
+    },
+    "body": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The full report prose, preserved verbatim. Stored as an artifact and hashed so the interpretation can always be traced back to what was actually reported."
+    }
+  }
+}

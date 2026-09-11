@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://investigator.local/schemas/statistic.v1.json",
+  "title": "Statistic",
+  "description": "A deterministic frequency or comparison measurement. Reports achieved n rather than requested n, counts repetitions with no valid observation separately, and names the counting rule applied. A repetition whose only outcomes were infrastructure failures is never counted as a pass.",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": ["schemaVersion", "statisticId", "investigationId", "kind", "computedAt",
+               "computedBy"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "statisticId": { "$ref": "common.v1.json#/$defs/statisticId" },
+    "investigationId": { "$ref": "common.v1.json#/$defs/investigationId" },
+    "kind": { "enum": ["failure-rate", "rate-difference", "retention-rate"] },
+    "computedAt": { "$ref": "common.v1.json#/$defs/timestamp" },
+    "computedBy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["component", "version"],
+      "properties": {
+        "component": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "stoppedEarly": { "type": "boolean", "default": false },
+    "stopReason": {
+      "type": ["string", "null"],
+      "description": "Set whenever the batch ended before the requested repetitions, for example stop-on-confidence, stop-after-failures, investigation limit, or the target-unreachability circuit breaker."
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "enum": ["failure-rate", "retention-rate"] } }, "required": ["kind"] },
+      "then": {
+        "required": ["experimentId", "signatureId", "requestedRepetitions", "achievedN",
+                     "matches", "noValidObservationCount", "rate", "interval", "countingRule"],
+        "properties": {
+          "experimentId": { "$ref": "common.v1.json#/$defs/experimentId" },
+          "candidateId": { "$ref": "common.v1.json#/$defs/candidateId" },
+          "signatureId": { "$ref": "common.v1.json#/$defs/signatureId" },
+          "requestedRepetitions": { "type": "integer", "minimum": 1 },
+          "achievedN": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Repetitions with at least one valid observation. Must equal the actual count exactly."
+          },
+          "matches": { "type": "integer", "minimum": 0 },
+          "noValidObservationCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Repetitions whose every attempt was infrastructure-failed or interrupted. Reported, never counted as passes."
+          },
+          "rate": { "type": "number", "minimum": 0, "maximum": 1 },
+          "interval": { "$ref": "common.v1.json#/$defs/wilsonInterval" },
+          "countingRule": {
+            "const": "last-non-interrupted-attempt-per-repetition",
+            "description": "Frozen. The rule that prevents retry from hiding a product failure."
+          },
+          "outcomeBreakdown": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "VALID_COMPLETED": { "type": "integer", "minimum": 0 },
+              "PRODUCT_FAILED": { "type": "integer", "minimum": 0 },
+              "AUTOMATION_FAILED": { "type": "integer", "minimum": 0 },
+              "INFRASTRUCTURE_FAILED": { "type": "integer", "minimum": 0 },
+              "INTERRUPTED": { "type": "integer", "minimum": 0 },
+              "INCONCLUSIVE": { "type": "integer", "minimum": 0 }
+            }
+          },
+          "runIds": { "type": "array", "items": { "$ref": "common.v1.json#/$defs/runId" } },
+          "baselineRate": {
+            "type": ["number", "null"],
+            "description": "For retention-rate: the pre-minimization rate this is measured against."
+          },
+          "retentionFraction": {
+            "type": ["number", "null"],
+            "description": "rate divided by baselineRate. Reported as a quality metric; the hard gate is interval.lower above zero."
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "rate-difference" } }, "required": ["kind"] },
+      "then": {
+        "required": ["groupA", "groupB", "difference", "differenceInterval",
+                     "intervalsOverlap", "fisherExactP"],
+        "properties": {
+          "groupA": { "$ref": "#/$defs/group" },
+          "groupB": { "$ref": "#/$defs/group" },
+          "difference": { "type": "number", "minimum": -1, "maximum": 1 },
+          "differenceInterval": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["lower", "upper", "confidence", "method"],
+            "properties": {
+              "lower": { "type": "number", "minimum": -1, "maximum": 1 },
+              "upper": { "type": "number", "minimum": -1, "maximum": 1 },
+              "confidence": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1 },
+              "method": { "enum": ["bootstrap", "newcombe"] },
+              "bootstrapSeed": { "type": ["integer", "null"] }
+            }
+          },
+          "intervalsOverlap": {
+            "type": "boolean",
+            "description": "Deterministic verdict consulted by the probable_trigger promotion requirement."
+          },
+          "fisherExactP": { "type": "number", "minimum": 0, "maximum": 1 },
+          "variedFactorDescription": { "type": "string" },
+          "emulationIdentical": {
+            "type": "boolean",
+            "description": "False blocks the comparison unless emulation is the declared varied factor."
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "achievedN", "matches", "rate", "interval"],
+      "properties": {
+        "label": { "type": "string", "minLength": 1 },
+        "experimentId": { "$ref": "common.v1.json#/$defs/experimentId" },
+        "achievedN": { "type": "integer", "minimum": 0 },
+        "matches": { "type": "integer", "minimum": 0 },
+        "noValidObservationCount": { "type": "integer", "minimum": 0 },
+        "rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "interval": { "$ref": "common.v1.json#/$defs/wilsonInterval" },
+        "runIds": { "type": "array", "items": { "$ref": "common.v1.json#/$defs/runId" } }
+      }
+    }
+  }
+}
