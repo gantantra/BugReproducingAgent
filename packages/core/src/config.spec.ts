@@ -1,10 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  isEnvRef,
-  llmConfigStatus,
-  loadConfigFromString,
-  resolveLlmSettings,
-} from "./config.js";
+import { isEnvRef, llmConfigStatus, loadConfigFromString, resolveLlmSettings } from "./config.js";
 import { isInvestigatorError } from "./errors.js";
 
 /**

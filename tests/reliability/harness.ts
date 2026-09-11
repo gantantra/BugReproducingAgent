@@ -51,6 +51,10 @@ export interface Harness {
   cleanup: () => Promise<void>;
 }
 
+/** Stand-ins for the approval a real run always carries. See runExperimentAllAttempts. */
+const HARNESS_APPROVAL_ID = "APPR-001";
+const HARNESS_EFFECTIVE_CHECKSUM = "sha256:" + "0".repeat(64);
+
 function policyPath(): string {
   return join(process.cwd(), "policies", "default.yaml");
 }
@@ -257,8 +261,12 @@ export async function runExperimentAllAttempts(
     investigationId: h.investigationId,
     experiment: spec,
     repetitions,
-    approvalId: null,
-    effectiveProposalChecksum: null,
+    // The reliability gate exercises the EXECUTOR, not the approval gate, so it enqueues
+    // directly. It still supplies an approval id and an effective checksum, because from M2 every
+    // real run carries them and a manifest written without them does not match its own schema.
+    // Using nulls here would have the gate validating a shape the product never produces.
+    approvalId: HARNESS_APPROVAL_ID,
+    effectiveProposalChecksum: HARNESS_EFFECTIVE_CHECKSUM,
   });
   return makeWorker(h).drain(repetitions);
 }

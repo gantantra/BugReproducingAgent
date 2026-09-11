@@ -5,40 +5,83 @@
   "description": "Validates ai/flows/<flow-id>/flow.yaml. A flow is a versioned artifact, never an inline prompt. The directory is content-hashed into flowHash, recorded on every AI call and every produced record; loading a flow whose bytes changed without a version bump is rejected.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["id", "version", "modelAlias", "tools", "inputSchema", "outputSchema",
-               "budget", "validation"],
+  "required": [
+    "id",
+    "version",
+    "modelAlias",
+    "tools",
+    "inputSchema",
+    "outputSchema",
+    "budget",
+    "validation"
+  ],
   "properties": {
     "id": {
-      "enum": ["intake_to_flow", "propose_experiments", "classify_runs", "analyze_pass_fail",
-               "suggest_minimization", "generate_report"]
+      "enum": [
+        "intake_to_flow",
+        "propose_experiments",
+        "classify_runs",
+        "analyze_pass_fail",
+        "suggest_minimization",
+        "generate_report"
+      ]
     },
-    "version": { "$ref": "common.v1.json#/$defs/semver" },
+    "version": {
+      "$ref": "common.v1.json#/$defs/semver"
+    },
     "promptVersion": {
       "$ref": "common.v1.json#/$defs/semver",
       "description": "Defaults to version. Recorded separately when only prose changed."
     },
-    "modelAlias": { "$ref": "common.v1.json#/$defs/modelAlias" },
+    "modelAlias": {
+      "$ref": "common.v1.json#/$defs/modelAlias"
+    },
     "fallbackAlias": {
       "const": "FALLBACK_MODEL",
       "description": "The only way FALLBACK_MODEL may be used. Every fallback use is a recorded warning."
     },
-    "temperature": { "type": "number", "minimum": 0, "maximum": 2, "default": 0 },
+    "temperature": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 2,
+      "default": 0
+    },
     "tools": {
       "type": "array",
       "description": "The flow allowlist. Enforced both at advertisement and at dispatch. Every MVP tool is read-only.",
       "uniqueItems": true,
       "items": {
-        "enum": ["get_flow", "get_application_constraints", "get_previous_experiment_summary",
-                 "get_run_summary", "get_action_timeline", "get_console_events",
-                 "get_exception_events", "get_failure_signature", "compare_run_timelines",
-                 "get_request", "get_response_excerpt", "get_dom_diff", "get_storage_diff",
-                 "get_sequence", "get_previous_minimization_results",
-                 "get_investigation_summary", "get_approved_findings",
-                 "get_validation_results", "get_artifact_references"]
+        "enum": [
+          "get_flow",
+          "get_application_constraints",
+          "get_previous_experiment_summary",
+          "get_run_summary",
+          "get_action_timeline",
+          "get_console_events",
+          "get_exception_events",
+          "get_failure_signature",
+          "compare_run_timelines",
+          "get_request",
+          "get_response_excerpt",
+          "get_dom_diff",
+          "get_storage_diff",
+          "get_sequence",
+          "get_previous_minimization_results",
+          "get_investigation_summary",
+          "get_approved_findings",
+          "get_validation_results",
+          "get_artifact_references"
+        ]
       }
     },
-    "inputSchema": { "type": "string", "pattern": "^schemas/[A-Za-z0-9._-]+[.]json$" },
-    "outputSchema": { "type": "string", "pattern": "^schemas/[A-Za-z0-9._-]+[.]json$" },
+    "inputSchema": {
+      "type": "string",
+      "pattern": "^schemas/[A-Za-z0-9._-]+[.]json$"
+    },
+    "outputSchema": {
+      "type": "string",
+      "pattern": "^schemas/[A-Za-z0-9._-]+[.]json$"
+    },
     "partialCapable": {
       "type": "boolean",
       "default": false,
@@ -51,31 +94,78 @@
     "requiredCapabilities": {
       "type": "array",
       "description": "Derived from tools and outputSchema when absent. A flow needing a capability observed as unsupported returns AI_CAPABILITY_MISSING.",
-      "items": { "enum": ["jsonMode", "toolCalls", "thinkingMode"] }
+      "items": {
+        "enum": [
+          "jsonMode",
+          "toolCalls",
+          "thinkingMode"
+        ]
+      }
     },
     "budget": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["maxTurns", "maxToolCalls", "maxEvidenceBytes", "maxInputTokens",
-                   "maxOutputTokens", "maxCostUsd", "maxWallClockMs"],
+      "required": [
+        "maxTurns",
+        "maxToolCalls",
+        "maxEvidenceBytes",
+        "maxInputTokens",
+        "maxOutputTokens",
+        "maxCostUsd",
+        "maxWallClockMs"
+      ],
       "properties": {
-        "maxTurns": { "type": "integer", "minimum": 1, "maximum": 20 },
-        "maxToolCalls": { "type": "integer", "minimum": 0, "maximum": 200 },
-        "maxEvidenceBytes": { "type": "integer", "minimum": 0 },
-        "maxInputTokens": { "type": "integer", "minimum": 1 },
-        "maxOutputTokens": { "type": "integer", "minimum": 1 },
-        "maxCostUsd": { "type": "number", "exclusiveMinimum": 0 },
-        "maxWallClockMs": { "type": "integer", "minimum": 1000 }
+        "maxTurns": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        },
+        "maxToolCalls": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 200
+        },
+        "maxEvidenceBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxInputTokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxOutputTokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxCostUsd": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "maxWallClockMs": {
+          "type": "integer",
+          "minimum": 1000
+        }
       }
     },
     "validation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schemaStrict", "rejectUnknownFields", "referenceCheck", "repairAttempts"],
+      "required": [
+        "schemaStrict",
+        "rejectUnknownFields",
+        "referenceCheck",
+        "repairAttempts"
+      ],
       "properties": {
-        "schemaStrict": { "const": true },
-        "rejectUnknownFields": { "const": true },
-        "referenceCheck": { "type": "boolean" },
+        "schemaStrict": {
+          "const": true
+        },
+        "rejectUnknownFields": {
+          "const": true
+        },
+        "referenceCheck": {
+          "type": "boolean"
+        },
         "repairAttempts": {
           "type": "integer",
           "minimum": 0,
@@ -88,22 +178,59 @@
   "allOf": [
     {
       "description": "A flow with no tools must budget zero tool calls and zero evidence bytes.",
-      "if": { "properties": { "tools": { "maxItems": 0 } }, "required": ["tools"] },
+      "if": {
+        "properties": {
+          "tools": {
+            "maxItems": 0,
+            "type": "array"
+          }
+        },
+        "required": [
+          "tools"
+        ],
+        "type": "object"
+      },
       "then": {
         "properties": {
           "budget": {
             "properties": {
-              "maxToolCalls": { "const": 0 },
-              "maxEvidenceBytes": { "const": 0 }
-            }
+              "maxToolCalls": {
+                "const": 0
+              },
+              "maxEvidenceBytes": {
+                "const": 0
+              }
+            },
+            "type": "object"
           }
-        }
+        },
+        "type": "object"
       }
     },
     {
       "description": "A partial-capable flow must name the unit field whose elements are validated independently.",
-      "if": { "properties": { "partialCapable": { "const": true } }, "required": ["partialCapable"] },
-      "then": { "required": ["partialCapable", "unitField"] }
+      "if": {
+        "properties": {
+          "partialCapable": {
+            "const": true
+          }
+        },
+        "required": [
+          "partialCapable"
+        ],
+        "type": "object"
+      },
+      "then": {
+        "required": [
+          "partialCapable",
+          "unitField"
+        ],
+        "type": "object",
+        "properties": {
+          "partialCapable": {},
+          "unitField": {}
+        }
+      }
     }
   ]
 }

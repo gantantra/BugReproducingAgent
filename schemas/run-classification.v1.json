@@ -5,13 +5,30 @@
   "description": "The model assignment of one run to a cluster and a failure signature. A classification whose declaredOutcome contradicts the deterministic RunOutcome for that run is rejected, not warned. Fingerprints and outcomes are computed by the extractor; this record interprets them.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "classificationId", "investigationId", "runId",
-               "deterministicOutcome", "signatureId", "clusterId", "evidence"],
+  "required": [
+    "schemaVersion",
+    "classificationId",
+    "investigationId",
+    "runId",
+    "deterministicOutcome",
+    "signatureId",
+    "clusterId",
+    "evidence"
+  ],
   "properties": {
-    "schemaVersion": { "const": "1.0.0" },
-    "classificationId": { "type": "string", "pattern": "^CLS-[0-9]{3,}$" },
-    "investigationId": { "$ref": "common.v1.json#/$defs/investigationId" },
-    "runId": { "$ref": "common.v1.json#/$defs/runId" },
+    "schemaVersion": {
+      "const": "1.0.0"
+    },
+    "classificationId": {
+      "type": "string",
+      "pattern": "^CLS-[0-9]{3,}$"
+    },
+    "investigationId": {
+      "$ref": "common.v1.json#/$defs/investigationId"
+    },
+    "runId": {
+      "$ref": "common.v1.json#/$defs/runId"
+    },
     "deterministicOutcome": {
       "$ref": "common.v1.json#/$defs/runOutcome",
       "description": "Copied from the run manifest. Validation asserts it equals the stored value; the model cannot restate it differently."
@@ -19,41 +36,92 @@
     "signatureId": {
       "description": "The signature this run matches, or none.",
       "oneOf": [
-        { "$ref": "common.v1.json#/$defs/signatureId" },
-        { "const": "none" }
+        {
+          "$ref": "common.v1.json#/$defs/signatureId"
+        },
+        {
+          "const": "none"
+        }
       ]
     },
-    "clusterId": { "$ref": "common.v1.json#/$defs/clusterId" },
-    "clusterLabel": { "type": "string", "maxLength": 200 },
-    "excluded": { "type": "boolean", "default": false },
+    "clusterId": {
+      "$ref": "common.v1.json#/$defs/clusterId"
+    },
+    "clusterLabel": {
+      "type": "string",
+      "maxLength": 200
+    },
+    "excluded": {
+      "type": "boolean",
+      "default": false
+    },
     "exclusionReason": {
       "type": "string",
       "description": "Required when excluded is true, for example target detached and evidence incomplete."
     },
-    "rationale": { "type": "string", "minLength": 1 },
+    "rationale": {
+      "type": "string",
+      "minLength": 1
+    },
     "evidence": {
       "type": "array",
       "minItems": 1,
-      "items": { "$ref": "finding.v1.json#/$defs/evidenceReference" }
+      "items": {
+        "$ref": "finding.v1.json#/$defs/evidenceReference"
+      }
     },
     "provenance": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["actorKind"],
+      "required": [
+        "actorKind"
+      ],
       "properties": {
-        "actorKind": { "$ref": "common.v1.json#/$defs/actorKind" },
-        "aiCallId": { "$ref": "common.v1.json#/$defs/aiCallId" },
-        "flowArtifactId": { "type": "string" },
-        "flowArtifactVersion": { "$ref": "common.v1.json#/$defs/semver" },
-        "flowHash": { "$ref": "common.v1.json#/$defs/sha256" },
-        "createdAt": { "$ref": "common.v1.json#/$defs/timestamp" }
+        "actorKind": {
+          "$ref": "common.v1.json#/$defs/actorKind"
+        },
+        "aiCallId": {
+          "$ref": "common.v1.json#/$defs/aiCallId"
+        },
+        "flowArtifactId": {
+          "type": "string"
+        },
+        "flowArtifactVersion": {
+          "$ref": "common.v1.json#/$defs/semver"
+        },
+        "flowHash": {
+          "$ref": "common.v1.json#/$defs/sha256"
+        },
+        "createdAt": {
+          "$ref": "common.v1.json#/$defs/timestamp"
+        }
       }
     }
   },
   "allOf": [
     {
-      "if": { "properties": { "excluded": { "const": true } }, "required": ["excluded"] },
-      "then": { "required": ["excluded", "exclusionReason"] }
+      "if": {
+        "properties": {
+          "excluded": {
+            "const": true
+          }
+        },
+        "required": [
+          "excluded"
+        ],
+        "type": "object"
+      },
+      "then": {
+        "required": [
+          "excluded",
+          "exclusionReason"
+        ],
+        "type": "object",
+        "properties": {
+          "excluded": {},
+          "exclusionReason": {}
+        }
+      }
     }
   ]
 }

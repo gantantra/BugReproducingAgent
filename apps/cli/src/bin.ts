@@ -13,6 +13,13 @@ import {
 } from "./runtime.js";
 import { runCommand } from "./commands/run.js";
 import { doctorCommand } from "./commands/doctor.js";
+import { intakeCommand } from "./commands/intake.js";
+import { planCommand } from "./commands/plan.js";
+import { approveCommand } from "./commands/approve.js";
+import { suiteGenerateCommand } from "./commands/suite.js";
+import { lineageCommand, showCommand, statusCommand } from "./commands/inspect.js";
+import { retentionApplyCommand } from "./commands/retention.js";
+import { loadEnvFile } from "./env-file.js";
 
 /**
  * `investigate` CLI.
@@ -26,11 +33,7 @@ import { doctorCommand } from "./commands/doctor.js";
  */
 
 const NOT_IMPLEMENTED: Record<string, string> = {
-  intake: "M2",
-  plan: "M3",
-  approve: "M2",
   classify: "M4",
-  "suite generate": "M2",
   "frequency run": "M5",
   minimize: "M6",
   revalidate: "M6",
@@ -53,7 +56,7 @@ function globalsFrom(cmd: Command): GlobalOptions {
 function notImplemented(name: string): never {
   throw new InvestigatorError(
     "NOT_IMPLEMENTED",
-    `\`investigate ${name}\` is specified but not implemented in M1. Arrives in ${NOT_IMPLEMENTED[name] ?? "a later milestone"}. See docs/milestones/.`,
+    `\`investigate ${name}\` is part of the frozen command contract but is not implemented yet. Arrives in ${NOT_IMPLEMENTED[name] ?? "a later milestone"}. See docs/milestones/.`,
     { context: { command: name, milestone: NOT_IMPLEMENTED[name] ?? null } }
   );
 }
@@ -73,6 +76,10 @@ function version(): string {
   }
   return "0.0.0";
 }
+
+// Before any command reads configuration. The real environment always wins over the file, and
+// `REPROAGENT_NO_ENV_FILE=1` disables it outright — see `env-file.ts` for why both matter.
+loadEnvFile();
 
 const program = new Command();
 
@@ -163,14 +170,11 @@ program
     Number.parseInt(v, 10)
   )
   .option(
-    "--fixture-experiment <file>",
-    "[M1 ONLY] run a fixture experiment file directly. M2 removes this flag and requires gate 1."
-  )
-  .option(
     "--fixture-app <kind>",
-    "[M1 ONLY] start a local fixture application for this run and allowlist its origin. " +
-      "One of: passing, product-failing-deterministic, product-failing-intermittent, " +
-      "automation-failing, infrastructure-failing, straddling-requests, sensitive."
+    "start a local fixture application for this run and allowlist its origin. Supplies a " +
+      "TARGET only; what runs is still only what gate 1 approved. One of: passing, " +
+      "product-failing-deterministic, product-failing-intermittent, automation-failing, " +
+      "infrastructure-failing, straddling-requests, sensitive."
   )
   .option("--target <name>", "target name for the fixture experiment")
   .action(async function (this: Command) {
@@ -210,38 +214,82 @@ program
   });
 
 // ---------------------------------------------------------------------------
+// Read-only inspection. All answer offline: no browser, no provider.
+// ---------------------------------------------------------------------------
+
+program
+  .command("status")
+  .description("gate states, run outcomes, queue and lineage health for an investigation")
+  .action(async function (this: Command) {
+    await dispatch(this, (rt, g) => statusCommand(rt, g));
+  });
+
+program
+  .command("show")
+  .argument("<what>", "a gate name, or an artifact id")
+  .description("print a rendered proposal or the contents of an artifact")
+  .action(async function (this: Command, what: string) {
+    await dispatch(this, (rt, g) => showCommand(rt, what, g));
+  });
+
+program
+  .command("lineage")
+  .argument("<nodeId>", "run, job, experiment, approval or artifact id")
+  .description("ancestor and descendant closure for a node, with the actor on every hop")
+  .action(async function (this: Command, nodeId: string) {
+    await dispatch(this, (rt, g) => lineageCommand(rt, nodeId, g));
+  });
+
+const retention = program.command("retention").description("artifact retention");
+retention
+  .command("apply")
+  .description("tombstone artifacts past their retention age (dry run without --confirm)")
+  .option("--confirm", "actually delete; without this the command only reports")
+  .option("--older-than-days <n>", "override storage.retention.artifactDays", (v) =>
+    Number.parseInt(v, 10)
+  )
+  .action(async function (this: Command) {
+    await dispatch(this, (rt, g) => retentionApplyCommand(rt, this.opts(), g));
+  });
+
+// ---------------------------------------------------------------------------
 // Frozen contract commands that arrive in later milestones. Registered so the
 // contract is discoverable, and failing loudly rather than doing nothing.
 // ---------------------------------------------------------------------------
 
 program
   .command("intake")
-  .description("register an investigation from a report file [M2]")
+  .description("open an investigation from a human's report file (--ai interprets it into a Flow)")
   .requiredOption("--from <file>", "report file")
   .option("--title <text>", "override the title")
   .option("--env <name>", "target name")
-  .action(function (this: Command) {
-    runStub("intake", this);
+  .option("--ai", "also interpret the report into a structured Flow with intake_to_flow")
+  .option("--replay <dir>", "replay recorded provider responses instead of calling one")
+  .action(async function (this: Command) {
+    await dispatch(this, (rt, g) => intakeCommand(rt, this.opts(), g));
   });
 
 program
   .command("plan")
-  .description("propose ranked experiments and render the gate 1 proposal [M3]")
-  .option("--max-proposals <n>", "cap the number of proposals")
-  .option("--refresh", "re-run planning")
-  .action(function (this: Command) {
-    runStub("plan", this);
+  .description("render the gate 1 proposal a human decides on (--ai drafts it with DeepSeek)")
+  .option("--from <file>", "proposal input file")
+  .option("--gate <gate>", "gate to render for", "experiment_selection")
+  .option("--ai", "generate the proposal with propose_experiments instead of reading a file")
+  .option("--replay <dir>", "replay recorded provider responses instead of calling one")
+  .action(async function (this: Command) {
+    await dispatch(this, (rt, g) => planCommand(rt, this.opts(), g));
   });
 
 program
   .command("approve")
   .argument("<gate>", "experiment_selection | target_failure | final_reproduction")
-  .description("record a checksum-bound human approval [M2]")
+  .description("record a checksum-bound human approval")
   .option("--from <file>", "approval file")
   .option("--checksum <sha256>", "sha256 of the proposal being approved")
   .option("--scaffold", "write a pre-filled, schema-valid approval file (approves nothing)")
-  .action(function (this: Command) {
-    runStub("approve", this);
+  .option("--approver <name>", "name recorded in the scaffold")
+  .action(async function (this: Command, gate: string) {
+    await dispatch(this, (rt, g) => approveCommand(rt, gate, this.opts(), g));
   });
 
 program
@@ -256,11 +304,11 @@ program
 const suite = program.command("suite").description("deterministic suite emission");
 suite
   .command("generate")
-  .description("emit a standalone Playwright suite for approved experiments [M2]")
+  .description("emit a standalone Playwright suite for approved experiments")
   .option("--out <dir>", "output directory")
   .option("--experiment <id...>", "limit to specific experiments")
-  .action(function (this: Command) {
-    runStub("suite generate", this);
+  .action(async function (this: Command) {
+    await dispatch(this, (rt, g) => suiteGenerateCommand(rt, this.opts(), g));
   });
 
 const frequency = program.command("frequency").description("frequency measurement");
@@ -311,6 +359,31 @@ program
   .action(function (this: Command) {
     runStub("export", this);
   });
+
+/**
+ * Open the runtime, run a command, emit its result, and always close. Every implemented command
+ * goes through here so that error reporting, JSON mode, and cleanup cannot drift apart.
+ */
+async function dispatch(
+  cmd: Command,
+  run: (
+    rt: Awaited<ReturnType<typeof openRuntime>>,
+    g: GlobalOptions
+  ) => Promise<{ json: unknown; human: () => string }>
+): Promise<void> {
+  const g = globalsFrom(cmd);
+  const logger = new Logger({ json: g.json === true, level: g.verbose ? "debug" : "info" });
+  let rt;
+  try {
+    rt = await openRuntime(g);
+    const result = await run(rt, g);
+    emit(result.json, g.json === true, result.human);
+  } catch (e) {
+    reportAndExit(e, logger, g.json === true);
+  } finally {
+    await rt?.close();
+  }
+}
 
 function runStub(name: string, cmd: Command): void {
   const g = globalsFrom(cmd);

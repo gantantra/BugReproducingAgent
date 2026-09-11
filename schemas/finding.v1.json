@@ -5,19 +5,48 @@
   "description": "One analytical claim with explicit, validated evidence references. Levels are the canonical ladder only. The display label correlated_difference maps to correlated in the renderer and is not accepted here. confirmed_root_cause requires an approved direct_evidence_attestation, which the MVP has no command to mint, so it is unreachable by design.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "findingId", "investigationId", "level", "statement",
-               "supportingEvidence", "contradictingEvidence", "confidence"],
+  "required": [
+    "schemaVersion",
+    "findingId",
+    "investigationId",
+    "level",
+    "statement",
+    "supportingEvidence",
+    "contradictingEvidence",
+    "confidence"
+  ],
   "properties": {
-    "schemaVersion": { "const": "1.0.0" },
-    "findingId": { "$ref": "common.v1.json#/$defs/findingId" },
-    "investigationId": { "$ref": "common.v1.json#/$defs/investigationId" },
-    "level": { "$ref": "common.v1.json#/$defs/findingLevel" },
-    "statement": { "type": "string", "minLength": 10 },
+    "schemaVersion": {
+      "const": "1.0.0"
+    },
+    "findingId": {
+      "$ref": "common.v1.json#/$defs/findingId"
+    },
+    "investigationId": {
+      "$ref": "common.v1.json#/$defs/investigationId"
+    },
+    "level": {
+      "$ref": "common.v1.json#/$defs/findingLevel"
+    },
+    "statement": {
+      "type": "string",
+      "minLength": 10
+    },
     "claimCategory": {
       "description": "Selects the allowed artifact kinds for reference check 5.",
-      "enum": ["network-timing", "network-status", "console", "exception", "dom-state",
-               "storage-state", "navigation", "visual", "frequency-statistic",
-               "reproduction-behaviour", "mechanism"]
+      "enum": [
+        "network-timing",
+        "network-status",
+        "console",
+        "exception",
+        "dom-state",
+        "storage-state",
+        "navigation",
+        "visual",
+        "frequency-statistic",
+        "reproduction-behaviour",
+        "mechanism"
+      ]
     },
     "mechanism": {
       "type": "string",
@@ -26,12 +55,16 @@
     "supportingEvidence": {
       "type": "array",
       "minItems": 1,
-      "items": { "$ref": "#/$defs/evidenceReference" }
+      "items": {
+        "$ref": "#/$defs/evidenceReference"
+      }
     },
     "contradictingEvidence": {
       "type": "array",
       "description": "Required to be present, possibly empty. Validated identically to supporting evidence.",
-      "items": { "$ref": "#/$defs/evidenceReference" }
+      "items": {
+        "$ref": "#/$defs/evidenceReference"
+      }
     },
     "contradictionResolution": {
       "type": "string",
@@ -46,9 +79,13 @@
     "validation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["referenceCheckPassed"],
+      "required": [
+        "referenceCheckPassed"
+      ],
       "properties": {
-        "referenceCheckPassed": { "type": "boolean" },
+        "referenceCheckPassed": {
+          "type": "boolean"
+        },
         "requestedLevel": {
           "$ref": "common.v1.json#/$defs/findingLevel",
           "description": "The level the model asked for, when it differs from the persisted level."
@@ -58,21 +95,40 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["from", "to", "reason"],
+            "required": [
+              "from",
+              "to",
+              "reason"
+            ],
             "properties": {
-              "from": { "$ref": "common.v1.json#/$defs/findingLevel" },
-              "to": { "$ref": "common.v1.json#/$defs/findingLevel" },
-              "reason": {
-                "enum": ["INSUFFICIENT_RUNS", "OVERLAPPING_INTERVALS", "NO_MATCHED_CONTROL",
-                         "NO_APPROVED_REPRODUCTION", "INCOMPLETE_EVIDENCE_CATEGORY",
-                         "UNRESOLVED_CONTRADICTION", "MISSING_FIELD_CITATION"]
+              "from": {
+                "$ref": "common.v1.json#/$defs/findingLevel"
               },
-              "detail": { "type": "string" }
+              "to": {
+                "$ref": "common.v1.json#/$defs/findingLevel"
+              },
+              "reason": {
+                "enum": [
+                  "INSUFFICIENT_RUNS",
+                  "OVERLAPPING_INTERVALS",
+                  "NO_MATCHED_CONTROL",
+                  "NO_APPROVED_REPRODUCTION",
+                  "INCOMPLETE_EVIDENCE_CATEGORY",
+                  "UNRESOLVED_CONTRADICTION",
+                  "MISSING_FIELD_CITATION"
+                ]
+              },
+              "detail": {
+                "type": "string"
+              }
             }
           }
         },
         "capReason": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "Set when a non-complete evidence category capped the level at correlated."
         }
       }
@@ -80,14 +136,28 @@
     "provenance": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["actorKind"],
+      "required": [
+        "actorKind"
+      ],
       "properties": {
-        "actorKind": { "$ref": "common.v1.json#/$defs/actorKind" },
-        "aiCallId": { "$ref": "common.v1.json#/$defs/aiCallId" },
-        "flowArtifactId": { "type": "string" },
-        "flowArtifactVersion": { "$ref": "common.v1.json#/$defs/semver" },
-        "flowHash": { "$ref": "common.v1.json#/$defs/sha256" },
-        "createdAt": { "$ref": "common.v1.json#/$defs/timestamp" }
+        "actorKind": {
+          "$ref": "common.v1.json#/$defs/actorKind"
+        },
+        "aiCallId": {
+          "$ref": "common.v1.json#/$defs/aiCallId"
+        },
+        "flowArtifactId": {
+          "type": "string"
+        },
+        "flowArtifactVersion": {
+          "$ref": "common.v1.json#/$defs/semver"
+        },
+        "flowHash": {
+          "$ref": "common.v1.json#/$defs/sha256"
+        },
+        "createdAt": {
+          "$ref": "common.v1.json#/$defs/timestamp"
+        }
       }
     }
   },
@@ -97,45 +167,112 @@
       "if": {
         "properties": {
           "level": {
-            "enum": ["probable_trigger", "high_confidence_trigger", "confirmed_trigger",
-                     "root_cause_hypothesis", "confirmed_root_cause"]
+            "enum": [
+              "probable_trigger",
+              "high_confidence_trigger",
+              "confirmed_trigger",
+              "root_cause_hypothesis",
+              "confirmed_root_cause"
+            ]
           }
         },
-        "required": ["level"]
+        "required": [
+          "level"
+        ],
+        "type": "object"
       },
       "then": {
         "properties": {
           "supportingEvidence": {
-            "contains": { "required": ["field", "expectedValue"] }
+            "contains": {
+              "required": [
+                "field",
+                "expectedValue"
+              ],
+              "type": "object",
+              "properties": {
+                "field": {},
+                "expectedValue": {}
+              }
+            },
+            "type": "array"
           }
-        }
+        },
+        "type": "object"
       }
     },
     {
       "description": "A proposed mechanism is required once the claim reaches hypothesis territory.",
       "if": {
-        "properties": { "level": { "enum": ["root_cause_hypothesis", "confirmed_root_cause"] } },
-        "required": ["level"]
+        "properties": {
+          "level": {
+            "enum": [
+              "root_cause_hypothesis",
+              "confirmed_root_cause"
+            ]
+          }
+        },
+        "required": [
+          "level"
+        ],
+        "type": "object"
       },
-      "then": { "required": ["mechanism"] }
+      "then": {
+        "required": [
+          "mechanism"
+        ],
+        "type": "object",
+        "properties": {
+          "mechanism": {}
+        }
+      }
     },
     {
       "description": "confirmed_root_cause requires an approved direct evidence attestation. Hard fail otherwise.",
       "if": {
-        "properties": { "level": { "const": "confirmed_root_cause" } },
-        "required": ["level"]
+        "properties": {
+          "level": {
+            "const": "confirmed_root_cause"
+          }
+        },
+        "required": [
+          "level"
+        ],
+        "type": "object"
       },
       "then": {
         "properties": {
           "supportingEvidence": {
             "contains": {
               "allOf": [
-                { "properties": { "kind": { "const": "directEvidence" } }, "required": ["kind"] },
-                { "required": ["approvalId", "artifactIds"] }
+                {
+                  "properties": {
+                    "kind": {
+                      "const": "directEvidence"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "required": [
+                    "approvalId",
+                    "artifactIds"
+                  ],
+                  "type": "object",
+                  "properties": {
+                    "approvalId": {},
+                    "artifactIds": {}
+                  }
+                }
               ]
-            }
+            },
+            "type": "array"
           }
-        }
+        },
+        "type": "object"
       }
     }
   ],
@@ -143,10 +280,19 @@
     "evidenceReference": {
       "type": "object",
       "unevaluatedProperties": false,
-      "required": ["kind"],
+      "required": [
+        "kind"
+      ],
       "properties": {
         "kind": {
-          "enum": ["event", "artifact", "statistic", "comparison", "approval", "directEvidence"]
+          "enum": [
+            "event",
+            "artifact",
+            "statistic",
+            "comparison",
+            "approval",
+            "directEvidence"
+          ]
         },
         "field": {
           "$ref": "common.v1.json#/$defs/jsonPointer",
@@ -159,88 +305,198 @@
       },
       "allOf": [
         {
-          "if": { "properties": { "kind": { "const": "event" } }, "required": ["kind"] },
-          "then": {
-            "required": ["runId", "eventIds"],
+          "if": {
             "properties": {
-              "runId": { "$ref": "common.v1.json#/$defs/runId" },
+              "kind": {
+                "const": "event"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "required": [
+              "runId",
+              "eventIds"
+            ],
+            "properties": {
+              "runId": {
+                "$ref": "common.v1.json#/$defs/runId"
+              },
               "eventIds": {
                 "type": "array",
                 "minItems": 1,
-                "items": { "$ref": "common.v1.json#/$defs/eventId" }
+                "items": {
+                  "$ref": "common.v1.json#/$defs/eventId"
+                }
               },
               "artifactIds": {
                 "type": "array",
-                "items": { "$ref": "common.v1.json#/$defs/artifactId" }
+                "items": {
+                  "$ref": "common.v1.json#/$defs/artifactId"
+                }
               }
-            }
+            },
+            "type": "object"
           }
         },
         {
-          "if": { "properties": { "kind": { "const": "artifact" } }, "required": ["kind"] },
-          "then": {
-            "required": ["runId", "artifactIds"],
+          "if": {
             "properties": {
-              "runId": { "$ref": "common.v1.json#/$defs/runId" },
+              "kind": {
+                "const": "artifact"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "required": [
+              "runId",
+              "artifactIds"
+            ],
+            "properties": {
+              "runId": {
+                "$ref": "common.v1.json#/$defs/runId"
+              },
               "artifactIds": {
                 "type": "array",
                 "minItems": 1,
-                "items": { "$ref": "common.v1.json#/$defs/artifactId" }
+                "items": {
+                  "$ref": "common.v1.json#/$defs/artifactId"
+                }
               }
-            }
+            },
+            "type": "object"
           }
         },
         {
-          "if": { "properties": { "kind": { "const": "statistic" } }, "required": ["kind"] },
-          "then": {
-            "required": ["investigationId", "statisticId"],
+          "if": {
             "properties": {
-              "investigationId": { "$ref": "common.v1.json#/$defs/investigationId" },
-              "statisticId": { "$ref": "common.v1.json#/$defs/statisticId" }
-            }
+              "kind": {
+                "const": "statistic"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "required": [
+              "investigationId",
+              "statisticId"
+            ],
+            "properties": {
+              "investigationId": {
+                "$ref": "common.v1.json#/$defs/investigationId"
+              },
+              "statisticId": {
+                "$ref": "common.v1.json#/$defs/statisticId"
+              }
+            },
+            "type": "object"
           }
         },
         {
-          "if": { "properties": { "kind": { "const": "comparison" } }, "required": ["kind"] },
-          "then": {
-            "required": ["comparisonId", "runIdsA", "runIdsB"],
+          "if": {
             "properties": {
-              "comparisonId": { "$ref": "common.v1.json#/$defs/comparisonId" },
+              "kind": {
+                "const": "comparison"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "required": [
+              "comparisonId",
+              "runIdsA",
+              "runIdsB"
+            ],
+            "properties": {
+              "comparisonId": {
+                "$ref": "common.v1.json#/$defs/comparisonId"
+              },
               "runIdsA": {
                 "type": "array",
                 "minItems": 1,
-                "items": { "$ref": "common.v1.json#/$defs/runId" }
+                "items": {
+                  "$ref": "common.v1.json#/$defs/runId"
+                }
               },
               "runIdsB": {
                 "type": "array",
                 "minItems": 1,
-                "items": { "$ref": "common.v1.json#/$defs/runId" }
+                "items": {
+                  "$ref": "common.v1.json#/$defs/runId"
+                }
               }
-            }
+            },
+            "type": "object"
           }
         },
         {
-          "if": { "properties": { "kind": { "const": "approval" } }, "required": ["kind"] },
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "approval"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
           "then": {
-            "required": ["approvalId"],
-            "properties": { "approvalId": { "$ref": "common.v1.json#/$defs/approvalId" } }
+            "required": [
+              "approvalId"
+            ],
+            "properties": {
+              "approvalId": {
+                "$ref": "common.v1.json#/$defs/approvalId"
+              }
+            },
+            "type": "object"
           }
         },
         {
-          "if": { "properties": { "kind": { "const": "directEvidence" } }, "required": ["kind"] },
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "directEvidence"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
           "then": {
-            "required": ["artifactIds", "approvalId"],
+            "required": [
+              "artifactIds",
+              "approvalId"
+            ],
             "properties": {
               "artifactIds": {
                 "type": "array",
                 "minItems": 1,
-                "items": { "$ref": "common.v1.json#/$defs/artifactId" }
+                "items": {
+                  "$ref": "common.v1.json#/$defs/artifactId"
+                }
               },
               "approvalId": {
                 "$ref": "common.v1.json#/$defs/approvalId",
                 "description": "Must resolve to an ApprovalRecord of type direct_evidence_attestation, checksum-bound to the referenced artifact."
               }
-            }
+            },
+            "type": "object"
           }
         }
       ]

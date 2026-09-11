@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { searchExperiment } from "@investigator/test-fixtures";
 import { verifyManifest, ManifestWriter } from "@investigator/execution";
-import { systemClock } from "@investigator/core";
+import { schemaRegistry, systemClock } from "@investigator/core";
 import {
   createHarness,
   readManifests,
@@ -58,6 +58,23 @@ describe("one manifest per run", () => {
     // No orphans in either direction.
     for (const job of jobs) expect(job.runId).toBeTruthy();
     for (const run of runs) expect(jobs.some((j) => j.jobId === run.jobId)).toBe(true);
+  });
+
+  it("every manifest validates against run-manifest.v1.json", async () => {
+    // M1 exit criterion 8 says every run manifest is "schema-valid". Nothing asserted it: the
+    // schema did not even COMPILE under Ajv strict mode, so no code could have validated against
+    // it. A schema that cannot compile is not a weak check, it is no check at all.
+    h = await createHarness({ fixtures: ["passing"] });
+    await runExperiment(h, searchExperiment("passing"), 2);
+    const manifests = await readManifests(h);
+    expect(manifests.length).toBeGreaterThan(0);
+
+    const registry = schemaRegistry();
+    for (const m of manifests) {
+      expect(() =>
+        registry.assert("run-manifest.v1.json", m, `manifest ${String(m["runId"])}`)
+      ).not.toThrow();
+    }
   });
 
   it("every manifest is sealed, seal-verifiable, and carries the required header fields", async () => {

@@ -27,7 +27,13 @@ export default defineConfig({
         resolve: { alias },
         test: {
           name: "unit",
-          include: ["packages/*/src/**/*.spec.ts", "packages/*/test/**/*.test.ts"],
+          // `apps/*` is included deliberately: CLAUDE.md requires colocated unit tests, and
+          // without this glob a spec beside a CLI source file would be silently never run.
+          include: [
+            "packages/*/src/**/*.spec.ts",
+            "packages/*/test/**/*.test.ts",
+            "apps/*/src/**/*.spec.ts",
+          ],
           environment: "node",
           testTimeout: 20_000,
           hookTimeout: 20_000,

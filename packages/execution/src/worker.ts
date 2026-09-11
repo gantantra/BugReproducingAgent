@@ -575,7 +575,10 @@ export class Worker {
 
     // --- Seal -----------------------------------------------------------------------
     const finishedAt = this.clock.nowIso();
-    const durationMs = Math.max(0, this.clock.monotonicMs() - startMono);
+    // ROUNDED to an integer. `performance.now()` returns a float, and a fractional
+    // millisecond is precision this system cannot justify; run-manifest.v1.json declares
+    // an integer, and a manifest that does not match its own schema is not a record.
+    const durationMs = Math.round(Math.max(0, this.clock.monotonicMs() - startMono));
 
     const terminalReason: JobTerminalReason =
       plane.outcome.outcome === "INFRASTRUCTURE_FAILED" ? "WORKER_ERROR" : "COMPLETED";

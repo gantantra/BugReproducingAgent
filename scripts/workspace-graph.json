@@ -50,15 +50,14 @@
   },
   "packages/ai-gateway": {
     "deps": [
-      "core"
+      "core",
+      "storage"
     ],
     "external": []
   },
   "packages/tools": {
     "deps": [
-      "core",
-      "storage",
-      "evidence"
+      "core"
     ],
     "external": []
   },

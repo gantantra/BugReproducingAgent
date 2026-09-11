@@ -205,6 +205,37 @@ class Tx implements MetadataTx {
     return row ? this.mapLineage(row) : null;
   }
 
+  async listApprovals(investigationId: string): Promise<ApprovalRecordRow[]> {
+    const rows = this.db
+      .prepare(
+        "SELECT * FROM approvals WHERE investigation_id = ? ORDER BY recorded_at, approval_id"
+      )
+      .all(investigationId) as Row[];
+    return rows.map((r) => this.mapApproval(r));
+  }
+
+  async getApproval(approvalId: string): Promise<ApprovalRecordRow | null> {
+    const row = this.db.prepare("SELECT * FROM approvals WHERE approval_id = ?").get(approvalId) as
+      Row | undefined;
+    return row ? this.mapApproval(row) : null;
+  }
+
+  private mapApproval(row: Row): ApprovalRecordRow {
+    return {
+      approvalId: str(row, "approval_id"),
+      investigationId: str(row, "investigation_id"),
+      gate: str(row, "gate"),
+      approvalType: str(row, "approval_type"),
+      proposalChecksum: str(row, "proposal_checksum"),
+      effectiveProposalChecksum: strOrNull(row, "effective_proposal_checksum"),
+      decision: str(row, "decision"),
+      approverName: str(row, "approver_name"),
+      decidedAt: str(row, "decided_at"),
+      recordedAt: str(row, "recorded_at"),
+      payloadJson: str(row, "payload_json"),
+    };
+  }
+
   private mapLineage(row: Row): LineageRecordRow {
     return {
       lineageId: str(row, "lineage_id"),

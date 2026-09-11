@@ -103,3 +103,12 @@ export type FlowResult<T> =
   | { status: "inconclusive"; reason: string; warnings: string[] };
 
 export const PACKAGE_NAME = "@investigator/ai-gateway";
+
+export * from "./errors.js";
+export * from "./retry.js";
+export * from "./budget.js";
+export * from "./deepseek.js";
+export * from "./recorded.js";
+export * from "./gateway.js";
+export * from "./validate.js";
+export * from "./capabilities.js";

@@ -39,6 +39,8 @@ export const ERROR_CODES = [
   "AI_CAPABILITY_MISSING",
   "AI_BUDGET_EXCEEDED",
   "AI_TOOL_NOT_ALLOWED",
+  "TOOL_RESULT_UNSAFE",
+  "TOOL_RESULT_TOO_LARGE",
   // Execution
   "EXEC_BROWSER_LAUNCH_FAILED",
   "EXEC_TARGET_UNREACHABLE",
@@ -116,6 +118,10 @@ const SPEC: Readonly<Record<ErrorCode, CodeSpec>> = {
   AI_CAPABILITY_MISSING: { exitCode: EXIT.PROVIDER_UNAVAILABLE, retryable: false },
   AI_BUDGET_EXCEEDED: { exitCode: EXIT.BUDGET_EXCEEDED, retryable: false },
   AI_TOOL_NOT_ALLOWED: { exitCode: EXIT.AI_INVALID_OUTPUT, retryable: false },
+  // A tool result that would put raw bytes or unredacted content in front of the provider is a
+  // redaction-boundary failure, so it exits with the integrity code rather than a usage code.
+  TOOL_RESULT_UNSAFE: { exitCode: EXIT.INTEGRITY_FAILED, retryable: false },
+  TOOL_RESULT_TOO_LARGE: { exitCode: EXIT.AI_INVALID_OUTPUT, retryable: false },
 
   EXEC_BROWSER_LAUNCH_FAILED: { exitCode: EXIT.EXECUTION_FAILED, retryable: true },
   EXEC_TARGET_UNREACHABLE: { exitCode: EXIT.EXECUTION_FAILED, retryable: true },

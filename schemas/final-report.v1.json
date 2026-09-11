@@ -5,36 +5,88 @@
   "description": "The Jira-ready deliverable. Every claim must map to an approved finding; the report may summarise and reorganise but may not introduce a claim, raise a level, or cite evidence absent from its source finding. All eleven sections are required. Rendering refuses if any cited finding fails reference validation.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "reportId", "investigationId", "approvalId", "generatedAt",
-               "summary", "environment", "reproduction", "passingControl", "claims",
-               "explicitNonClaims", "evidenceCompleteness", "limitations", "artifacts",
-               "lineage"],
+  "required": [
+    "schemaVersion",
+    "reportId",
+    "investigationId",
+    "approvalId",
+    "generatedAt",
+    "summary",
+    "environment",
+    "reproduction",
+    "passingControl",
+    "claims",
+    "explicitNonClaims",
+    "evidenceCompleteness",
+    "limitations",
+    "artifacts",
+    "lineage"
+  ],
   "properties": {
-    "schemaVersion": { "const": "1.0.0" },
-    "reportId": { "type": "string", "pattern": "^RPTOUT-[0-9]{3,}$" },
-    "investigationId": { "$ref": "common.v1.json#/$defs/investigationId" },
+    "schemaVersion": {
+      "const": "1.0.0"
+    },
+    "reportId": {
+      "type": "string",
+      "pattern": "^RPTOUT-[0-9]{3,}$"
+    },
+    "investigationId": {
+      "$ref": "common.v1.json#/$defs/investigationId"
+    },
     "approvalId": {
       "$ref": "common.v1.json#/$defs/approvalId",
       "description": "The gate-3 approval. Report generation requires it."
     },
-    "generatedAt": { "$ref": "common.v1.json#/$defs/timestamp" },
-    "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "generatedAt": {
+      "$ref": "common.v1.json#/$defs/timestamp"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
     "summary": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["whatFails", "where", "measuredIncidence"],
+      "required": [
+        "whatFails",
+        "where",
+        "measuredIncidence"
+      ],
       "properties": {
-        "whatFails": { "type": "string", "minLength": 1 },
-        "where": { "type": "string", "minLength": 1 },
+        "whatFails": {
+          "type": "string",
+          "minLength": 1
+        },
+        "where": {
+          "type": "string",
+          "minLength": 1
+        },
         "measuredIncidence": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["statisticId", "rate", "interval", "achievedN"],
+          "required": [
+            "statisticId",
+            "rate",
+            "interval",
+            "achievedN"
+          ],
           "properties": {
-            "statisticId": { "$ref": "common.v1.json#/$defs/statisticId" },
-            "rate": { "type": "number", "minimum": 0, "maximum": 1 },
-            "interval": { "$ref": "common.v1.json#/$defs/wilsonInterval" },
-            "achievedN": { "type": "integer", "minimum": 1 }
+            "statisticId": {
+              "$ref": "common.v1.json#/$defs/statisticId"
+            },
+            "rate": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "interval": {
+              "$ref": "common.v1.json#/$defs/wilsonInterval"
+            },
+            "achievedN": {
+              "type": "integer",
+              "minimum": 1
+            }
           }
         }
       }
@@ -42,11 +94,22 @@
     "environment": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["targetName", "classification", "emulation", "boundaryStatement"],
+      "required": [
+        "targetName",
+        "classification",
+        "emulation",
+        "boundaryStatement"
+      ],
       "properties": {
-        "targetName": { "type": "string" },
-        "classification": { "$ref": "common.v1.json#/$defs/targetClassification" },
-        "emulation": { "$ref": "common.v1.json#/$defs/resolvedEmulation" },
+        "targetName": {
+          "type": "string"
+        },
+        "classification": {
+          "$ref": "common.v1.json#/$defs/targetClassification"
+        },
+        "emulation": {
+          "$ref": "common.v1.json#/$defs/resolvedEmulation"
+        },
         "boundaryStatement": {
           "type": "string",
           "minLength": 1,
@@ -57,37 +120,116 @@
     "reproduction": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["reproductionId", "actions", "seed", "rate", "interval", "achievedN"],
+      "required": [
+        "reproductionId",
+        "actions",
+        "seed",
+        "rate",
+        "interval",
+        "achievedN"
+      ],
       "properties": {
-        "reproductionId": { "$ref": "common.v1.json#/$defs/reproductionId" },
-        "actions": { "type": "array", "minItems": 1, "items": { "$ref": "action.v1.json" } },
-        "seed": { "type": "integer" },
-        "rate": { "type": "number", "minimum": 0, "maximum": 1 },
-        "interval": { "$ref": "common.v1.json#/$defs/wilsonInterval" },
-        "achievedN": { "type": "integer", "minimum": 1 }
+        "reproductionId": {
+          "$ref": "common.v1.json#/$defs/reproductionId"
+        },
+        "actions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "action.v1.json"
+          }
+        },
+        "seed": {
+          "type": "integer"
+        },
+        "rate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "interval": {
+          "$ref": "common.v1.json#/$defs/wilsonInterval"
+        },
+        "achievedN": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
     "passingControl": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["present"],
+      "required": [
+        "present"
+      ],
       "properties": {
-        "present": { "type": "boolean" },
+        "present": {
+          "type": "boolean"
+        },
         "absenceStatement": {
           "type": "string",
           "description": "Required when present is false. The report may not simply omit the control section."
         },
-        "variedFactor": { "type": "string" },
-        "rate": { "type": "number", "minimum": 0, "maximum": 1 },
-        "interval": { "$ref": "common.v1.json#/$defs/wilsonInterval" },
-        "achievedN": { "type": "integer", "minimum": 1 },
-        "intervalsDisjoint": { "type": "boolean" }
+        "variedFactor": {
+          "type": "string"
+        },
+        "rate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "interval": {
+          "$ref": "common.v1.json#/$defs/wilsonInterval"
+        },
+        "achievedN": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "intervalsDisjoint": {
+          "type": "boolean"
+        }
       },
       "allOf": [
         {
-          "if": { "properties": { "present": { "const": false } }, "required": ["present"] },
-          "then": { "required": ["present", "absenceStatement"] },
-          "else": { "required": ["present", "variedFactor", "rate", "interval", "achievedN"] }
+          "if": {
+            "properties": {
+              "present": {
+                "const": false
+              }
+            },
+            "required": [
+              "present"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "required": [
+              "present",
+              "absenceStatement"
+            ],
+            "type": "object",
+            "properties": {
+              "present": {},
+              "absenceStatement": {}
+            }
+          },
+          "else": {
+            "required": [
+              "present",
+              "variedFactor",
+              "rate",
+              "interval",
+              "achievedN"
+            ],
+            "type": "object",
+            "properties": {
+              "present": {},
+              "variedFactor": {},
+              "rate": {},
+              "interval": {},
+              "achievedN": {}
+            }
+          }
         }
       ]
     },
@@ -98,10 +240,20 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["claimId", "findingId", "level", "text"],
+        "required": [
+          "claimId",
+          "findingId",
+          "level",
+          "text"
+        ],
         "properties": {
-          "claimId": { "type": "string", "pattern": "^CLM-[0-9]{2,}$" },
-          "findingId": { "$ref": "common.v1.json#/$defs/findingId" },
+          "claimId": {
+            "type": "string",
+            "pattern": "^CLM-[0-9]{2,}$"
+          },
+          "findingId": {
+            "$ref": "common.v1.json#/$defs/findingId"
+          },
           "level": {
             "$ref": "common.v1.json#/$defs/findingLevel",
             "description": "Must equal or be lower than the source finding level. Raising it is rejected."
@@ -110,12 +262,17 @@
             "type": "string",
             "description": "Human label from a fixed table, for example correlated difference for correlated. Presentation only."
           },
-          "text": { "type": "string", "minLength": 1 },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
           "citedEvidence": {
             "type": "array",
             "minItems": 1,
             "description": "Must be a subset of the source finding references. New citations are rejected.",
-            "items": { "$ref": "finding.v1.json#/$defs/evidenceReference" }
+            "items": {
+              "$ref": "finding.v1.json#/$defs/evidenceReference"
+            }
           }
         }
       }
@@ -124,36 +281,62 @@
       "type": "array",
       "minItems": 1,
       "description": "What was not established. Must include the absence of a confirmed root cause whenever no confirmed_root_cause finding exists, which in the MVP is always.",
-      "items": { "type": "string", "minLength": 1 }
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
     "evidenceCompleteness": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["aggregate", "perRun"],
+      "required": [
+        "aggregate",
+        "perRun"
+      ],
       "properties": {
         "aggregate": {
           "type": "object",
           "description": "Per-category worst status across cited runs. Aggregation never improves a status.",
-          "additionalProperties": { "$ref": "common.v1.json#/$defs/captureStatusValue" }
+          "additionalProperties": {
+            "$ref": "common.v1.json#/$defs/captureStatusValue"
+          }
         },
         "perRun": {
           "type": "array",
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["runId", "nonCompleteCategories"],
+            "required": [
+              "runId",
+              "nonCompleteCategories"
+            ],
             "properties": {
-              "runId": { "$ref": "common.v1.json#/$defs/runId" },
+              "runId": {
+                "$ref": "common.v1.json#/$defs/runId"
+              },
               "nonCompleteCategories": {
                 "type": "array",
                 "items": {
                   "type": "object",
                   "additionalProperties": false,
-                  "required": ["category", "status", "limitations"],
+                  "required": [
+                    "category",
+                    "status",
+                    "limitations"
+                  ],
                   "properties": {
-                    "category": { "$ref": "common.v1.json#/$defs/evidenceCategory" },
-                    "status": { "$ref": "common.v1.json#/$defs/captureStatusValue" },
-                    "limitations": { "type": "array", "items": { "type": "string" } }
+                    "category": {
+                      "$ref": "common.v1.json#/$defs/evidenceCategory"
+                    },
+                    "status": {
+                      "$ref": "common.v1.json#/$defs/captureStatusValue"
+                    },
+                    "limitations": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
                   }
                 }
               }
@@ -165,10 +348,18 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["runId", "reason"],
+            "required": [
+              "runId",
+              "reason"
+            ],
             "properties": {
-              "runId": { "$ref": "common.v1.json#/$defs/runId" },
-              "reason": { "type": "string", "minLength": 1 }
+              "runId": {
+                "$ref": "common.v1.json#/$defs/runId"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              }
             }
           }
         }
@@ -178,9 +369,17 @@
       "type": "array",
       "minItems": 1,
       "description": "Threshold misses, unverified checks, retention-expired citations, deliberate scope exclusions.",
-      "items": { "type": "string", "minLength": 1 }
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
-    "artifacts": { "type": "array", "items": { "$ref": "common.v1.json#/$defs/artifactRef" } },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "$ref": "common.v1.json#/$defs/artifactRef"
+      }
+    },
     "lineage": {
       "type": "array",
       "minItems": 1,
@@ -188,26 +387,53 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["edge", "fromId", "toId", "actorKind"],
+        "required": [
+          "edge",
+          "fromId",
+          "toId",
+          "actorKind"
+        ],
         "properties": {
-          "edge": { "type": "string" },
-          "fromId": { "type": "string" },
-          "toId": { "type": "string" },
-          "actorKind": { "$ref": "common.v1.json#/$defs/actorKind" }
+          "edge": {
+            "type": "string"
+          },
+          "fromId": {
+            "type": "string"
+          },
+          "toId": {
+            "type": "string"
+          },
+          "actorKind": {
+            "$ref": "common.v1.json#/$defs/actorKind"
+          }
         }
       }
     },
     "provenance": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["actorKind"],
+      "required": [
+        "actorKind"
+      ],
       "properties": {
-        "actorKind": { "$ref": "common.v1.json#/$defs/actorKind" },
-        "aiCallId": { "$ref": "common.v1.json#/$defs/aiCallId" },
-        "flowArtifactId": { "type": "string" },
-        "flowArtifactVersion": { "$ref": "common.v1.json#/$defs/semver" },
-        "flowHash": { "$ref": "common.v1.json#/$defs/sha256" },
-        "rendererVersion": { "type": "string" }
+        "actorKind": {
+          "$ref": "common.v1.json#/$defs/actorKind"
+        },
+        "aiCallId": {
+          "$ref": "common.v1.json#/$defs/aiCallId"
+        },
+        "flowArtifactId": {
+          "type": "string"
+        },
+        "flowArtifactVersion": {
+          "$ref": "common.v1.json#/$defs/semver"
+        },
+        "flowHash": {
+          "$ref": "common.v1.json#/$defs/sha256"
+        },
+        "rendererVersion": {
+          "type": "string"
+        }
       }
     }
   }

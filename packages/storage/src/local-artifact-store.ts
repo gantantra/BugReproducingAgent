@@ -41,6 +41,9 @@ const KIND_PREFIX: Record<ArtifactKind, string> = {
   "effective-proposal": "EFFPROPOSAL",
   "approval-file": "APPROVALFILE",
   "intake-report": "REPORT",
+  // Deliberately not "FLOW": the lineage node for a flow is identified by its own flowId
+  // (FLOW-001), and an artifact id that collided with it would make a provenance dump ambiguous.
+  flow: "FLOWDOC",
   statistics: "STATS",
   "reproducer-package": "REPRO",
   report: "RPTOUT",

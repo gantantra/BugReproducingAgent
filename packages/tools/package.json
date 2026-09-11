@@ -15,8 +15,6 @@
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
   },
   "dependencies": {
-    "@investigator/core": "*",
-    "@investigator/storage": "*",
-    "@investigator/evidence": "*"
+    "@investigator/core": "*"
   }
 }

@@ -1,0 +1,200 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://investigator.local/schemas/gate-proposal.v1.json",
+  "title": "Gate proposal bundle",
+  "description": "The document a human reads and decides on at one approval gate. Its canonical bytes are the checksum subject that an approval file binds to: sorted keys, two-space indentation, LF, UTF-8 without BOM, one trailing newline. The markdown rendering beside it is generated from these bytes and is deliberately NOT part of the checksum, so regenerating it is always safe.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "gate",
+    "investigationId",
+    "renderedAt",
+    "items"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0.0"
+    },
+    "gate": {
+      "$ref": "common.v1.json#/$defs/gate"
+    },
+    "investigationId": {
+      "type": "string",
+      "pattern": "^INV-[0-9]{3,}$"
+    },
+    "renderedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "flowId": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "string",
+      "maxLength": 2000
+    },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "description": "One decidable unit each. A human approves a SUBSET by listing itemIds, which is what makes partial approval a scope rather than a separate state.",
+      "items": {
+        "type": "object",
+        "required": [
+          "itemId"
+        ],
+        "properties": {
+          "itemId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Unique within the bundle. For gate 1 this is the experimentId."
+          },
+          "rank": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "hypothesis": {
+            "type": "string"
+          },
+          "variedFactor": {
+            "type": "string"
+          },
+          "falsifier": {
+            "type": "string",
+            "description": "What observation would disprove the hypothesis. Rendered prominently so approval is a judgement, not a rubber stamp (risk R10)."
+          },
+          "expectedDiscriminatingSignal": {
+            "type": "string"
+          },
+          "rankRationale": {
+            "type": "string"
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "$ref": "action.v1.json"
+            }
+          },
+          "assertions": {
+            "type": "array"
+          },
+          "repetitions": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "requiredEvidence": {
+            "type": "array",
+            "items": {
+              "$ref": "common.v1.json#/$defs/evidenceCategory"
+            }
+          },
+          "emulationProfile": {
+            "type": "string"
+          },
+          "targetName": {
+            "type": "string"
+          },
+          "safety": {
+            "type": "object",
+            "properties": {
+              "maxSideEffectClass": {
+                "enum": [
+                  "read",
+                  "local-write",
+                  "remote-write",
+                  "destructive"
+                ]
+              },
+              "destructiveActionIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "resetStrategy": {
+                "enum": [
+                  "none",
+                  "fresh-context",
+                  "seeded-storage-state",
+                  "scripted-reset",
+                  "per-run-tenant",
+                  "idempotent-only"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "signature": {
+            "type": "object",
+            "description": "Gate 2 only: the target failure signature under decision.",
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "predicate": {
+                "type": "string"
+              },
+              "fingerprint": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "clusters": {
+            "type": "array",
+            "description": "Gate 2 only: run clusters a human may reassign between.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "clusterId": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "runIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "sequence": {
+            "type": "object",
+            "description": "Gate 3 only: the minimized reproduction sequence.",
+            "properties": {
+              "actions": {
+                "type": "array",
+                "items": {
+                  "$ref": "action.v1.json"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "control": {
+            "type": "object",
+            "description": "Gate 3 only: the passing control that supports a trigger claim.",
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "runIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}

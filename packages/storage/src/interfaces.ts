@@ -130,6 +130,9 @@ export interface MetadataReadTx {
   listArtifactRefs(investigationId: string, kind?: ArtifactKind): Promise<ArtifactRefRecord[]>;
   listLineage(investigationId: string): Promise<LineageRecordRow[]>;
   lastLineage(investigationId: string): Promise<LineageRecordRow | null>;
+  /** Every approval for an investigation, oldest first. Gate state is derived from these. */
+  listApprovals(investigationId: string): Promise<ApprovalRecordRow[]>;
+  getApproval(approvalId: string): Promise<ApprovalRecordRow | null>;
   nextSequence(investigationId: string, counter: string): Promise<number>;
   peekSequence(investigationId: string, counter: string): Promise<number>;
 }

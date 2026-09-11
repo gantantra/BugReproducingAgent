@@ -17,6 +17,7 @@
   "dependencies": {
     "@investigator/core": "*",
     "@investigator/ai-gateway": "*",
-    "@investigator/tools": "*"
+    "@investigator/tools": "*",
+    "yaml": "^2.5.0"
   }
 }

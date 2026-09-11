@@ -23,7 +23,9 @@ function invoke(args: string[], cwd: string, env: Record<string, string> = {}): 
     const stdout = execFileSync(process.execPath, [CLI, ...args], {
       cwd,
       encoding: "utf8",
-      env: { ...process.env, ...env },
+      // Each case states the exact DEEPSEEK_* environment it is testing, including the empty-key
+      // case. A developer's local .env must not be able to fill any of them in.
+      env: { ...process.env, REPROAGENT_NO_ENV_FILE: "1", ...env },
       stdio: ["ignore", "pipe", "pipe"],
     });
     return { status: 0, stdout, stderr: "" };
@@ -164,12 +166,14 @@ describe("investigate CLI", () => {
       DEEPSEEK_REASONING_MODEL: "m2",
       DEEPSEEK_FALLBACK_MODEL: "m3",
     };
+    // intake, plan, approve and `suite generate` were on this list until M2 implemented them.
+    // What remains is genuinely unimplemented, and each still names the milestone that delivers
+    // it rather than silently doing nothing.
     for (const [args, milestone] of [
-      [["intake", "--from", "x.md"], "M2"],
-      [["plan"], "M3"],
-      [["approve", "experiment_selection"], "M2"],
       [["classify"], "M4"],
+      [["frequency", "run", "--repeat", "5"], "M5"],
       [["minimize"], "M6"],
+      [["revalidate"], "M6"],
       [["report"], "M7"],
       [["export"], "M7"],
     ] as Array<[string[], string]>) {
@@ -181,15 +185,23 @@ describe("investigate CLI", () => {
     }
   });
 
-  it("run without an approved experiment exits GATE_REQUIRED", () => {
-    const r = invoke(["run", "--json"], dir, {
-      DEEPSEEK_BASE_URL: "https://api.example.invalid/v1",
-      DEEPSEEK_FAST_MODEL: "m1",
-      DEEPSEEK_REASONING_MODEL: "m2",
-      DEEPSEEK_FALLBACK_MODEL: "m3",
-    });
-    expect(r.status).toBe(EXIT.GATE_REQUIRED);
-    expect((JSON.parse(r.stdout) as { code: string }).code).toBe("GATE_REQUIRED");
+  it("run names the investigation it needs before it can check a gate", () => {
+    // From M2, `run` is investigation-scoped: it cannot look for an approval without knowing
+    // which investigation to look in. Gate enforcement itself is asserted end to end in
+    // tests/e2e/m2-gates.test.ts, which renders a proposal and proves nothing is enqueued
+    // without an approval.
+    const r = invoke(["run", "--json"], dir, {});
+    expect(r.status).toBe(EXIT.USAGE);
+    const out = JSON.parse(r.stdout) as { code: string; message: string };
+    expect(out.code).toBe("INPUT_INVALID");
+    expect(out.message).toContain("--investigation");
+  });
+
+  it("the M1 --fixture-experiment bypass is gone from the contract", () => {
+    // It existed only while gate 1 did not. Leaving it would be a door into the executor that
+    // skips the human decision the whole design depends on.
+    const help = invoke(["run", "--help"], dir);
+    expect(help.stdout).not.toContain("--fixture-experiment");
   });
 
   it("refuses to run with Playwright protocol logging enabled", () => {

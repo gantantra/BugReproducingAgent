@@ -1,0 +1,24 @@
+# intake_to_flow — turn a human's bug report into a structured Flow.
+#
+# Single-shot and tool-free by design. The report is the only input, and inventing anything the
+# reporter did not say is the failure mode this flow exists to avoid.
+id: intake_to_flow
+version: 1.0.0
+modelAlias: FAST_MODEL
+temperature: 0
+tools: []
+inputSchema: schemas/intake.input.v1.json
+outputSchema: schemas/intake.output.v1.json
+budget:
+  maxTurns: 3
+  maxToolCalls: 0
+  maxEvidenceBytes: 0
+  maxInputTokens: 6000
+  maxOutputTokens: 2000
+  maxCostUsd: 0.05
+  maxWallClockMs: 60000
+validation:
+  schemaStrict: true
+  rejectUnknownFields: true
+  referenceCheck: false
+  repairAttempts: 1

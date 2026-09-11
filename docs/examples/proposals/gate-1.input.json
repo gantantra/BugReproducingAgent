@@ -1,0 +1,140 @@
+{
+  "summary": "Two candidate explanations for the intermittent blank result list. Both are cheap, read-only, and distinguishable by the console signal.",
+  "items": [
+    {
+      "itemId": "EXP-001",
+      "rank": 1,
+      "hypothesis": "The initial page response resolves AFTER the filter response and overwrites the rendered list with an empty one.",
+      "variedFactor": "relative ordering of the two in-flight responses",
+      "falsifier": "The list renders on every repetition even when the initial response is deliberately delayed.",
+      "expectedDiscriminatingSignal": "result-card count of 0 together with `applyFilters: results undefined` on the console.",
+      "rankRationale": "Matches the reporter's 'reload fixes it' exactly, and needs no server change to observe.",
+      "targetName": "product-failing-intermittent",
+      "repetitions": 6,
+      "requiredEvidence": [
+        "actions",
+        "navigation",
+        "console",
+        "exceptions",
+        "networkMetadata"
+      ],
+      "actions": [
+        {
+          "actionId": "A1",
+          "type": "goto",
+          "url": "/search?seed=7",
+          "waitUntil": "load"
+        },
+        {
+          "actionId": "A2",
+          "type": "click",
+          "selector": {
+            "strategy": "testid",
+            "value": "filter-verified"
+          },
+          "timeoutMs": 30000
+        },
+        {
+          "actionId": "A3",
+          "type": "waitFor",
+          "condition": "networkidle",
+          "timeoutMs": 5000
+        },
+        {
+          "actionId": "A4",
+          "type": "assert",
+          "assertion": {
+            "assertionId": "AS1",
+            "kind": "elementCountAtLeast",
+            "selector": {
+              "strategy": "testid",
+              "value": "result-card"
+            },
+            "min": 1,
+            "timeoutMs": 3000
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "assertionId": "AS1",
+          "kind": "elementCountAtLeast",
+          "selector": {
+            "strategy": "testid",
+            "value": "result-card"
+          },
+          "min": 1,
+          "timeoutMs": 3000
+        }
+      ],
+      "safety": {
+        "maxSideEffectClass": "read",
+        "destructiveActionIds": [],
+        "resetStrategy": "fresh-context"
+      }
+    },
+    {
+      "itemId": "EXP-002",
+      "rank": 2,
+      "hypothesis": "A stale cached response is served for the filter request.",
+      "variedFactor": "cache state between repetitions",
+      "falsifier": "The failure still occurs with a cold context on every repetition.",
+      "expectedDiscriminatingSignal": "a filter response served from cache with an empty item list.",
+      "rankRationale": "Plausible from 'never on the first load of the day', but a fresh context already defeats it, so it ranks below EXP-001.",
+      "targetName": "product-failing-intermittent",
+      "repetitions": 4,
+      "requiredEvidence": [
+        "actions",
+        "networkMetadata"
+      ],
+      "actions": [
+        {
+          "actionId": "A1",
+          "type": "goto",
+          "url": "/search?seed=0",
+          "waitUntil": "load"
+        },
+        {
+          "actionId": "A2",
+          "type": "click",
+          "selector": {
+            "strategy": "testid",
+            "value": "filter-verified"
+          },
+          "timeoutMs": 30000
+        },
+        {
+          "actionId": "A3",
+          "type": "assert",
+          "assertion": {
+            "assertionId": "AS1",
+            "kind": "elementCountAtLeast",
+            "selector": {
+              "strategy": "testid",
+              "value": "result-card"
+            },
+            "min": 1,
+            "timeoutMs": 3000
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "assertionId": "AS1",
+          "kind": "elementCountAtLeast",
+          "selector": {
+            "strategy": "testid",
+            "value": "result-card"
+          },
+          "min": 1,
+          "timeoutMs": 3000
+        }
+      ],
+      "safety": {
+        "maxSideEffectClass": "read",
+        "destructiveActionIds": [],
+        "resetStrategy": "fresh-context"
+      }
+    }
+  ]
+}

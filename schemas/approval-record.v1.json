@@ -5,57 +5,116 @@
   "description": "An immutable human authorization, bound by SHA-256 to the canonical proposal bytes. This schema validates both the human-authored approval file and the persisted record. There is no CLI path that constructs one outside the approve handler, and no flag, config value, or environment variable grants an approval.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "gate", "investigationId", "proposalChecksum", "decision",
-               "approver", "decidedAt"],
+  "required": [
+    "schemaVersion",
+    "gate",
+    "investigationId",
+    "proposalChecksum",
+    "decision",
+    "approver",
+    "decidedAt"
+  ],
   "properties": {
-    "schemaVersion": { "const": "1.0.0" },
+    "schemaVersion": {
+      "const": "1.0.0"
+    },
     "approvalId": {
       "$ref": "common.v1.json#/$defs/approvalId",
       "description": "Assigned on persistence. Absent in the human-authored file."
     },
-    "gate": { "$ref": "common.v1.json#/$defs/gate" },
+    "gate": {
+      "$ref": "common.v1.json#/$defs/gate"
+    },
     "approvalType": {
-      "enum": ["gate_decision", "direct_evidence_attestation"],
+      "enum": [
+        "gate_decision",
+        "direct_evidence_attestation"
+      ],
       "default": "gate_decision",
       "description": "direct_evidence_attestation is the only type that can satisfy confirmed_root_cause. The MVP ships no command that mints it; see ADR-0012 and open question Q10."
     },
-    "investigationId": { "$ref": "common.v1.json#/$defs/investigationId" },
+    "investigationId": {
+      "$ref": "common.v1.json#/$defs/investigationId"
+    },
     "proposalChecksum": {
       "$ref": "common.v1.json#/$defs/sha256",
       "description": "Must equal the --checksum flag and the hash of the canonical proposal bytes on disk and the stored ArtifactRef hash. Disagreement is GATE_CHECKSUM_MISMATCH or GATE_PROPOSAL_STALE."
     },
-    "decision": { "enum": ["approve", "reject", "request_changes"] },
+    "decision": {
+      "enum": [
+        "approve",
+        "reject",
+        "request_changes"
+      ]
+    },
     "approver": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "method"],
+      "required": [
+        "name",
+        "method"
+      ],
       "properties": {
-        "name": { "type": "string", "minLength": 1 },
-        "method": { "const": "local-file" },
-        "note": { "type": "string" }
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "method": {
+          "const": "local-file"
+        },
+        "note": {
+          "type": "string"
+        }
       }
     },
-    "decidedAt": { "$ref": "common.v1.json#/$defs/timestamp" },
-    "recordedAt": { "$ref": "common.v1.json#/$defs/timestamp" },
+    "decidedAt": {
+      "$ref": "common.v1.json#/$defs/timestamp"
+    },
+    "recordedAt": {
+      "$ref": "common.v1.json#/$defs/timestamp"
+    },
     "approvedItemIds": {
       "type": "array",
       "description": "Explicit scope. Partial approval is an approval whose scope is a subset, not a separate state. Every id must exist and belong to this investigation.",
-      "items": { "type": "string", "minLength": 1 }
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
-    "rejectedItemIds": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "rejectedItemIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
     "edits": {
       "type": "array",
       "description": "Each edit must lie inside the gate allowed edit surface, and from must match the current value so an edit written against another revision cannot apply silently.",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["itemId", "path", "from", "to", "rationale"],
+        "required": [
+          "itemId",
+          "path",
+          "from",
+          "to",
+          "rationale"
+        ],
         "properties": {
-          "itemId": { "type": "string", "minLength": 1 },
-          "path": { "$ref": "common.v1.json#/$defs/jsonPointer" },
+          "itemId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "$ref": "common.v1.json#/$defs/jsonPointer"
+          },
           "from": {},
           "to": {},
-          "rationale": { "type": "string", "minLength": 1 }
+          "rationale": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
@@ -65,62 +124,143 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["itemId", "actionId", "classification", "acknowledged", "justification"],
+        "required": [
+          "itemId",
+          "actionId",
+          "classification",
+          "acknowledged",
+          "justification"
+        ],
         "properties": {
-          "itemId": { "type": "string", "minLength": 1 },
-          "actionId": { "$ref": "common.v1.json#/$defs/actionId" },
-          "classification": { "$ref": "common.v1.json#/$defs/sideEffectClass" },
-          "acknowledged": { "const": true },
-          "justification": { "type": "string", "minLength": 1 }
+          "itemId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "actionId": {
+            "$ref": "common.v1.json#/$defs/actionId"
+          },
+          "classification": {
+            "$ref": "common.v1.json#/$defs/sideEffectClass"
+          },
+          "acknowledged": {
+            "const": true
+          },
+          "justification": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
     "requestedChanges": {
       "type": "array",
       "description": "Carried on a reject or request_changes decision. Read as input by the next plan or minimize invocation, so human intent lives in lineage rather than in a chat log.",
-      "items": { "type": "string", "minLength": 1 }
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
-    "notes": { "type": "string" },
+    "notes": {
+      "type": "string"
+    },
     "effectiveProposalChecksum": {
       "$ref": "common.v1.json#/$defs/sha256",
       "description": "Hash of the proposal after edits are applied. This is what execution consumes. Assigned on persistence."
     },
-    "effectiveProposalArtifactId": { "$ref": "common.v1.json#/$defs/artifactId" },
+    "effectiveProposalArtifactId": {
+      "$ref": "common.v1.json#/$defs/artifactId"
+    },
     "attestedArtifactIds": {
       "type": "array",
       "description": "For approvalType direct_evidence_attestation only: the artifacts this attestation is bound to.",
-      "items": { "$ref": "common.v1.json#/$defs/artifactId" }
+      "items": {
+        "$ref": "common.v1.json#/$defs/artifactId"
+      }
     }
   },
   "allOf": [
     {
       "description": "An approval must name what it approves.",
-      "if": { "properties": { "decision": { "const": "approve" } }, "required": ["decision"] },
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "approve"
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "type": "object"
+      },
       "then": {
-        "required": ["decision", "approvedItemIds"],
-        "properties": { "approvedItemIds": { "minItems": 1 } }
+        "required": [
+          "decision",
+          "approvedItemIds"
+        ],
+        "properties": {
+          "approvedItemIds": {
+            "minItems": 1,
+            "type": "array"
+          },
+          "decision": {}
+        },
+        "type": "object"
       }
     },
     {
       "description": "A request for changes must say what to change.",
       "if": {
-        "properties": { "decision": { "const": "request_changes" } },
-        "required": ["decision"]
+        "properties": {
+          "decision": {
+            "const": "request_changes"
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "type": "object"
       },
       "then": {
-        "required": ["decision", "requestedChanges"],
-        "properties": { "requestedChanges": { "minItems": 1 } }
+        "required": [
+          "decision",
+          "requestedChanges"
+        ],
+        "properties": {
+          "requestedChanges": {
+            "minItems": 1,
+            "type": "array"
+          },
+          "decision": {}
+        },
+        "type": "object"
       }
     },
     {
       "description": "A direct evidence attestation is not a gate decision and must bind artifacts.",
       "if": {
-        "properties": { "approvalType": { "const": "direct_evidence_attestation" } },
-        "required": ["approvalType"]
+        "properties": {
+          "approvalType": {
+            "const": "direct_evidence_attestation"
+          }
+        },
+        "required": [
+          "approvalType"
+        ],
+        "type": "object"
       },
       "then": {
-        "required": ["approvalType", "attestedArtifactIds"],
-        "properties": { "attestedArtifactIds": { "minItems": 1 } }
+        "required": [
+          "approvalType",
+          "attestedArtifactIds"
+        ],
+        "properties": {
+          "attestedArtifactIds": {
+            "minItems": 1,
+            "type": "array"
+          },
+          "approvalType": {}
+        },
+        "type": "object"
       }
     }
   ]

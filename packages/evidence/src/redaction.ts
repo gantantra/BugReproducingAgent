@@ -37,7 +37,15 @@ export type FieldScope =
   | "storage.localStorage"
   | "storage.sessionStorage"
   | "storage.indexedDb"
-  | "storage.values";
+  | "storage.values"
+  /**
+   * Free text a human wrote: an intake report, an approval note, a requested change.
+   *
+   * It is durable and it routinely contains a session id, a signed URL, or a customer name
+   * pasted straight from a console, so it crosses the redaction boundary like any collected
+   * evidence. A bug report is not exempt from ADR-0008 merely because a person typed it.
+   */
+  | "report.body";
 
 export interface RedactionMatch {
   any?: true;

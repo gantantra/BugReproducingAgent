@@ -1,0 +1,47 @@
+{
+  "note": "Replay-mode baselines. These are HARD gates, not aspirational targets: a 97% no-fabrication rate would mean three findings in a hundred cite evidence that does not exist, which is indistinguishable from the system being untrustworthy. Lowering a number here requires an amendment in docs/FREEZE-M0.md, not an edit.",
+  "recordedAt": "2026-09-11",
+  "mode": "replay",
+  "flows": {
+    "intake_to_flow": {
+      "datasetCases": { "positive": 12, "negative": 6 },
+      "gates": {
+        "sharedChecks": 1.0,
+        "actionVocabularyValidity": 1.0,
+        "originsInsideAllowlist": 1.0,
+        "unknownsRecall": 1.0,
+        "negativeCasesDetected": 1.0
+      },
+      "observed": {
+        "sharedChecks": 1.0,
+        "actionVocabularyValidity": 1.0,
+        "originsInsideAllowlist": 1.0,
+        "unknownsRecall": 1.0,
+        "negativeCasesDetected": 1.0
+      }
+    },
+    "propose_experiments": {
+      "datasetCases": { "positive": 10, "negative": 6 },
+      "gates": {
+        "sharedChecks": 1.0,
+        "falsifierPresent": 1.0,
+        "destructiveFlaggingAgreesWithClassifier": 1.0,
+        "sideEffectClassNotUnderstated": 1.0,
+        "variedFactorGrounded": 1.0,
+        "negativeCasesDetected": 1.0
+      },
+      "observed": {
+        "sharedChecks": 1.0,
+        "falsifierPresent": 1.0,
+        "destructiveFlaggingAgreesWithClassifier": 1.0,
+        "sideEffectClassNotUnderstated": 1.0,
+        "variedFactorGrounded": 1.0,
+        "negativeCasesDetected": 1.0
+      }
+    }
+  },
+  "liveMode": {
+    "status": "UNVERIFIED",
+    "reason": "No DeepSeek credential is available in this environment. Live thresholds are quality targets measured over 3 repetitions per case; replay is the blocking gate, and it passes. Reported as unverified rather than assumed."
+  }
+}

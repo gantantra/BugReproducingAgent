@@ -5,42 +5,97 @@
   "description": "Per-run, per-category evidence completeness. Every category is required: an omitted key is indistinguishable from a forgotten one.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "runId", "versions", "redaction", "categories", "limitations"],
+  "required": [
+    "schemaVersion",
+    "runId",
+    "versions",
+    "redaction",
+    "categories",
+    "limitations"
+  ],
   "properties": {
-    "schemaVersion": { "const": "1.0.0" },
-    "runId": { "$ref": "common.v1.json#/$defs/runId" },
-    "versions": { "$ref": "common.v1.json#/$defs/versionStamps" },
-    "redaction": { "$ref": "common.v1.json#/$defs/redactionStamp" },
+    "schemaVersion": {
+      "const": "1.0.0"
+    },
+    "runId": {
+      "$ref": "common.v1.json#/$defs/runId"
+    },
+    "versions": {
+      "$ref": "common.v1.json#/$defs/versionStamps"
+    },
+    "redaction": {
+      "$ref": "common.v1.json#/$defs/redactionStamp"
+    },
     "categories": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["actions", "navigation", "console", "exceptions", "networkMetadata",
-                   "responseBodies", "domSnapshots", "storage", "screenshots", "video",
-                   "trace", "webSocketFrames"],
+      "required": [
+        "actions",
+        "navigation",
+        "console",
+        "exceptions",
+        "networkMetadata",
+        "responseBodies",
+        "domSnapshots",
+        "storage",
+        "screenshots",
+        "video",
+        "trace",
+        "webSocketFrames"
+      ],
       "properties": {
-        "actions": { "$ref": "#/$defs/categoryStatus" },
-        "navigation": { "$ref": "#/$defs/categoryStatus" },
-        "console": { "$ref": "#/$defs/categoryStatus" },
-        "exceptions": { "$ref": "#/$defs/categoryStatus" },
-        "networkMetadata": { "$ref": "#/$defs/categoryStatus" },
-        "responseBodies": { "$ref": "#/$defs/categoryStatus" },
-        "domSnapshots": { "$ref": "#/$defs/categoryStatus" },
-        "storage": { "$ref": "#/$defs/categoryStatus" },
-        "screenshots": { "$ref": "#/$defs/categoryStatus" },
-        "video": { "$ref": "#/$defs/categoryStatus" },
-        "trace": { "$ref": "#/$defs/categoryStatus" },
-        "webSocketFrames": { "$ref": "#/$defs/categoryStatus" }
+        "actions": {
+          "$ref": "#/$defs/categoryStatus"
+        },
+        "navigation": {
+          "$ref": "#/$defs/categoryStatus"
+        },
+        "console": {
+          "$ref": "#/$defs/categoryStatus"
+        },
+        "exceptions": {
+          "$ref": "#/$defs/categoryStatus"
+        },
+        "networkMetadata": {
+          "$ref": "#/$defs/categoryStatus"
+        },
+        "responseBodies": {
+          "$ref": "#/$defs/categoryStatus"
+        },
+        "domSnapshots": {
+          "$ref": "#/$defs/categoryStatus"
+        },
+        "storage": {
+          "$ref": "#/$defs/categoryStatus"
+        },
+        "screenshots": {
+          "$ref": "#/$defs/categoryStatus"
+        },
+        "video": {
+          "$ref": "#/$defs/categoryStatus"
+        },
+        "trace": {
+          "$ref": "#/$defs/categoryStatus"
+        },
+        "webSocketFrames": {
+          "$ref": "#/$defs/categoryStatus"
+        }
       }
     },
     "limitations": {
       "type": "array",
       "description": "Human-readable strings generated deterministically from categories[].reasons by a template table. Never hand-written.",
-      "items": { "type": "string", "minLength": 1 }
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
     "requiredCategories": {
       "type": "array",
       "description": "Categories the approved experiment declared required. Drives RunOutcome rule 6.",
-      "items": { "$ref": "common.v1.json#/$defs/evidenceCategory" }
+      "items": {
+        "$ref": "common.v1.json#/$defs/evidenceCategory"
+      }
     },
     "unsafeTrace": {
       "type": "boolean",
@@ -55,27 +110,59 @@
     "categoryStatus": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["status"],
+      "required": [
+        "status"
+      ],
       "properties": {
-        "status": { "$ref": "common.v1.json#/$defs/captureStatusValue" },
-        "expected": { "type": ["integer", "null"], "minimum": 0 },
-        "collected": { "type": "integer", "minimum": 0 },
+        "status": {
+          "$ref": "common.v1.json#/$defs/captureStatusValue"
+        },
+        "expected": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "collected": {
+          "type": "integer",
+          "minimum": 0
+        },
         "reasons": {
           "type": "array",
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["code", "count"],
+            "required": [
+              "code",
+              "count"
+            ],
             "properties": {
               "code": {
-                "enum": ["SIZE_LIMIT", "CONTENT_TYPE_NOT_CAPTURED", "POLICY_REDACTED",
-                         "CONFIG_OFF", "COLLECTOR_UNSUPPORTED", "RUN_INTERRUPTED",
-                         "PARSE_FAILED", "HASH_MISMATCH", "DROPPED_BACKPRESSURE",
-                         "TARGET_DETACHED"]
+                "enum": [
+                  "SIZE_LIMIT",
+                  "CONTENT_TYPE_NOT_CAPTURED",
+                  "POLICY_REDACTED",
+                  "CONFIG_OFF",
+                  "COLLECTOR_UNSUPPORTED",
+                  "RUN_INTERRUPTED",
+                  "PARSE_FAILED",
+                  "HASH_MISMATCH",
+                  "DROPPED_BACKPRESSURE",
+                  "TARGET_DETACHED"
+                ]
               },
-              "count": { "type": "integer", "minimum": 0 },
-              "limitBytes": { "type": "integer", "minimum": 0 },
-              "detail": { "type": "string" }
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "limitBytes": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "detail": {
+                "type": "string"
+              }
             }
           }
         }
@@ -84,10 +171,37 @@
         {
           "description": "A non-complete status must explain itself.",
           "if": {
-            "properties": { "status": { "enum": ["partial", "redacted", "unsupported", "corrupted", "disabled", "missing"] } },
-            "required": ["status"]
+            "properties": {
+              "status": {
+                "enum": [
+                  "partial",
+                  "redacted",
+                  "unsupported",
+                  "corrupted",
+                  "disabled",
+                  "missing"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
           },
-          "then": { "required": ["status", "reasons"], "properties": { "reasons": { "minItems": 1 } } }
+          "then": {
+            "required": [
+              "status",
+              "reasons"
+            ],
+            "properties": {
+              "reasons": {
+                "minItems": 1,
+                "type": "array"
+              },
+              "status": {}
+            },
+            "type": "object"
+          }
         }
       ]
     }

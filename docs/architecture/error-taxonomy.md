@@ -72,6 +72,8 @@ Rules:
 | `AI_CAPABILITY_MISSING` | 6 | no | Flow needs a capability observed as unsupported |
 | `AI_BUDGET_EXCEEDED` | 5 | no | Typed partial or inconclusive result accompanies it |
 | `AI_TOOL_NOT_ALLOWED` | 4 | no | Flow called a tool outside its allowlist |
+| `TOOL_RESULT_UNSAFE` | 7 | no | A tool result carried raw bytes, a data URI, or no redaction stamp. Refused before it could reach the provider (ADR-0008, ADR-0011) |
+| `TOOL_RESULT_TOO_LARGE` | 4 | no | A tool result exceeded its size ceiling. Bounded context is what keeps a tool a projection rather than a dump |
 
 ### Execution
 

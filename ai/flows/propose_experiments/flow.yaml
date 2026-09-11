@@ -1,0 +1,29 @@
+# propose_experiments — rank candidate experiments for a human to approve at gate 1.
+#
+# Tool-using: the model must read the flow, the target's constraints, and what previous
+# experiments already measured, rather than proposing from imagination.
+id: propose_experiments
+version: 1.0.0
+modelAlias: REASONING_MODEL
+temperature: 0
+tools:
+  - get_flow
+  - get_application_constraints
+  - get_previous_experiment_summary
+inputSchema: schemas/intake.output.v1.json
+outputSchema: schemas/gate-proposal.v1.json
+partialCapable: true
+unitField: items
+budget:
+  maxTurns: 6
+  maxToolCalls: 6
+  maxEvidenceBytes: 65536
+  maxInputTokens: 20000
+  maxOutputTokens: 6000
+  maxCostUsd: 0.25
+  maxWallClockMs: 120000
+validation:
+  schemaStrict: true
+  rejectUnknownFields: true
+  referenceCheck: true
+  repairAttempts: 1

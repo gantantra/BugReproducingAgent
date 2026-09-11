@@ -5,45 +5,109 @@
   "description": "One append-only edge in the provenance graph. actor.kind answers the question the governing principle exists to protect: for any node, who produced it. Records form a per-investigation hash chain so tampering is detectable.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "lineageId", "investigationId", "seq", "edge", "fromKind",
-               "fromId", "toKind", "toId", "actor", "createdAt", "recordHash"],
+  "required": [
+    "schemaVersion",
+    "lineageId",
+    "investigationId",
+    "seq",
+    "edge",
+    "fromKind",
+    "fromId",
+    "toKind",
+    "toId",
+    "actor",
+    "createdAt",
+    "recordHash"
+  ],
   "properties": {
-    "schemaVersion": { "const": "1.0.0" },
-    "lineageId": { "$ref": "common.v1.json#/$defs/lineageId" },
-    "investigationId": { "$ref": "common.v1.json#/$defs/investigationId" },
+    "schemaVersion": {
+      "const": "1.0.0"
+    },
+    "lineageId": {
+      "$ref": "common.v1.json#/$defs/lineageId"
+    },
+    "investigationId": {
+      "$ref": "common.v1.json#/$defs/investigationId"
+    },
     "seq": {
       "type": "integer",
       "minimum": 1,
       "description": "Per-investigation monotonic integer assigned inside the same short transaction as the insert. Total and gap-free."
     },
     "edge": {
-      "enum": ["interpreted_as", "proposed_from", "approved_as", "scheduled_as", "executed_as",
-               "retry_of", "extracted_signature", "classified_as", "approved_signature",
-               "derived_finding", "supported_by", "contradicted_by", "proposed_reduction",
-               "validated_as", "controlled_by", "approved_reproduction", "emitted_test",
-               "reported_in", "produced_by", "governed_by", "superseded_by", "reaped",
-               "tombstoned"]
+      "enum": [
+        "interpreted_as",
+        "proposed_from",
+        "approved_as",
+        "scheduled_as",
+        "executed_as",
+        "retry_of",
+        "extracted_signature",
+        "classified_as",
+        "approved_signature",
+        "derived_finding",
+        "supported_by",
+        "contradicted_by",
+        "proposed_reduction",
+        "validated_as",
+        "controlled_by",
+        "approved_reproduction",
+        "emitted_test",
+        "reported_in",
+        "produced_by",
+        "governed_by",
+        "superseded_by",
+        "reaped",
+        "tombstoned"
+      ]
     },
-    "fromKind": { "$ref": "#/$defs/nodeKind" },
-    "fromId": { "type": "string", "minLength": 1 },
-    "toKind": { "$ref": "#/$defs/nodeKind" },
-    "toId": { "type": "string", "minLength": 1 },
+    "fromKind": {
+      "$ref": "#/$defs/nodeKind"
+    },
+    "fromId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "toKind": {
+      "$ref": "#/$defs/nodeKind"
+    },
+    "toId": {
+      "type": "string",
+      "minLength": 1
+    },
     "actor": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind"],
+      "required": [
+        "kind"
+      ],
       "properties": {
-        "kind": { "$ref": "common.v1.json#/$defs/actorKind" },
-        "component": { "type": "string", "description": "Required for deterministic actors." },
-        "version": { "type": "string", "description": "Required for deterministic actors." },
-        "name": { "type": "string", "description": "Required for human actors." }
+        "kind": {
+          "$ref": "common.v1.json#/$defs/actorKind"
+        },
+        "component": {
+          "type": "string",
+          "description": "Required for deterministic actors."
+        },
+        "version": {
+          "type": "string",
+          "description": "Required for deterministic actors."
+        },
+        "name": {
+          "type": "string",
+          "description": "Required for human actors."
+        }
       }
     },
-    "createdAt": { "$ref": "common.v1.json#/$defs/timestamp" },
+    "createdAt": {
+      "$ref": "common.v1.json#/$defs/timestamp"
+    },
     "inputs": {
       "type": "object",
       "description": "Scalar inputs that determined this edge, for example effectiveProposalChecksum, seed, approvalId. Primitives only, never payloads.",
-      "additionalProperties": { "$ref": "common.v1.json#/$defs/jsonPrimitive" }
+      "additionalProperties": {
+        "$ref": "common.v1.json#/$defs/jsonPrimitive"
+      }
     },
     "approvalId": {
       "$ref": "common.v1.json#/$defs/approvalId",
@@ -53,15 +117,24 @@
       "$ref": "common.v1.json#/$defs/aiCallId",
       "description": "Required when actor.kind is ai."
     },
-    "flowId": { "type": "string" },
-    "flowVersion": { "$ref": "common.v1.json#/$defs/semver" },
-    "flowHash": { "$ref": "common.v1.json#/$defs/sha256" },
+    "flowId": {
+      "type": "string"
+    },
+    "flowVersion": {
+      "$ref": "common.v1.json#/$defs/semver"
+    },
+    "flowHash": {
+      "$ref": "common.v1.json#/$defs/sha256"
+    },
     "recordHash": {
       "$ref": "common.v1.json#/$defs/sha256",
       "description": "sha256 over the canonical record without recordHash, concatenated with prevRecordHash."
     },
     "prevRecordHash": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "Null for the first record of an investigation. Forms the tamper-evident chain."
     }
   },
@@ -69,41 +142,140 @@
     {
       "description": "An AI-produced edge must name the call, the flow, and the exact prompt bytes.",
       "if": {
-        "properties": { "actor": { "properties": { "kind": { "const": "ai" } }, "required": ["kind"] } },
-        "required": ["actor"]
+        "properties": {
+          "actor": {
+            "properties": {
+              "kind": {
+                "const": "ai"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "actor"
+        ],
+        "type": "object"
       },
-      "then": { "required": ["actor", "aiCallId", "flowId", "flowVersion", "flowHash"] }
+      "then": {
+        "required": [
+          "actor",
+          "aiCallId",
+          "flowId",
+          "flowVersion",
+          "flowHash"
+        ],
+        "type": "object",
+        "properties": {
+          "actor": {},
+          "aiCallId": {},
+          "flowId": {},
+          "flowVersion": {},
+          "flowHash": {}
+        }
+      }
     },
     {
       "description": "A human-produced edge must name the approval that recorded the decision.",
       "if": {
-        "properties": { "actor": { "properties": { "kind": { "const": "human" } }, "required": ["kind"] } },
-        "required": ["actor"]
+        "properties": {
+          "actor": {
+            "properties": {
+              "kind": {
+                "const": "human"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "actor"
+        ],
+        "type": "object"
       },
-      "then": { "required": ["actor", "approvalId"] }
+      "then": {
+        "required": [
+          "actor",
+          "approvalId"
+        ],
+        "type": "object",
+        "properties": {
+          "actor": {},
+          "approvalId": {}
+        }
+      }
     },
     {
       "description": "A deterministic edge must name the component and its version.",
       "if": {
         "properties": {
-          "actor": { "properties": { "kind": { "const": "deterministic" } }, "required": ["kind"] }
+          "actor": {
+            "properties": {
+              "kind": {
+                "const": "deterministic"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
         },
-        "required": ["actor"]
+        "required": [
+          "actor"
+        ],
+        "type": "object"
       },
       "then": {
         "properties": {
-          "actor": { "required": ["kind", "component", "version"] }
-        }
+          "actor": {
+            "required": [
+              "kind",
+              "component",
+              "version"
+            ],
+            "type": "object",
+            "properties": {
+              "kind": {},
+              "component": {},
+              "version": {}
+            }
+          }
+        },
+        "type": "object"
       }
     }
   ],
   "$defs": {
     "nodeKind": {
-      "enum": ["intake_report", "flow", "experiment_proposal", "approved_experiment", "job",
-               "run", "failure_signature", "approved_failure_signature", "run_classification",
-               "finding", "minimization_candidate", "validated_reproduction",
-               "approved_reproduction", "static_test", "report", "approval", "ai_call",
-               "artifact", "statistic", "comparison"]
+      "enum": [
+        "intake_report",
+        "flow",
+        "experiment_proposal",
+        "approved_experiment",
+        "job",
+        "run",
+        "failure_signature",
+        "approved_failure_signature",
+        "run_classification",
+        "finding",
+        "minimization_candidate",
+        "validated_reproduction",
+        "approved_reproduction",
+        "static_test",
+        "report",
+        "approval",
+        "ai_call",
+        "artifact",
+        "statistic",
+        "comparison"
+      ]
     }
   }
 }

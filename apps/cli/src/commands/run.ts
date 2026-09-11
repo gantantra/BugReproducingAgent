@@ -1,21 +1,24 @@
-import { readFileSync } from "node:fs";
-import {
-  fail,
-  investigationId as makeInvestigationId,
-  schemaRegistry,
-  systemClock,
-} from "@investigator/core";
+import { fail, systemClock } from "@investigator/core";
 import { startFixture, type FixtureKind } from "@investigator/test-fixtures";
 import { ensureInvestigationDirs } from "@investigator/storage";
 import { Worker, enqueueExperiment, type ExperimentSpec } from "@investigator/execution";
+import { LineageWriter } from "@investigator/lineage";
 import type { GlobalOptions, Runtime } from "../runtime.js";
+import { requireGateApproval } from "../gates.js";
 
 /**
  * `investigate run` — the deterministic execution path. Makes no provider calls, and works with
  * no DEEPSEEK_API_KEY present (ADR-0006).
  *
- * M1 NOTE: `--fixture-experiment` accepts an experiment file directly. This is NOT a bypass of
- * gate 1, because gate 1 does not exist until M2; M2 adds enforcement and deletes the flag.
+ * Playwright produces evidence. Deterministic software normalizes and measures evidence. DeepSeek interprets and prioritizes evidence. Humans authorize consequential transitions.
+ *
+ * From M2 there is exactly ONE path from intent to browser and it passes through a human. The M1
+ * `--fixture-experiment` flag, which accepted an experiment file directly, has been REMOVED: it
+ * existed only because gate 1 did not yet exist, and leaving it would have left a door open that
+ * the whole approval mechanism assumes is shut.
+ *
+ * What executes is the EFFECTIVE proposal — the post-edit document the approval recorded — never
+ * the pre-edit one a human read but then changed.
  */
 
 export interface RunCommandResult {
@@ -28,7 +31,7 @@ interface RunOptions {
   repeat?: number;
   maxParallel?: number;
   stopAfterFailures?: number;
-  fixtureExperiment?: string;
+  /** Starts a local fixture app and allowlists its origin for this run. Never bypasses a gate. */
   fixtureApp?: string;
   target?: string;
 }
@@ -38,76 +41,117 @@ export async function runCommand(
   opts: RunOptions,
   globals: GlobalOptions
 ): Promise<RunCommandResult> {
-  if (!opts.fixtureExperiment) {
+  const investigationId = globals.investigation;
+  if (!investigationId) {
+    fail("INPUT_INVALID", "`investigate run` requires --investigation <id>", {
+      context: { flag: "--investigation" },
+    });
+  }
+
+  // THE gate. Everything below this line is authorised by a recorded human decision, or it does
+  // not happen. There is no flag, config value, or environment variable that skips this call.
+  const authorised = await requireGateApproval(rt, investigationId, "experiment_selection");
+
+  const selected = authorised.effective.items.filter((item) => {
+    if (!authorised.approvedItemIds.includes(item.itemId)) return false;
+    if (opts.experiment?.length) return opts.experiment.includes(item.itemId);
+    return true;
+  });
+  if (selected.length === 0) {
     fail(
       "GATE_REQUIRED",
-      "No approved experiment to run. Gate 1 (experiment_selection) arrives in M2; until then use --fixture-experiment.",
-      { context: { milestone: "M1" } }
+      opts.experiment?.length
+        ? `None of the requested experiments are in the approved set (${authorised.approvedItemIds.join(", ")}).`
+        : "The approval authorised no items.",
+      {
+        context: {
+          approved: authorised.approvedItemIds.join(","),
+          requested: (opts.experiment ?? []).join(","),
+        },
+      }
     );
   }
 
-  const investigationId = globals.investigation ?? makeInvestigationId(1);
+  ensureInvestigationDirs(rt.workspace, investigationId);
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(readFileSync(opts.fixtureExperiment, "utf8"));
-  } catch (e) {
-    return fail("INPUT_INVALID", "Cannot read fixture experiment file", {
-      context: { path: opts.fixtureExperiment },
-      cause: e,
-    });
-  }
-  // Validate before anything is enqueued. A malformed experiment must fail as input, not
-  // half-way through a batch (ADR-0015).
-  schemaRegistry().assert("fixture-experiment.v1.json", parsed, opts.fixtureExperiment);
-  const experiment = parsed as ExperimentSpec;
-  // `--fixture-app` starts the named local fixture application for the duration of this run and
-  // registers it as an allowed target. It exists so the documented M1 demo is a single command
-  // with explicit setup and teardown, rather than asking an operator to hand-edit config.yaml
-  // with a port the fixture chose at random. M1-only, like --fixture-experiment.
+  // `--fixture-app` starts a local fixture application for the duration of the run and allowlists
+  // its origin in memory. It supplies a TARGET, never an experiment: what runs is still only what
+  // was approved.
   let fixture: { origin: string; baseUrl: string; close: () => Promise<void> } | undefined;
   if (opts.fixtureApp) {
     fixture = await startFixture(opts.fixtureApp as FixtureKind);
-    const name = experiment.targetName || opts.fixtureApp;
-    experiment.targetName = name;
-    rt.config.execution.targets[name] = {
+    rt.config.execution.targets[opts.fixtureApp] = {
       baseUrl: fixture.baseUrl,
       classification: "fixture",
       resetStrategy: "fresh-context",
       correlationHeaderAllowed: false,
     };
-    // The allowlist is extended for this process only; nothing is written to config.yaml.
     rt.config.safety.allowedOrigins = [...rt.config.safety.allowedOrigins, fixture.origin];
   }
 
-  if (opts.target) experiment.targetName = opts.target;
-  experiment.investigationId = investigationId;
+  const lineage = new LineageWriter(rt.metadata, systemClock);
+  const enqueued: Array<{ experimentId: string; jobIds: string[]; repetitions: number }> = [];
+  let totalRepetitions = 0;
 
-  ensureInvestigationDirs(rt.workspace, investigationId);
-  await rt.metadata.tx(async (t) => {
-    if (!(await t.getInvestigation(investigationId))) {
-      await t.insertInvestigation({
+  for (const item of selected) {
+    const experiment: ExperimentSpec = {
+      experimentId: item.itemId,
+      investigationId,
+      actions: (item["actions"] ?? []) as ExperimentSpec["actions"],
+      assertions: (item["assertions"] ?? []) as ExperimentSpec["assertions"],
+      repetitions: (item["repetitions"] as number | undefined) ?? 1,
+      requiredEvidence: (item["requiredEvidence"] ?? []) as ExperimentSpec["requiredEvidence"],
+      ...(item["emulationProfile"] ? { emulationProfile: String(item["emulationProfile"]) } : {}),
+      safety: (item["safety"] ?? {
+        maxSideEffectClass: "read",
+        destructiveActionIds: [],
+        resetStrategy: "fresh-context",
+      }) as ExperimentSpec["safety"],
+      targetName: opts.target ?? opts.fixtureApp ?? String(item["targetName"] ?? ""),
+    };
+
+    const repetitions = opts.repeat ?? experiment.repetitions ?? 1;
+    totalRepetitions += repetitions;
+
+    // The acknowledged destructive actions come from the approval, so enqueue can enforce the
+    // same requirement the gate did rather than trusting that it happened.
+    const acknowledgedDestructiveActionIds = await acknowledgedFor(
+      rt,
+      investigationId,
+      item.itemId
+    );
+
+    const result = await enqueueExperiment({
+      config: rt.config,
+      metadata: rt.metadata,
+      queue: rt.queue,
+      investigationId,
+      experiment,
+      repetitions,
+      approvalId: authorised.approvalId,
+      effectiveProposalChecksum: authorised.effectiveProposalChecksum,
+      acknowledgedDestructiveActionIds,
+      clock: systemClock,
+    });
+    enqueued.push({ experimentId: item.itemId, jobIds: result.jobIds, repetitions });
+
+    for (const jobId of result.jobIds) {
+      await lineage.append({
         investigationId,
-        title: `Fixture run: ${experiment.experimentId}`,
-        targetName: experiment.targetName,
-        createdAt: systemClock.nowIso(),
-        status: "open",
+        edge: "scheduled_as",
+        fromKind: "approved_experiment",
+        fromId: `A${item.itemId}`,
+        toKind: "job",
+        toId: jobId,
+        actor: { kind: "deterministic", component: "cli:run", version: "0.1.0" },
+        inputs: {
+          approvalId: authorised.approvalId,
+          effectiveProposalChecksum: authorised.effectiveProposalChecksum,
+          seed: rt.config.execution.seed,
+        },
       });
     }
-  });
-
-  const repetitions = opts.repeat ?? experiment.repetitions ?? 1;
-  await enqueueExperiment({
-    config: rt.config,
-    metadata: rt.metadata,
-    queue: rt.queue,
-    investigationId,
-    experiment,
-    repetitions,
-    approvalId: null,
-    effectiveProposalChecksum: null,
-    clock: systemClock,
-  });
+  }
 
   const worker = new Worker({
     config: rt.config,
@@ -122,11 +166,26 @@ export async function runCommand(
 
   let results;
   try {
-    results = await worker.drain(repetitions);
+    results = await worker.drain(totalRepetitions);
   } finally {
     // Explicit teardown, even if the batch threw: a fixture server left listening would hold a
     // port and outlive the command that started it.
     await fixture?.close();
+  }
+
+  // Every run is linked back to the job that produced it, which is what makes
+  // "what authorised this run?" answerable offline.
+  for (const r of results) {
+    await lineage.append({
+      investigationId,
+      edge: "executed_as",
+      fromKind: "job",
+      fromId: r.jobId,
+      toKind: "run",
+      toId: r.runId,
+      actor: { kind: "deterministic", component: "execution", version: "0.1.0" },
+      inputs: { outcome: r.outcome, outcomeRuleId: r.outcomeRuleId, durationMs: r.durationMs },
+    });
   }
 
   const byOutcome: Record<string, number> = {};
@@ -137,8 +196,10 @@ export async function runCommand(
     json: {
       ok: true,
       investigationId,
-      experimentId: experiment.experimentId,
-      requested: repetitions,
+      approvalId: authorised.approvalId,
+      effectiveProposalChecksum: authorised.effectiveProposalChecksum,
+      experiments: enqueued.map((e) => e.experimentId),
+      requested: totalRepetitions,
       completed: results.length,
       byOutcome,
       queue: stats,
@@ -153,8 +214,10 @@ export async function runCommand(
     },
     human: () => {
       const lines = [
-        `Investigation ${investigationId}   experiment ${experiment.experimentId}`,
-        `Runs completed: ${results.length} of ${repetitions} requested`,
+        `Investigation ${investigationId}`,
+        `Authorised by ${authorised.approvalId}  (effective ${authorised.effectiveProposalChecksum.slice(0, 23)}...)`,
+        `Experiments:  ${enqueued.map((e) => e.experimentId).join(", ")}`,
+        `Runs completed: ${results.length} of ${totalRepetitions} requested`,
         "",
         "Outcomes:",
       ];
@@ -170,4 +233,29 @@ export async function runCommand(
       return lines.join("\n");
     },
   };
+}
+
+/**
+ * The destructive actions a human acknowledged for one item, read back from the approval record.
+ *
+ * Enqueue enforces the acknowledgement requirement independently of the gate, so a job cannot be
+ * scheduled for a destructive action merely because some earlier step believed it was approved.
+ */
+async function acknowledgedFor(
+  rt: Runtime,
+  investigationId: string,
+  itemId: string
+): Promise<string[]> {
+  const approvals = await rt.metadata.read((t) => t.listApprovals(investigationId));
+  const out: string[] = [];
+  for (const a of approvals) {
+    if (a.gate !== "experiment_selection" || a.decision !== "approve") continue;
+    const payload = JSON.parse(a.payloadJson) as {
+      safetyAcknowledgements?: Array<{ itemId: string; actionId: string; acknowledged: boolean }>;
+    };
+    for (const ack of payload.safetyAcknowledgements ?? []) {
+      if (ack.itemId === itemId && ack.acknowledged) out.push(ack.actionId);
+    }
+  }
+  return out;
 }

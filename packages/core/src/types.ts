@@ -278,6 +278,10 @@ export const ARTIFACT_KINDS = [
   "effective-proposal",
   "approval-file",
   "intake-report",
+  // The structured interpretation of an intake report, produced by `intake_to_flow`. An artifact
+  // rather than a return value: `propose_experiments` reads it through `get_flow`, so the
+  // interpretation a model proposes from is the same bytes a human can inspect and cite.
+  "flow",
   "statistics",
   "reproducer-package",
   "report",

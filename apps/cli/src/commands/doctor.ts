@@ -1,5 +1,6 @@
 import { detectUnsafeDiagnostics, llmConfigStatus } from "@investigator/core";
 import { verifyManifest } from "@investigator/execution";
+import { verifyChain } from "@investigator/lineage";
 import type { Runtime } from "../runtime.js";
 
 /**
@@ -69,18 +70,20 @@ export async function doctorCommand(rt: Runtime, opts: DoctorOptions): Promise<D
       const records = await rt.metadata.read((t) => t.listLineage(inv.investigationId));
       // Detection, not prevention: a local user can rewrite consistently. The honest guarantee
       // for a local tool is that a rewrite is visible (ADR-0012).
-      let chainOk = true;
-      let firstBreak: string | null = null;
-      let prev: string | null = null;
-      for (const r of records) {
-        if (r.prevRecordHash !== prev) {
-          chainOk = false;
-          firstBreak = r.lineageId;
-          break;
-        }
-        prev = r.recordHash;
-      }
-      entry.lineage = { records: records.length, chainOk, firstBreak };
+      //
+      // `verifyChain` checks three distinct things that mean three different things: a seq gap
+      // (a record was deleted), a broken predecessor link (one was inserted or reordered), and a
+      // record whose hash disagrees with its own contents (one was edited in place). An earlier
+      // version here checked only the predecessor link, and would have missed an in-place edit --
+      // which is the tamper a local user is most likely to attempt.
+      const chain = verifyChain(records);
+      entry.lineage = {
+        records: chain.records,
+        chainOk: chain.ok,
+        firstBreak: chain.firstBreak
+          ? `${chain.firstBreak.lineageId}: ${chain.firstBreak.reason}`
+          : null,
+      };
     }
 
     perInvestigation.push(entry);
