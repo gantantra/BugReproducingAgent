@@ -157,6 +157,8 @@ export async function probeCapabilities(opts: ProbeOptions): Promise<{
     temperature: 0,
     timeoutMs,
     requestId: `probe-${key}`,
+    // Tells the adapter to send the feature under test rather than refuse it for being unproven.
+    probe: true,
   };
 
   const jsonMode = await attempt("jsonMode", () => ({ ...baseReq, responseSchema: PROBE_SCHEMA }));

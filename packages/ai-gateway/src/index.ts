@@ -53,6 +53,16 @@ export interface LlmRequest {
   temperature: number;
   timeoutMs: number;
   requestId: string;
+  /**
+   * This request IS the capability probe, so the adapter must send the feature being probed
+   * instead of refusing it for not being known to work.
+   *
+   * Without this the probe cannot succeed: `complete` declines to send `tools` unless capabilities
+   * already report tool calling as supported, and the only way to observe that is to send tools.
+   * The refusal was recorded as evidence of non-support, so `toolCalls` could never leave
+   * `unknown` and every tool-using flow was unreachable.
+   */
+  probe?: boolean;
 }
 
 export interface LlmResponse {

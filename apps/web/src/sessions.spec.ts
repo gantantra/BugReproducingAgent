@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { SessionStore, normalizeIp, readCookie, type Clock } from "./sessions.js";
+import {
+  SessionStore,
+  normalizeIp,
+  readCookie,
+  type Clock,
+  type Session,
+  type SessionPersistence,
+  type User,
+} from "./sessions.js";
 
 /**
  * The session lock decides whether a second browser on the same machine is allowed to drive the
@@ -176,5 +184,116 @@ describe("readCookie", () => {
 
   it("decodes a percent-encoded value", () => {
     expect(readCookie("investigator_session=a%20b", "investigator_session")).toBe("a b");
+  });
+});
+
+describe("users, and surviving a restart on host storage", () => {
+  function memory(): SessionPersistence & { users: User[]; sessions: Session[] } {
+    const box = {
+      users: [] as User[],
+      sessions: [] as Session[],
+      loadUsers: () => box.users,
+      saveUsers: (u: User[]) => {
+        box.users = u.map((x) => ({ ...x }));
+      },
+      loadSessions: () => box.sessions,
+      saveSessions: (v: Session[]) => {
+        box.sessions = v.map((x) => ({ ...x }));
+      },
+    };
+    return box;
+  }
+
+  it("mints a user on first contact and recognises the same browser afterwards", () => {
+    const clock = fixed();
+    let n = 0;
+    const store = new SessionStore(() => `S${++n}`, clock, 60_000, memory());
+
+    const first = store.identify(null, "loopback");
+    expect(store.userCount()).toBe(1);
+
+    clock.advance(1000);
+    const again = store.identify(first.id, "loopback");
+    expect(again.id).toBe(first.id);
+    expect(again.lastSeenAt).toBe(clock.now());
+    expect(store.userCount()).toBe(1);
+  });
+
+  it("attributes a session to its user and counts sessions started", () => {
+    const clock = fixed();
+    let n = 0;
+    const store = new SessionStore(() => `S${++n}`, clock, 60_000, memory());
+
+    const a = store.acquire("loopback");
+    if (a.status !== "active") throw new Error("expected active");
+    const owner = store.getUser(a.session.userId);
+    expect(owner).toBeDefined();
+    expect(owner?.sessionCount).toBe(1);
+
+    store.release(a.session.id);
+    const b = store.acquire("loopback", null, owner?.id);
+    if (b.status !== "active") throw new Error("expected active");
+    expect(b.session.userId).toBe(owner?.id);
+    expect(store.getUser(owner?.id)?.sessionCount).toBe(2);
+    expect(store.userCount()).toBe(1);
+  });
+
+  it("writes both collections to storage as it goes", () => {
+    const box = memory();
+    const clock = fixed();
+    let n = 0;
+    const store = new SessionStore(() => `S${++n}`, clock, 60_000, box);
+
+    const a = store.acquire("loopback");
+    if (a.status !== "active") throw new Error("expected active");
+    store.setState(a.session.id, { log: [{ t: "say", text: "hello" }] });
+
+    expect(box.users).toHaveLength(1);
+    expect(box.sessions).toHaveLength(1);
+    expect(box.sessions[0]?.state).toEqual({ log: [{ t: "say", text: "hello" }] });
+  });
+
+  it("restores a live session after a restart, transcript intact", () => {
+    const box = memory();
+    const clock = fixed();
+    let n = 0;
+
+    const before = new SessionStore(() => `S${++n}`, clock, 60_000, box);
+    const a = before.acquire("loopback");
+    if (a.status !== "active") throw new Error("expected active");
+    before.setState(a.session.id, { investigation: "INV-010", log: [1, 2] });
+
+    // A new process reading the same files.
+    clock.advance(5_000);
+    const after = new SessionStore(() => `R${++n}`, clock, 60_000, box);
+    const resumed = after.acquire("loopback", a.session.id);
+    expect(resumed.status).toBe("active");
+    if (resumed.status === "active") {
+      expect(resumed.session.id).toBe(a.session.id);
+      expect(resumed.session.state).toEqual({ investigation: "INV-010", log: [1, 2] });
+    }
+  });
+
+  it("does not resurrect a session that had already lapsed before the restart", () => {
+    const box = memory();
+    const clock = fixed();
+    let n = 0;
+
+    const before = new SessionStore(() => `S${++n}`, clock, 60_000, box);
+    const a = before.acquire("loopback");
+    if (a.status !== "active") throw new Error("expected active");
+
+    clock.advance(60_001);
+    const after = new SessionStore(() => `R${++n}`, clock, 60_000, box);
+    expect(after.get(a.session.id)).toBeUndefined();
+    // And the lock is free for whoever asks next.
+    expect(after.acquire("loopback").status).toBe("active");
+  });
+
+  it("starts clean when there is no persistence at all", () => {
+    const store = new SessionStore(() => "S1");
+    expect(store.size()).toBe(0);
+    expect(store.userCount()).toBe(0);
+    expect(store.acquire("loopback").status).toBe("active");
   });
 });

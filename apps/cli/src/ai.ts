@@ -8,6 +8,7 @@ import {
   MemoryCapabilityCache,
   RecordedProvider,
   probeCapabilities,
+  DEFAULT_CAPABILITIES,
   type LlmProvider,
   type ModelCapabilities,
 } from "@investigator/ai-gateway";
@@ -113,11 +114,22 @@ export async function openAiSession(args: OpenAiSessionArgs): Promise<AiSession>
     ])
   ) as Record<ModelAlias, { modelId: string; inferenceMode: string }>;
 
+  /**
+   * The probe needs the provider, and the provider needs the probe's answer, so the result is
+   * handed back through this map once it exists.
+   *
+   * Without it the probe was computed and then dropped: `complete` kept reading the "unknown"
+   * defaults, refused to send tools, and every tool-using flow (`propose_experiments`) failed with
+   * AI_CAPABILITY_MISSING no matter what the provider actually supported.
+   */
+  const probedByAlias = new Map<ModelAlias, ModelCapabilities>();
+
   const provider = new DeepSeekProvider({
     baseUrl: llm.baseUrl,
     apiKeyEnv: llm.apiKeyEnv,
     secrets: rt.secrets,
     models,
+    capabilityLookup: async (a) => probedByAlias.get(a) ?? { ...DEFAULT_CAPABILITIES },
   });
 
   const alias = flow.definition.modelAlias;
@@ -132,6 +144,7 @@ export async function openAiSession(args: OpenAiSessionArgs): Promise<AiSession>
     ttlSeconds: llm.capabilitiesCacheTtlSeconds,
     nowMs: systemClock.nowMs(),
   });
+  probedByAlias.set(alias, probe.capabilities);
   warnings.push(...probe.warnings);
 
   return {

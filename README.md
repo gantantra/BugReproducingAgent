@@ -87,14 +87,26 @@ rather than silently doing nothing:
 node apps/cli/dist/bin.js classify      # -> NOT_IMPLEMENTED, "Arrives in M4"
 ```
 
-**A known defect:** `plan --ai` does not work against DeepSeek. It stops with
-`AI_CAPABILITY_MISSING: tool calling is unsupported`, because `propose_experiments` is a
-tool-using flow and the gateway observes the model's tool-calling capability as unknown. The
-provider does support it — a direct `tools` request to `api.deepseek.com/chat/completions`
-returns a well-formed `tool_calls` — so the fault is in how capability is observed, not in the
-provider. Config cannot paper over it: `llm.capabilities` may only _narrow_ an observed
-capability, never widen it. Until it is fixed, render gate-1 proposals from a file with
+**A known defect:** `plan --ai` still does not complete against DeepSeek, though it now fails
+further along. Two causes have been found and fixed:
+
+1. **A circular capability probe.** The adapter refused to send `tools` unless capabilities already
+   reported tool calling as supported, but the only way to observe that is to send tools. The
+   probe's own request was refused, the refusal was recorded as evidence of non-support, and
+   `toolCalls` could never leave `unknown`. A request may now declare itself a probe.
+2. **The probe's answer was discarded.** `apps/cli/src/ai.ts` ran the probe and returned the result
+   to its caller, but never gave it to the provider — `capabilityLookup` was never set, so
+   `complete()` kept reading the "unknown" defaults. It is now wired back.
+
+What remains: the request reaches the provider and is rejected with HTTP 400
+(`SCHEMA_MISMATCH`). Not yet diagnosed; the likely candidates are `response_format: json_object`
+being sent alongside `tools`, or a `$ref` inside a tool's parameter schema that the provider will
+not resolve. Until it is settled, render gate-1 proposals from a file with
 `plan --from <proposal.json>`. `intake --ai` and `analyze --ai` are unaffected.
+
+Note also that `deriveRequestId` is content-addressed, so re-running a flow that failed _after_ the
+ledger row was written collides on `ai_calls.request_id`. A retry needs a fresh investigation until
+that is resolved.
 
 ## Setup and first run
 
@@ -810,7 +822,7 @@ On Windows, one command runs the same sequence:
 pwsh -File scripts/verify.ps1 -Gate
 ```
 
-Current counts: **366** unit and docs tests, **64** e2e, **48** reliability. The 100-run gate
+Current counts: **372** unit and docs tests, **64** e2e, **48** reliability. The 100-run gate
 completes 100/100 `VALID_COMPLETED` with zero retries and zero infrastructure failures in roughly
 130 seconds.
 

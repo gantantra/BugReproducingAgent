@@ -59,7 +59,7 @@ export function scrubBody(body: string, maxLength = 600): string {
     .slice(0, maxLength);
 }
 
-const DEFAULT_CAPABILITIES: ModelCapabilities = {
+export const DEFAULT_CAPABILITIES: ModelCapabilities = {
   jsonMode: "unknown",
   toolCalls: "unknown",
   thinkingMode: "unknown",
@@ -146,7 +146,10 @@ export class DeepSeekProvider implements LlmProvider {
     }
 
     if (req.tools?.length) {
-      if (capabilities.toolCalls === "supported") {
+      // A probe is the one request that must send tools without knowing whether they work: that
+      // is the observation it exists to make. Gating it on the answer made the question
+      // unanswerable, and left every tool-using flow permanently refused.
+      if (capabilities.toolCalls === "supported" || req.probe === true) {
         body["tools"] = req.tools.map((t) => ({
           type: "function",
           function: { name: t.name, description: t.description, parameters: t.parameters },

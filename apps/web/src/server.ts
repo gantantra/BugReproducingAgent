@@ -13,6 +13,7 @@ import {
   type Params,
 } from "./actions.js";
 import { SessionStore, normalizeIp, readCookie } from "./sessions.js";
+import { FileSessionPersistence } from "./storage.js";
 
 /**
  * A local chat front end for the investigator.
@@ -93,8 +94,17 @@ export function createInvestigatorServer(opts: ServerOptions) {
   const jobs = new Map<string, Job>();
   const origin = `http://127.0.0.1:${opts.port}`;
   const workspaceRoot = resolve(opts.workspace);
-  const sessions = new SessionStore(() => randomUUID(), undefined, opts.sessionTtlMs ?? 60_000);
+  // Users and sessions live on the host's own disk, inside the workspace, so they survive a
+  // restart and never leave this machine.
+  const persistence = new FileSessionPersistence(opts.workspace);
+  const sessions = new SessionStore(
+    () => randomUUID(),
+    undefined,
+    opts.sessionTtlMs ?? 60_000,
+    persistence
+  );
   const SESSION_COOKIE = "investigator_session";
+  const USER_COOKIE = "investigator_user";
 
   /**
    * Turn a validated workspace-relative path into an absolute one, refusing anything that lands
@@ -268,6 +278,7 @@ export function createInvestigatorServer(opts: ServerOptions) {
       }
 
       const sessionId = readCookie(req.headers.cookie, SESSION_COOKIE);
+      const userId = readCookie(req.headers.cookie, USER_COOKIE);
       const clientIp = normalizeIp(req.socket.remoteAddress);
 
       try {
@@ -277,7 +288,7 @@ export function createInvestigatorServer(opts: ServerOptions) {
          * silently start a rival transcript against the same workspace.
          */
         if (path === "/api/session" && req.method === "GET") {
-          const result = sessions.acquire(clientIp, sessionId);
+          const result = sessions.acquire(clientIp, sessionId, userId);
           if (result.status === "busy") {
             sendJson(res, 409, {
               ok: false,
@@ -292,11 +303,14 @@ export function createInvestigatorServer(opts: ServerOptions) {
             });
             return;
           }
-          // HttpOnly: the page never needs to read it, and script cannot leak it.
-          res.setHeader(
-            "set-cookie",
-            `${SESSION_COOKIE}=${encodeURIComponent(result.session.id)}; Path=/; HttpOnly; SameSite=Strict`
-          );
+          // HttpOnly: the page never needs to read either, and script cannot leak them. The user
+          // cookie outlives the session so a returning browser is recognised as the same person;
+          // it identifies a browser, not a person who logged in, and carries no credential.
+          res.setHeader("set-cookie", [
+            `${SESSION_COOKIE}=${encodeURIComponent(result.session.id)}; Path=/; HttpOnly; SameSite=Strict`,
+            `${USER_COOKIE}=${encodeURIComponent(result.session.userId)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000`,
+          ]);
+          const owner = sessions.getUser(result.session.userId);
           sendJson(res, 200, {
             ok: true,
             status: "active",
@@ -304,6 +318,9 @@ export function createInvestigatorServer(opts: ServerOptions) {
             createdAt: result.session.createdAt,
             ttlMs: sessions.ttlMs,
             state: result.session.state,
+            user: owner
+              ? { id: owner.id, firstSeen: owner.createdAt, sessions: owner.sessionCount }
+              : null,
           });
           return;
         }

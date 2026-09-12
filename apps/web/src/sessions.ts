@@ -22,10 +22,33 @@ export const systemClock: Clock = { now: () => Date.now() };
 export interface Session {
   id: string;
   ip: string;
+  /** The user this session belongs to. Survives the session, so history can be attributed. */
+  userId: string;
   createdAt: number;
   lastSeenAt: number;
   /** Opaque to this module: the chat transcript and where the operator got to. */
   state: unknown;
+}
+
+/**
+ * A user here is a returning browser, not an authenticated identity. There is no login, and this
+ * records no credential: it exists so the host can keep a session's history across a restart and
+ * attribute it to the same person who started it.
+ */
+export interface User {
+  id: string;
+  createdAt: number;
+  lastSeenAt: number;
+  lastIp: string;
+  sessionCount: number;
+}
+
+/** Where users and sessions are kept between restarts. See storage.ts for the disk implementation. */
+export interface SessionPersistence {
+  loadUsers(): User[];
+  saveUsers(users: User[]): void;
+  loadSessions(): Session[];
+  saveSessions(sessions: Session[]): void;
 }
 
 export type AcquireResult =
@@ -47,13 +70,68 @@ export function normalizeIp(raw: string | undefined | null): string {
 
 export class SessionStore {
   private readonly byId = new Map<string, Session>();
+  private readonly users = new Map<string, User>();
+  private readonly persistence: SessionPersistence | null;
 
   constructor(
     private readonly newId: () => string,
     private readonly clock: Clock = systemClock,
     /** How long a session survives without a heartbeat. */
-    readonly ttlMs: number = 60_000
-  ) {}
+    readonly ttlMs: number = 60_000,
+    persistence: SessionPersistence | null = null
+  ) {
+    this.persistence = persistence;
+    if (!persistence) return;
+
+    // Restart recovery. Expired sessions are dropped on the way in rather than resurrected: a
+    // session that lapsed before the restart must not come back holding the lock.
+    const now = this.clock.now();
+    for (const user of persistence.loadUsers()) this.users.set(user.id, user);
+    for (const session of persistence.loadSessions()) {
+      if (now - session.lastSeenAt < this.ttlMs) this.byId.set(session.id, session);
+    }
+  }
+
+  private flushSessions(): void {
+    this.persistence?.saveSessions([...this.byId.values()]);
+  }
+
+  private flushUsers(): void {
+    this.persistence?.saveUsers([...this.users.values()]);
+  }
+
+  /**
+   * Resolve the returning browser behind a request, minting an id the first time. Called before
+   * `acquire`, so a session always has a user to belong to.
+   */
+  identify(userId: string | null | undefined, ip: string): User {
+    const now = this.clock.now();
+    const existing = userId ? this.users.get(userId) : undefined;
+    if (existing) {
+      existing.lastSeenAt = now;
+      existing.lastIp = ip;
+      this.flushUsers();
+      return existing;
+    }
+    const user: User = {
+      id: this.newId(),
+      createdAt: now,
+      lastSeenAt: now,
+      lastIp: ip,
+      sessionCount: 0,
+    };
+    this.users.set(user.id, user);
+    this.flushUsers();
+    return user;
+  }
+
+  getUser(id: string | null | undefined): User | undefined {
+    return id ? this.users.get(id) : undefined;
+  }
+
+  userCount(): number {
+    return this.users.size;
+  }
 
   private live(session: Session, now: number): boolean {
     return now - session.lastSeenAt < this.ttlMs;
@@ -61,9 +139,14 @@ export class SessionStore {
 
   /** Drop everything past its TTL. Called before any decision that depends on who holds the lock. */
   private sweep(now: number): void {
+    let dropped = false;
     for (const [id, session] of this.byId) {
-      if (!this.live(session, now)) this.byId.delete(id);
+      if (!this.live(session, now)) {
+        this.byId.delete(id);
+        dropped = true;
+      }
     }
+    if (dropped) this.flushSessions();
   }
 
   /** The live session for an address, if any. */
@@ -80,7 +163,7 @@ export class SessionStore {
    * silently stealing it would leave the other tab issuing commands into a transcript nobody is
    * reading.
    */
-  acquire(ip: string, existingId?: string | null): AcquireResult {
+  acquire(ip: string, existingId?: string | null, userId?: string | null): AcquireResult {
     const now = this.clock.now();
     this.sweep(now);
 
@@ -88,6 +171,7 @@ export class SessionStore {
       const mine = this.byId.get(existingId);
       if (mine && mine.ip === ip) {
         mine.lastSeenAt = now;
+        this.flushSessions();
         return { status: "active", session: mine };
       }
     }
@@ -102,14 +186,20 @@ export class SessionStore {
       };
     }
 
+    const owner = this.identify(userId, ip);
+    owner.sessionCount += 1;
+    this.flushUsers();
+
     const session: Session = {
       id: this.newId(),
       ip,
+      userId: owner.id,
       createdAt: now,
       lastSeenAt: now,
       state: null,
     };
     this.byId.set(session.id, session);
+    this.flushSessions();
     return { status: "active", session };
   }
 
@@ -120,6 +210,7 @@ export class SessionStore {
     const session = this.byId.get(id);
     if (!session || !this.live(session, now)) return false;
     session.lastSeenAt = now;
+    this.flushSessions();
     return true;
   }
 
@@ -131,6 +222,7 @@ export class SessionStore {
     if (!session || !this.live(session, now)) return false;
     session.lastSeenAt = now;
     session.state = state;
+    this.flushSessions();
     return true;
   }
 
@@ -144,7 +236,9 @@ export class SessionStore {
   /** Explicit release, sent by the page as it unloads so the next tab is not made to wait. */
   release(id: string | null | undefined): boolean {
     if (!id) return false;
-    return this.byId.delete(id);
+    const removed = this.byId.delete(id);
+    if (removed) this.flushSessions();
+    return removed;
   }
 
   /** Live session count, for diagnostics and tests. */
