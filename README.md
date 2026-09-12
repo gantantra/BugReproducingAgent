@@ -120,13 +120,31 @@ type"_ and nothing about the conditional shapes — that a `goto` also requires 
 `assert` requires an `assertion` **object**. Three separate live failures came from that one gap.
 It now emits lines like `when type=goto: also requires url (may be null)`.
 
-**Still failing.** `plan --ai` reaches its final turn and returns content that is not parseable
-JSON, so validation rejects it: `response is not parseable JSON, and no single JSON object could
-be extracted`. The likeliest cause, not yet confirmed, is the thinking-mode interaction — DeepSeek
-returns reasoning in `reasoning_content` and the answer in `content`, and a probe response was
-observed spending its entire completion budget on `reasoning_tokens` with `content` empty. The
-next diagnostic is to capture the final turn's raw `content` and see whether it is empty or merely
-wrapped in prose. Until then, render gate-1 proposals from a file with `plan --from <proposal.json>`.
+A fifth cause, confirmed by capturing the raw turns: **reasoning tokens are billed against the
+same completion budget as the answer.** `REASONING_MODEL` runs in thinking mode, and on a live run
+the repair turn spent all 6000 of its `max_tokens` on `reasoning_tokens` and returned an empty
+`content`, which surfaced as "response is not parseable JSON" — a message that says nothing about
+the cause. `propose_experiments` is now 1.2.0 with `maxOutputTokens: 16000`, sized to leave the
+answer room after the model has finished thinking.
+
+**The remaining blocker is a schema gap, not a bug in the model.** With the budget raised, the
+flow completes and returns valid JSON explaining itself:
+
+> "No experiments can be proposed. The flow targets the 99acres site, but the only allowed origin
+> is http://127.0.0.1:8099. … none of these unknowns can be filled without inventing values, so
+> there is no runnable experiment."
+
+That is the correct answer, and `propose-experiments.output.v1.json` cannot express it:
+`items` carries `minItems: 1`, so an empty list fails validation even though the schema has a
+`summary` field the model used properly. The honest answer is rejected as invalid, the flow spends
+its one repair attempt re-deriving it, and that extra turn is what exceeds the 120s wall clock.
+Raising the wall clock would treat the symptom.
+
+Two things follow. Allowing `minItems: 0` would let the flow say "nothing can be proposed, and
+here is why", which is a useful answer a human can act on — but it is an output-contract change
+and has not been made. And a proposal can only be grounded against a target whose origin matches
+the report: pointing an investigation of a live site at a local fixture correctly produces no
+experiments.
 
 A target is bound to an investigation **at intake**, not by existing in `config.yaml`. An
 investigation opened before its target was recorded reads `target (none)` and the constraints tool

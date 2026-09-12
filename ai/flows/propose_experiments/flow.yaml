@@ -5,7 +5,8 @@
 id: propose_experiments
 # 1.1.0: the tool loop actually runs now, so the budget has to cover a history that carries tool
 # results. It was sized when no tool call ever reached the provider.
-version: 1.1.0
+# 1.2.0: maxOutputTokens raised for a THINKING model. See the budget note below.
+version: 1.2.0
 modelAlias: REASONING_MODEL
 temperature: 0
 tools:
@@ -25,7 +26,13 @@ budget:
   # (20000 input + 6000 output). Each tool reply is ~3KB of JSON and up to six are allowed, so the
   # input side is raised to hold a full history rather than to make one observed run fit.
   maxInputTokens: 40000
-  maxOutputTokens: 6000
+  # This alias runs in thinking mode, and DeepSeek bills reasoning tokens against the same
+  # completion budget as the answer. Measured on a live run: the turn that produced a valid answer
+  # spent 3017 of its 3037 completion tokens on reasoning, and the repair turn that followed spent
+  # all 6000 on reasoning and returned an EMPTY content field -- which surfaced as "response is not
+  # parseable JSON", a message that says nothing about the actual cause. Sized to leave the answer
+  # room after the model has finished thinking, not to fit one observed run.
+  maxOutputTokens: 16000
   maxCostUsd: 0.25
   maxWallClockMs: 120000
 validation:
