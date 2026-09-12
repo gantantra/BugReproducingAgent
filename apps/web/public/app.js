@@ -626,7 +626,7 @@
         node(
           "p",
           null,
-          "It will not invent a URL, a selector or a credential. I will ask you about each of these in turn; answer what you know and skip what you do not."
+          "It will not invent a URL, a selector or a credential. Press “Answer these now” and I will ask about them one at a time — type each reply in the box at the bottom and press Enter. Skip anything you do not know."
         )
       );
       buttons(q, [
@@ -655,8 +655,19 @@
 
     const c = card(`Question — ${next.field}`);
     c.appendChild(node("p", null, next.why));
-    c.appendChild(node("p", null, "Answer below, or skip it and it stays recorded as an unknown."));
+    c.appendChild(
+      node(
+        "p",
+        null,
+        "Type your answer in the box at the bottom and press Enter. If you do not know it, skip it and it stays recorded as an unknown."
+      )
+    );
     buttons(c, [{ label: "Skip this one", onClick: () => askNextUnknown() }]);
+
+    // Put the cursor where the answer goes. Being asked a question and having to find the box is
+    // the kind of small friction that makes an interview feel like a form.
+    el.input.placeholder = `Your answer — ${next.field}`;
+    el.input.focus();
 
     state.awaiting = async (answer) => {
       state.awaiting = null;
@@ -665,7 +676,11 @@
     };
   }
 
+  const DEFAULT_PLACEHOLDER =
+    "Describe the bug — the URL, the steps, what you expected, what happens instead, and how often.";
+
   async function finishInterview() {
+    el.input.placeholder = DEFAULT_PLACEHOLDER;
     if (state.answers.length === 0) {
       await askForTarget();
       return;
