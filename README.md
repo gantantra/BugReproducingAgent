@@ -402,20 +402,20 @@ developers, or observability tooling.
 
 ## Documentation
 
-| Path                                | Contents                                                              |
-| ----------------------------------- | --------------------------------------------------------------------- |
-| `CLAUDE.md`                         | Repo-wide rules: layering, determinism, redaction, secrets, approvals |
-| `docs/prompt-a.txt`                 | The frozen originating brief, byte-for-byte, with a SHA-256 checksum  |
-| `docs/m0-decisions.md`              | Human decisions, adapter choices, and what supersedes the brief       |
-| `docs/FREEZE-M0.md`                 | M0 sign-off and the amendment log                                     |
-| `docs/adrs/`                        | 27 architecture decision records                                      |
-| `docs/architecture/`                | Component, evidence, queue, approval and evidence-reference models    |
-| `docs/milestones/`                  | Authoritative scope per milestone                                     |
-| `ai/flows/`                         | Versioned prompt artifacts, hashed into every AI call's `flowHash`    |
-| `eval/`                             | Replay datasets and the scorer that gates model behaviour in CI       |
-| `docs/operations/runbook.md`        | Operating, troubleshooting and incident procedures                    |
-| `docs/operations/windows-runner.md` | Provisioning the Windows GitLab runner                                |
-| `schemas/`                          | 28 versioned JSON schemas                                             |
+| Path                                | Contents                                                                                                                                                                                                            |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CLAUDE.md`                         | Repo-wide rules for AI coding agents. **Not committed** — `.gitignore` excludes it by project convention, so a clone will not contain it. The rules it states are reflected in the ADRs and in `docs/architecture/` |
+| `docs/prompt-a.txt`                 | The frozen originating brief, byte-for-byte, with a SHA-256 checksum                                                                                                                                                |
+| `docs/m0-decisions.md`              | Human decisions, adapter choices, and what supersedes the brief                                                                                                                                                     |
+| `docs/FREEZE-M0.md`                 | M0 sign-off and the amendment log                                                                                                                                                                                   |
+| `docs/adrs/`                        | 27 architecture decision records                                                                                                                                                                                    |
+| `docs/architecture/`                | Component, evidence, queue, approval and evidence-reference models                                                                                                                                                  |
+| `docs/milestones/`                  | Authoritative scope per milestone                                                                                                                                                                                   |
+| `ai/flows/`                         | Versioned prompt artifacts, hashed into every AI call's `flowHash`                                                                                                                                                  |
+| `eval/`                             | Replay datasets and the scorer that gates model behaviour in CI                                                                                                                                                     |
+| `docs/operations/runbook.md`        | Operating, troubleshooting and incident procedures                                                                                                                                                                  |
+| `docs/operations/windows-runner.md` | Provisioning the Windows GitLab runner                                                                                                                                                                              |
+| `schemas/`                          | 28 versioned JSON schemas                                                                                                                                                                                           |
 
 ## Security posture
 
