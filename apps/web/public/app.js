@@ -46,6 +46,10 @@
     awaiting: null, // a pending question handler for the next user message
     // The transcript, as semantics rather than DOM, so a refresh can rebuild it.
     log: [],
+    // What the interview has collected, so it can go back into the report in one go.
+    answers: [],
+    pendingUnknowns: [],
+    targetName: null,
   };
 
   // Set while rebuilding a restored transcript, so replaying does not re-record it.
@@ -568,43 +572,145 @@
     }
 
     const unknowns = (full && full.unknowns) || [];
-    if (unknowns.length) {
+    state.pendingUnknowns = unknowns.slice();
+    state.answers = [];
+
+    if (unknowns.length || summary.unknowns > 0) {
       setStep("clarify");
-      const q = card(`${unknowns.length} things it could not infer`);
-      const ul = node("ul", "plain");
-      for (const u of unknowns) ul.appendChild(node("li", null, `${u.field} — ${u.why}`));
-      q.appendChild(ul);
+      const q = card(`${unknowns.length || summary.unknowns} things it could not infer`);
+      if (unknowns.length) {
+        const ul = node("ul", "plain");
+        for (const u of unknowns) ul.appendChild(node("li", null, `${u.field} — ${u.why}`));
+        q.appendChild(ul);
+      }
       q.appendChild(
         node(
           "p",
           null,
-          "It refuses to invent a selector or a URL. Answer any of these below and it will re-interpret, or continue and settle them at the approval gate."
+          "It will not invent a URL, a selector or a credential. I will ask you about each of these in turn; answer what you know and skip what you do not."
         )
       );
-      buttons(q, [{ label: "Continue without answering", onClick: () => offerPropose() }]);
-      state.awaiting = async (answer) => {
-        state.awaiting = null;
-        await submitReport(`${state.reportText}
-
-## Clarifications
-
-${answer}
-`);
-      };
-    } else if (summary.unknowns > 0) {
-      setStep("clarify");
-      const q = card(`${summary.unknowns} things it could not infer`);
-      q.appendChild(
-        node(
-          "p",
-          null,
-          "The flow artifact could not be read back, so the individual unknowns cannot be listed here. They are recorded in the stored flow."
-        )
-      );
-      buttons(q, [{ label: "Continue", onClick: () => offerPropose() }]);
-    } else {
-      offerPropose();
+      buttons(q, [
+        { label: "Answer these now", kind: "primary", onClick: () => askNextUnknown() },
+        { label: "Skip to the target", onClick: () => askForTarget() },
+      ]);
+      return;
     }
+
+    await askForTarget();
+  }
+
+  // --------------------------------------------------------------------------------- interview
+
+  /* The point of the agent: find out what the reporter knows before planning anything. Every gap
+   * the interpretation could not fill is put back to them as a question, and the answers are
+   * folded into the REPORT and re-interpreted rather than patched into the flow. The report is the
+   * grounded source; a flow edited behind the reporter's back is an invention with their name on
+   * it. */
+  function askNextUnknown() {
+    const next = state.pendingUnknowns.shift();
+    if (!next) {
+      void finishInterview();
+      return;
+    }
+
+    const c = card(`Question — ${next.field}`);
+    c.appendChild(node("p", null, next.why));
+    c.appendChild(node("p", null, "Answer below, or skip it and it stays recorded as an unknown."));
+    buttons(c, [{ label: "Skip this one", onClick: () => askNextUnknown() }]);
+
+    state.awaiting = async (answer) => {
+      state.awaiting = null;
+      state.answers.push({ field: next.field, answer });
+      askNextUnknown();
+    };
+  }
+
+  async function finishInterview() {
+    if (state.answers.length === 0) {
+      await askForTarget();
+      return;
+    }
+    const block = state.answers.map((a) => `- **${a.field}**: ${a.answer}`).join("\n");
+    const count = state.answers.length;
+    state.answers = [];
+    say(`Thank you. Folding ${count} answer(s) back into the report and re-reading it…`);
+    await submitReport(
+      state.reportText + "\n\n## Answers to what could not be inferred\n\n" + block + "\n"
+    );
+  }
+
+  /* Without a target the agent cannot plan at all: `get_application_constraints` returns NOT_FOUND
+   * and the model correctly declines to propose experiments it cannot ground. Asking here is the
+   * difference between the agent conducting the investigation and handing the operator a config
+   * file to go and edit. */
+  async function askForTarget() {
+    const existing = await api("/api/targets");
+    const targets = (existing && existing.targets) || [];
+    if (targets.length > 0) {
+      state.targetName = targets[0].name;
+      say(`Using the configured target “${targets[0].name}” (${targets[0].baseUrl}).`);
+      offerPropose();
+      return;
+    }
+
+    const c = card("Where should I run this?");
+    c.appendChild(
+      node(
+        "p",
+        null,
+        "I have no target for this workspace and I will not guess one. Give me the base URL, then tell me what kind of environment it is."
+      )
+    );
+
+    const urlRow = node("div", "row");
+    const url = document.createElement("input");
+    url.type = "text";
+    url.placeholder = "https://staging.example.com";
+    url.style.flex = "1";
+    url.style.minWidth = "260px";
+    urlRow.appendChild(url);
+    c.appendChild(urlRow);
+
+    c.appendChild(
+      node(
+        "p",
+        null,
+        "There is deliberately no “production”. Choosing one of these is you asserting you are authorised to act on it. Destructive actions stay blocked either way — unblocking a delete needs a written justification at the approval gate."
+      )
+    );
+
+    const choose = async (classification) => {
+      const written = await api("/api/targets", {
+        method: "POST",
+        body: JSON.stringify({
+          name: `target-${classification}`,
+          baseUrl: url.value.trim(),
+          classification,
+        }),
+      });
+      if (written.ok !== true) {
+        showFailure(written, "That target was refused");
+        await askForTarget();
+        return;
+      }
+      state.targetName = written.target.name;
+      const done = card("Target recorded");
+      kv(done, [
+        ["name", written.target.name],
+        ["base url", written.target.baseUrl],
+        ["classification", written.target.classification],
+        ["allowed origins", written.target.allowedOrigins.join(", ")],
+        ["destructive actions", "blocked"],
+      ]);
+      offerPropose();
+    };
+
+    buttons(c, [
+      { label: "Test environment", kind: "primary", onClick: () => choose("test") },
+      { label: "Staging", onClick: () => choose("staging") },
+      { label: "Local fixture", onClick: () => choose("fixture") },
+    ]);
   }
 
   function offerPropose() {

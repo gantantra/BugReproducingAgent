@@ -10,5 +10,7 @@
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
   },
-  "dependencies": {}
+  "dependencies": {
+    "yaml": "^2.8.1"
+  }
 }

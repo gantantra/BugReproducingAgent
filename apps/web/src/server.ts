@@ -14,6 +14,7 @@ import {
 } from "./actions.js";
 import { SessionStore, normalizeIp, readCookie } from "./sessions.js";
 import { FileSessionPersistence } from "./storage.js";
+import { readTargets, validateTargetRequest, writeTarget } from "./target.js";
 
 /**
  * A local chat front end for the investigator.
@@ -357,6 +358,21 @@ export function createInvestigatorServer(opts: ServerOptions) {
             `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`
           );
           sendJson(res, 200, { ok: true });
+          return;
+        }
+
+        /* Targets, asked for in the conversation instead of hand-edited into config.yaml.
+         * The agent cannot plan an experiment without one: `get_application_constraints` returns
+         * NOT_FOUND and the model correctly declines to propose anything it cannot ground. */
+        if (path === "/api/targets" && req.method === "GET") {
+          sendJson(res, 200, { ok: true, targets: readTargets(opts.workspace) });
+          return;
+        }
+
+        if (path === "/api/targets" && req.method === "POST") {
+          sessions.touch(sessionId);
+          const written = writeTarget(opts.workspace, validateTargetRequest(await readBody(req)));
+          sendJson(res, 200, { ok: true, target: written });
           return;
         }
 

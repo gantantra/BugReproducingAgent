@@ -104,6 +104,8 @@
   },
   "apps/web": {
     "deps": [],
-    "external": []
+    "external": [
+      "yaml"
+    ]
   }
 }

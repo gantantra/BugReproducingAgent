@@ -386,6 +386,32 @@ Because it starts processes on your machine, it is treated as a privileged local
 The allowlist in `apps/web/src/actions.ts` is the boundary: without it, a page open in your
 browser would be a shell. `apps/web/src/actions.spec.ts` covers what must not get through.
 
+### The interview
+
+The agent asks for what it could not infer, rather than reporting it and stopping. After the
+report is interpreted, every entry in the flow's `unknowns` is put back to you as a question —
+the URL it was not given, the selector it refused to invent, the account it will not fabricate.
+Answers are folded into the **report** and the report is re-interpreted, not patched into the
+flow: the report is the grounded source, and a flow edited behind the reporter's back is an
+invention with their name on it. You can skip any question, and it stays recorded as an unknown.
+
+It then asks where to run, because it cannot plan without a target: `get_application_constraints`
+returns `NOT_FOUND` and the model correctly declines to propose experiments it cannot ground. The
+page records the target into `config.yaml` for you, and the decisions the design insists a human
+makes are asked, never defaulted:
+
+- **Classification** — `fixture`, `test` or `staging`. There is deliberately no `production`, and
+  the page refuses it by name with the reason, not a schema error.
+- **Allowed origins** — the target's origin is added because every target origin must appear
+  there; nothing else is.
+- **Destructive actions stay blocked.** Nothing in the page relaxes that. A delete-account flow is
+  exactly what the guard is for, and unblocking it needs a written per-action justification at the
+  approval gate.
+
+`config.yaml` is edited in place rather than rewritten, so comments, ordering and quoting survive
+— including `video: "on"`, which is quoted because bare `on` is boolean `true` under YAML 1.1.
+`apps/web/src/target.spec.ts` asserts all of that.
+
 ### Sessions
 
 Refreshing the page does not lose your place. The transcript and where you got to are held server
@@ -834,7 +860,7 @@ On Windows, one command runs the same sequence:
 pwsh -File scripts/verify.ps1 -Gate
 ```
 
-Current counts: **372** unit and docs tests, **64** e2e, **48** reliability. The 100-run gate
+Current counts: **382** unit and docs tests, **64** e2e, **48** reliability. The 100-run gate
 completes 100/100 `VALID_COMPLETED` with zero retries and zero infrastructure failures in roughly
 130 seconds.
 
