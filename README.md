@@ -496,6 +496,183 @@ schema-valid.
 No database server, no message broker, no container, no cloud dependency. A workspace is a
 directory; the queue is a SQLite table.
 
+## Vocabulary
+
+The words below appear in output and in every document here. They are not interchangeable, and
+most of the design exists to keep them apart.
+
+| Term                   | Means                                                                                                 |
+| ---------------------- | ----------------------------------------------------------------------------------------------------- |
+| **Investigation**      | One reported issue, start to finish. `INV-001`. Owns everything below it                              |
+| **Flow**               | The structured reading of a human's report: steps, actions, and what the report did not say           |
+| **Experiment**         | One hypothesis made executable: an ordered action list, assertions, and a repetition count. `EXP-001` |
+| **Repetition**         | One requested execution of an experiment. Keyed by index, so re-requesting it does not re-execute it  |
+| **Run**                | One actual browser execution. `RUN-001`. A repetition may have several if infrastructure failed       |
+| **Job**                | The queue row that schedules a repetition. Has a `JobState`, separate from the run's outcome          |
+| **Proposal**           | The document a human decides on at a gate. Canonical bytes, SHA-256 checksummed                       |
+| **Effective proposal** | The proposal plus the human's edits. **This is what executes**                                        |
+| **Gate**               | A point where a human must decide. Three of them, all file-based and checksum-bound                   |
+| **Artifact**           | Any durable byte: evidence, manifest, proposal, approval. Content-hashed, immutable                   |
+| **Manifest**           | The per-run record: inputs, outcome, rule id, capture status, artifact digests. Sealed and immutable  |
+| **Lineage**            | The append-only hash-chained graph of what produced or authorised what                                |
+| **Finding**            | A claim about the evidence, carrying a level and validated citations                                  |
+| **Falsifier**          | What would disprove a hypothesis. Every proposed experiment must state one                            |
+
+### The enums you will see in output
+
+| Set                   | Values                                                                                                                                              |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RunOutcome`          | `VALID_COMPLETED` · `PRODUCT_FAILED` · `AUTOMATION_FAILED` · `INFRASTRUCTURE_FAILED` · `INTERRUPTED` · `INCONCLUSIVE`                               |
+| `JobState`            | `PENDING` · `CLAIMED` · `RUNNING` · `TERMINAL`                                                                                                      |
+| `JobTerminalReason`   | `COMPLETED` · `INTERRUPTED` · `WORKER_ERROR`                                                                                                        |
+| Capture status        | `complete` · `partial` · `missing` · `redacted` · `unsupported` · `corrupted` · `disabled`                                                          |
+| Gates                 | `experiment_selection` · `target_failure` · `final_reproduction`                                                                                    |
+| Target classification | `fixture` · `test` · `staging` — there is deliberately **no `production`**                                                                          |
+| Finding level         | `observed` · `correlated` · `probable_trigger` · `high_confidence_trigger` · `confirmed_trigger` · `root_cause_hypothesis` · `confirmed_root_cause` |
+| Side-effect class     | `read` · `local-write` · `remote-write` · `destructive`                                                                                             |
+
+## Command reference
+
+Every command in the frozen contract is registered. The ones not yet implemented exit 1 naming
+their milestone rather than silently doing nothing.
+
+| Command                   | Does                                                                       | AI?    |
+| ------------------------- | -------------------------------------------------------------------------- | ------ |
+| `init`                    | Create a workspace: database, `config.yaml`, redaction policy, directories | no     |
+| `intake`                  | Open an investigation from a report file                                   | `--ai` |
+| `plan`                    | Render the gate-1 proposal a human decides on                              | `--ai` |
+| `approve <gate>`          | Record a checksum-bound human approval. `--scaffold` writes a blank one    | no     |
+| `run`                     | Execute approved experiments. Makes **no** provider calls, ever            | no     |
+| `analyze`                 | Report what separates failing runs from passing ones                       | `--ai` |
+| `suite generate`          | Emit a standalone Playwright spec for approved experiments                 | no     |
+| `status`                  | Gate states, run outcomes, queue and lineage health                        | no     |
+| `show <what>`             | Print a rendered proposal, or an artifact's contents                       | no     |
+| `lineage <nodeId>`        | Ancestors and descendants of a node, with the actor on every hop           | no     |
+| `doctor`                  | Workspace, config, queue, integrity and safety state. `--verify-lineage`   | no     |
+| `retention apply`         | Tombstone artifacts past their retention age. Dry run without `--confirm`  | no     |
+| `classify`                | Cluster runs, render gate 2                                                | **M4** |
+| `frequency run`           | Execute N times and compute failure-rate statistics                        | **M5** |
+| `minimize` / `revalidate` | Reduce a reproduction; re-execute it and its control                       | **M6** |
+| `report` / `export`       | Jira-ready report; package reproducer and artifacts                        | **M7** |
+
+Global flags: `--workspace <dir>`, `--investigation <id>`, `--json`, `--verbose`, `--seed <int>`,
+`--no-color`, `--allow-unsafe-debug`.
+
+`--json` puts machine-readable output on stdout and human text on stderr, so it composes.
+
+There is deliberately no `--yes`, `--force-approve`, or `--auto`.
+
+## Repository layout
+
+```
+apps/cli/               The `investigate` binary. Parses, dispatches, formats. No business logic
+packages/               One package per responsibility — see the layering table above
+ai/flows/<flow-id>/     Versioned prompt artifacts: flow.yaml, system.md, examples.jsonl
+schemas/                28 versioned JSON schemas. The wire contract for every document
+eval/                   Replay datasets and the deterministic scorer that gates model behaviour
+tests/
+  docs/                 Governing principle, schemas, import boundaries, flow examples
+  e2e/                  The CLI, against the built binary
+  reliability/          Browser-backed behavioural gates, including the 100-run gate
+docs/
+  adrs/                 26 architecture decision records
+  architecture/         Component, evidence, queue, approval, evidence-reference models
+  milestones/           Authoritative scope per milestone
+  security/             Security model and redaction policy
+  operations/           Runbook and Windows runner provisioning
+  prompt-a.txt          The frozen originating brief, with a SHA-256 checksum
+scripts/                demo.mjs, reproduce.mjs, verify.ps1, and build tooling
+policies/default.yaml   The default redaction policy
+```
+
+## Workspace layout
+
+A workspace is a plain directory. There is no server, and nothing lives outside it.
+
+```
+<workspace>/.investigator/
+  config.yaml                        Everything configurable. Created by `init`
+  investigator.db                    SQLite (WAL): investigations, jobs, runs, lineage, approvals,
+                                     artifact refs, AI call ledger
+  policies/default.yaml              The redaction policy, seeded on init
+  prompts/                           Operator prompt overrides
+  investigations/INV-001/
+    manifests/                       Rendered proposals (.json, .json.sha256, .md) and run manifests
+    approvals/                       The approval files a human edits and signs
+    artifacts/<kind>/<shard>/        Content-addressed evidence, sharded by hash prefix
+    normalized/                      Normalized evidence
+    reports/                         M7 output
+    reproducer/                      M6/M7 output
+```
+
+Artifacts are addressed by SHA-256 and sharded two characters deep, so identical bytes are stored
+once and every reference is verifiable.
+
+## Configuration reference
+
+`config.yaml` has six blocks. Anything may use `env:NAME` to read from the environment; an unset
+variable is an error naming the variable, never a silent default.
+
+| Block       | Controls                                                                                                                                                                                             |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `llm`       | Provider, base URL, **`apiKeyEnv`** (a variable NAME, never a value), the three model aliases, capability cache TTL, and per-investigation cost and per-call token budgets                           |
+| `storage`   | Metadata/artifact/queue backends, and which redaction policy file to use                                                                                                                             |
+| `execution` | Browser and channel, worker and parallelism limits, timeouts and leases, the deterministic `seed`, infra retry ceiling, `video`, `trace`, the `capture` block, emulation profiles, and **`targets`** |
+| `approvals` | Which gates are required, the approval directory, and expiry                                                                                                                                         |
+| `safety`    | **`allowedOrigins`**, `productionGuard`, `blockDestructiveActions`, `destructivePatterns`, and per-investigation run and wall-clock ceilings                                                         |
+| `logging`   | Level                                                                                                                                                                                                |
+
+The three you will actually edit:
+
+```yaml
+execution:
+  video: "on" # quote it — bare `on` is boolean true in YAML
+  targets:
+    my-target:
+      baseUrl: https://staging.example.com
+      classification: test
+      resetStrategy: per-run-tenant
+      correlationHeaderAllowed: false
+
+safety:
+  allowedOrigins:
+    - https://staging.example.com
+  blockDestructiveActions: false # only with a written justification per action
+
+llm:
+  apiKeyEnv: MY_EXISTING_VARIABLE # name the variable; never paste the key
+```
+
+Emulation profiles ship built in, including `desktop-chrome-1440`, `pixel-7-chrome-mobile` (a
+concrete pinned Android user agent, not a small viewport) and `low-end-android-throttled`. Set one
+per experiment with `emulationProfile`.
+
+## Extending it
+
+**Add an AI flow.** Create `ai/flows/<id>/` with `flow.yaml`, `system.md` and `examples.jsonl`.
+Register the id and any new tool names in `schemas/flow-artifact.v1.json` — both are closed enums,
+so an unregistered flow fails to load rather than running unnoticed. Give it an output schema in
+`schemas/`. `tests/docs/flow-examples.spec.ts` will then assert your examples actually satisfy
+that schema, which is the failure mode to expect.
+
+**Add a tool.** Implement it in `packages/tools/src/` taking a _reader function_, never a store —
+that is what keeps the package unable to reach a browser or a provider, and what lets the contract
+test run every tool with the network stubbed to throw. Supply the reader in
+`apps/cli/src/tool-registry.ts`. It must satisfy the eight contract invariants in
+`packages/tools/src/tools.spec.ts`.
+
+**Add a fixture.** Add the application to `packages/test-fixtures/src/fixture-server.ts` and the
+experiment to `experiments/`. Keep it **seeded, never random**: a fixture that fails randomly
+cannot be used to test a system whose purpose is reproducibility.
+
+**Add a schema.** Drop it in `schemas/`. It is auto-registered by filename and must compile under
+Ajv strict (`strictTypes`, `strictRequired`) — `tests/docs` fails otherwise. Add any new vocabulary
+to `packages/core/src/types.ts` as well; a test asserts the code enums and the JSON schemas agree
+bidirectionally, so neither can drift.
+
+**Add an error code.** Add it to `ERROR_CODES` and `SPEC` in `packages/core/src/errors.ts`, and
+document it in `docs/architecture/error-taxonomy.md`. A test asserts the two agree.
+
 ## The AI path in practice
 
 Three versioned flows live under `ai/flows/`, each a directory — `flow.yaml`, `system.md`,
@@ -664,3 +841,8 @@ can mask a credential that was visible on screen. It is written only when `execu
 explicitly set to `on`, and is stamped `video-raw-unredactable` rather than inheriting a stamp
 that would imply the bytes had been cleaned. The capture status says so in words a reader will
 understand, because that warning is the only thing standing between a convenience and a leak.
+
+## License
+
+`UNLICENSED` / private. Internal Info Edge project; not published to a registry and not licensed
+for redistribution.
