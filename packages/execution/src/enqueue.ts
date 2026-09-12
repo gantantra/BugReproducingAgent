@@ -108,6 +108,15 @@ export async function enqueueExperiment(args: EnqueueArgs): Promise<EnqueueResul
   // be added, so a batch cannot straddle the limit.
   const existing = await args.queue.listJobs(args.investigationId);
   const adding = args.retryOf ? 1 : args.repetitions;
+
+  // A single request is bounded separately from the investigation total. The UI validates this
+  // too, but the check lives here because the UI is not the only way in.
+  if (adding > cfg.safety.maxRepetitionsPerRun) {
+    fail("EXEC_INVESTIGATION_LIMIT", "Request exceeds safety.maxRepetitionsPerRun", {
+      context: { requested: adding, limit: cfg.safety.maxRepetitionsPerRun },
+    });
+  }
+
   if (existing.length + adding > cfg.safety.maxRunsPerInvestigation) {
     fail("EXEC_INVESTIGATION_LIMIT", "Enqueue would exceed safety.maxRunsPerInvestigation", {
       context: {

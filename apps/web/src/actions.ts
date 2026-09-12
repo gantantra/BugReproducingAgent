@@ -157,12 +157,12 @@ export const ACTIONS: readonly ActionDef[] = [
   ]),
 
   def("run", "execute approved experiments in Chromium", true, (p) => {
-    const argv = ["run", ...inv(p), "--repeat", String(int(p, "repeat", 1, 500))];
+    const argv = ["run", ...inv(p), "--repeat", String(int(p, "repeat", 1, 100))];
     if (p["maxParallel"] !== undefined) {
       argv.push("--max-parallel", String(int(p, "maxParallel", 1, 16)));
     }
     if (p["stopAfterFailures"] !== undefined) {
-      argv.push("--stop-after-failures", String(int(p, "stopAfterFailures", 1, 500)));
+      argv.push("--stop-after-failures", String(int(p, "stopAfterFailures", 1, 100)));
     }
     return argv;
   }),
@@ -202,7 +202,7 @@ export const ACTIONS: readonly ActionDef[] = [
     "run",
     ...inv(p),
     "--repeat",
-    String(int(p, "repeat", 1, 500)),
+    String(int(p, "repeat", 1, 100)),
   ]),
   def("minimize", "minimize the reproduction (M6)", true, (p) => ["minimize", ...inv(p)]),
   def("revalidate", "revalidate the minimized reproduction (M6)", true, (p) => [

@@ -161,6 +161,18 @@ export function assertSafeToEnqueue(input: SafetyGateInput): void {
   // Fixture targets are local, disposable, and have no external state.
   if (targetClassification === "fixture") return;
 
+  /*
+   * An operator who has turned `blockDestructiveActions` off has said this environment is theirs
+   * to act on — an in-house QA server with disposable accounts, where the whole point is running a
+   * destructive flow hundreds of times unattended.
+   *
+   * Everything below this line exists to stop an unintended write to an environment someone cares
+   * about, so the flag now governs all of it rather than only the staging refusal. What it does
+   * NOT touch: the approval gate itself. A human still authorises the batch; they are simply not
+   * asked to re-justify each `delete` inside a proposal they have already read.
+   */
+  if (!input.blockDestructiveActions) return;
+
   // Destructive actions need a per-sequence acknowledgement, and are blocked outright on
   // staging unless the operator has explicitly turned the block off.
   for (const actionId of classification.destructiveActionIds) {

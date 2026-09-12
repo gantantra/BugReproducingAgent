@@ -132,6 +132,7 @@ export interface ResolvedConfig {
     productionGuard: boolean;
     blockDestructiveActions: boolean;
     destructivePatterns: string[];
+    maxRepetitionsPerRun: number;
     maxRunsPerInvestigation: number;
     maxWallClockMsPerInvestigation: number;
     minRunsForRate: number;
@@ -262,7 +263,10 @@ const DEFAULTS = {
     allowedOrigins: [] as string[],
     productionOriginPatterns: [] as string[],
     productionGuard: true,
-    blockDestructiveActions: true,
+    // Off by default: the product is deployed to in-house QA servers whose whole job is running a
+    // flow hundreds of times against disposable accounts. Turn it on for an environment where an
+    // unintended write would matter; the three approval gates are unaffected either way.
+    blockDestructiveActions: false,
     destructivePatterns: [
       "(?i)\\bdelete\\b",
       "(?i)\\bremove\\b",
@@ -273,8 +277,15 @@ const DEFAULTS = {
       "(?i)\\btransfer\\b",
       "(?i)\\bcancel\\s+(subscription|order|account)\\b",
     ],
-    maxRunsPerInvestigation: 500,
-    maxWallClockMsPerInvestigation: 7200000,
+    // Sized for a QA batch rather than a demo. 500 refused an enqueue with EXEC_INVESTIGATION_LIMIT
+    // at exactly the scale an intermittent bug needs, and two hours stopped a long run mid-flight.
+    // These remain caps, not targets: they exist to catch a mistyped --repeat, not to ration runs.
+    // What ONE request may set going. The aggregate cap below is deliberately much larger: a QA
+    // batch is many bounded runs, not one unbounded one, and a mistyped repeat count should cost
+    // a hundred runs at worst rather than the whole ceiling.
+    maxRepetitionsPerRun: 100,
+    maxRunsPerInvestigation: 10000,
+    maxWallClockMsPerInvestigation: 86400000,
     minRunsForRate: 10,
     unreachabilityBreakerConsecutive: 5,
   },

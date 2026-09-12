@@ -133,7 +133,7 @@ approvals:
 safety:
   allowedOrigins: []
   productionGuard: true
-  blockDestructiveActions: true
+  blockDestructiveActions: false
 
 logging:
   level: info

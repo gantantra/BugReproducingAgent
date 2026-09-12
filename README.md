@@ -375,10 +375,13 @@ Three things that will stop you, by design:
 
 1. **There is no `production` classification.** Declaring a target `test` is you asserting it is
    an environment you are authorised to act on.
-2. **Destructive actions are blocked** unless you set `safety.blockDestructiveActions: false` _and_
-   write a per-action justification into `safetyAcknowledgements` in the approval file. A click
-   whose label matches `delete`, `remove`, `deactivate` and similar is classified destructive
-   automatically.
+2. **Destructive actions.** A click whose label matches `delete`, `remove`, `deactivate` and
+   similar is classified destructive automatically. `safety.blockDestructiveActions` decides what
+   happens next, and it is **off by default**, because the product is deployed to in-house QA
+   servers whose whole job is running such a flow repeatedly against disposable accounts. Turn it
+   on for an environment where an unintended write would matter: it then requires a per-action
+   justification in `safetyAcknowledgements`, and refuses outright on a `staging` target. It never
+   affects the approval gates — a human authorises the batch either way.
 3. **Selectors must be real.** An interpretation will not invent one: it emits a `described`
    selector carrying your words, which refuses to execute. Get real selectors with
    `npx playwright codegen --device="Pixel 7" <your url>` and put them in the proposal.
@@ -825,7 +828,7 @@ variable is an error naming the variable, never a silent default.
 | `storage`   | Metadata/artifact/queue backends, and which redaction policy file to use                                                                                                                             |
 | `execution` | Browser and channel, worker and parallelism limits, timeouts and leases, the deterministic `seed`, infra retry ceiling, `video`, `trace`, the `capture` block, emulation profiles, and **`targets`** |
 | `approvals` | Which gates are required, the approval directory, and expiry                                                                                                                                         |
-| `safety`    | **`allowedOrigins`**, `productionGuard`, `blockDestructiveActions`, `destructivePatterns`, and per-investigation run and wall-clock ceilings                                                         |
+| `safety`    | **`allowedOrigins`**, `productionGuard`, `blockDestructiveActions` (off by default), `destructivePatterns`, `maxRepetitionsPerRun` (100), and per-investigation run and wall-clock ceilings          |
 | `logging`   | Level                                                                                                                                                                                                |
 
 The three you will actually edit:
@@ -843,7 +846,9 @@ execution:
 safety:
   allowedOrigins:
     - https://staging.example.com
-  blockDestructiveActions: false # only with a written justification per action
+  blockDestructiveActions: true # opt IN to the per-action justification; off by default
+  maxRepetitionsPerRun: 100 # most a single run request may enqueue
+  maxRunsPerInvestigation: 10000 # total across every batch in one investigation
 
 llm:
   apiKeyEnv: MY_EXISTING_VARIABLE # name the variable; never paste the key

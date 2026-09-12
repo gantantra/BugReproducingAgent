@@ -62,7 +62,8 @@ describe("parameters that must never reach argv", () => {
   });
 
   it("refuses a repetition count outside the allowed range", () => {
-    for (const bad of [0, -1, 1000, 2.5, "lots"]) {
+    // 100 is the per-request ceiling. The investigation total is far higher; one command is not.
+    for (const bad of [0, -1, 101, 2.5, "lots"]) {
       expect(() => build("run", { investigation: "INV-001", repeat: bad }), String(bad)).toThrow(
         ParamError
       );

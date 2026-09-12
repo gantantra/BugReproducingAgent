@@ -171,6 +171,12 @@ export async function requireGateApproval(
  * stays independent of the executor.
  */
 export function destructiveActionIds(rt: Runtime, item: Record<string, unknown>): string[] {
+  // `blockDestructiveActions: false` now means what it says. It previously only skipped the
+  // staging-target refusal, while the per-action acknowledgement stayed mandatory — so an operator
+  // who had deliberately turned the guard off still had to write a justification for every
+  // matching control. One flag, one meaning: off means the approval carries no such requirement.
+  if (!rt.config.safety.blockDestructiveActions) return [];
+
   const actions = (item["actions"] as unknown[] | undefined) ?? [];
   if (actions.length === 0) return [];
   const classification = classifyExperiment(
