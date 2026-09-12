@@ -87,22 +87,34 @@ rather than silently doing nothing:
 node apps/cli/dist/bin.js classify      # -> NOT_IMPLEMENTED, "Arrives in M4"
 ```
 
-**A known defect:** `plan --ai` still does not complete against DeepSeek, though it now fails
-further along. Two causes have been found and fixed:
+**Fixed, and worth recording because it hid three separate bugs.** `plan --ai` previously failed
+with `AI_CAPABILITY_MISSING`. Behind that were:
 
 1. **A circular capability probe.** The adapter refused to send `tools` unless capabilities already
    reported tool calling as supported, but the only way to observe that is to send tools. The
    probe's own request was refused, the refusal was recorded as evidence of non-support, and
    `toolCalls` could never leave `unknown`. A request may now declare itself a probe.
-2. **The probe's answer was discarded.** `apps/cli/src/ai.ts` ran the probe and returned the result
-   to its caller, but never gave it to the provider — `capabilityLookup` was never set, so
-   `complete()` kept reading the "unknown" defaults. It is now wired back.
+2. **The probe's answer was discarded.** `apps/cli/src/ai.ts` ran the probe but never gave the
+   result to the provider — `capabilityLookup` was never set, so `complete()` kept reading the
+   "unknown" defaults. It is now wired back per alias.
+3. **A malformed tool history.** The runner appended tool results without the assistant message
+   that had requested them, and then appended a fabricated assistant turn after them. The provider
+   rejected it: _"Messages with role 'tool' must be a response to a preceding message with
+   'tool_calls'"_. The assistant turn is now replayed with its `tool_calls`, and the fabricated
+   one is gone.
 
-What remains: the request reaches the provider and is rejected with HTTP 400
-(`SCHEMA_MISMATCH`). Not yet diagnosed; the likely candidates are `response_format: json_object`
-being sent alongside `tools`, or a `$ref` inside a tool's parameter schema that the provider will
-not resolve. Until it is settled, render gate-1 proposals from a file with
-`plan --from <proposal.json>`. `intake --ai` and `analyze --ai` are unaffected.
+The budget was then raised (`propose_experiments` 1.1.0) because it had been sized when no tool
+call ever reached the provider: a real run refused before dispatch at a worst case of 29372 tokens
+against a 26000 ceiling.
+
+With those fixed the tool loop runs: the model calls all three read-only tools in parallel, the
+results come back, and it reasons over them. **It still needs a configured target to produce
+experiments** — without one, `get_application_constraints` returns `NOT_FOUND` and the model
+correctly refuses to propose anything, which the output schema reports as a partial result. That is
+the agent working as designed, not a defect. See [Pointing it at a real site](#8-pointing-it-at-a-real-site).
+
+`plan --ai` has therefore not yet been observed producing a complete, validated gate-1 proposal
+end to end; the chain up to that point is verified against live DeepSeek.
 
 Note also that `deriveRequestId` is content-addressed, so re-running a flow that failed _after_ the
 ledger row was written collides on `ai_calls.request_id`. A retry needs a fresh investigation until

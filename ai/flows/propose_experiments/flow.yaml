@@ -3,7 +3,9 @@
 # Tool-using: the model must read the flow, the target's constraints, and what previous
 # experiments already measured, rather than proposing from imagination.
 id: propose_experiments
-version: 1.0.0
+# 1.1.0: the tool loop actually runs now, so the budget has to cover a history that carries tool
+# results. It was sized when no tool call ever reached the provider.
+version: 1.1.0
 modelAlias: REASONING_MODEL
 temperature: 0
 tools:
@@ -18,7 +20,11 @@ budget:
   maxTurns: 6
   maxToolCalls: 6
   maxEvidenceBytes: 65536
-  maxInputTokens: 20000
+  # Measured, not guessed: with the tool loop working, a run that reads the flow and the target's
+  # constraints refused before dispatch at a worst case of 29372 against the old 26000 ceiling
+  # (20000 input + 6000 output). Each tool reply is ~3KB of JSON and up to six are allowed, so the
+  # input side is raised to hold a full history rather than to make one observed run fit.
+  maxInputTokens: 40000
   maxOutputTokens: 6000
   maxCostUsd: 0.25
   maxWallClockMs: 120000

@@ -29,6 +29,12 @@ export interface LlmMessage {
   content: string;
   toolCallId?: string;
   name?: string;
+  /**
+   * The calls an assistant turn requested. This must be replayed into the history: a `tool`
+   * message is only valid as a reply to a preceding assistant message carrying the matching
+   * `tool_call_id`, and providers reject a history where it is missing.
+   */
+  toolCalls?: ToolCall[];
 }
 
 export interface ToolSpec {

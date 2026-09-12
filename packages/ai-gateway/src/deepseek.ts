@@ -127,6 +127,17 @@ export class DeepSeekProvider implements LlmProvider {
           content: m.content,
           ...(m.toolCallId ? { tool_call_id: m.toolCallId } : {}),
           ...(m.name ? { name: m.name } : {}),
+          // Replayed so the tool replies that follow are valid. `arguments` goes back as a JSON
+          // string, which is the wire shape the provider emitted and the one it expects returned.
+          ...(m.toolCalls?.length
+            ? {
+                tool_calls: m.toolCalls.map((tc) => ({
+                  id: tc.id,
+                  type: "function",
+                  function: { name: tc.name, arguments: JSON.stringify(tc.arguments ?? {}) },
+                })),
+              }
+            : {}),
         })),
       ],
       max_tokens: req.maxTokens,

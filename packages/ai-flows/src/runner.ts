@@ -252,6 +252,16 @@ export async function runFlow<T>(
 
     const toolCalls = call.response.toolCalls ?? [];
     if (toolCalls.length > 0) {
+      // The assistant turn that ASKED for these tools has to go into the history before the
+      // replies do. A `tool` message is only meaningful as a response to a preceding assistant
+      // message carrying the matching `tool_call_id`, and the provider rejects the request
+      // outright when that message is absent — which is what made every tool-using flow fail.
+      messages.push({
+        role: "assistant",
+        content: call.response.rawText ?? "",
+        toolCalls,
+      });
+
       for (const tc of toolCalls) {
         budget.chargeToolCall(clock.nowMs());
 
@@ -288,10 +298,9 @@ export async function runFlow<T>(
           content: canonicalJson(result),
         });
       }
-      messages.push({
-        role: "assistant",
-        content: "Tool results received. Produce the final JSON answer.",
-      });
+      // No fabricated assistant turn here. It was compensating for the missing tool_calls message
+      // above, and an assistant message straight after a tool reply is not a shape the model ever
+      // produced: with a well-formed history the next turn is simply the model's own answer.
       continue;
     }
 
