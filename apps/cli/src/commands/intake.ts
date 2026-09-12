@@ -172,6 +172,12 @@ export async function intakeCommand(
         flow: session.flow,
         input: { report: storedText },
         userContent: JSON.stringify({
+          // Told, not guessed. `flow.investigationId` is required and must match ^INV-[0-9]{3,}$,
+          // the model was never shown which investigation this is, and this command overwrites
+          // whatever it produced when it stores the artifact anyway. Asking it to invent an
+          // identifier we already hold, then rejecting the whole interpretation if the invention
+          // is malformed, is a gate on a value that was never the model's to supply.
+          investigationId,
           report: storedText,
           constraints: intakeConstraints(rt, opts.env),
           actionVocabulary: ACTION_TYPES.map((type) => ({ type })),

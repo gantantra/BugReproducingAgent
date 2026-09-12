@@ -521,6 +521,76 @@ export async function runFlow<T>(
   }
 }
 
+/**
+ * Fill in required properties the schema pins to a single value, before validating.
+ *
+ * Strict validation earns its place where the model's answer could be WRONG: an invented
+ * selector, an action type that cannot execute, a cited run that does not exist. Every one of
+ * those is a value only the model supplied, and persisting it unchecked would put a guess into
+ * the evidence.
+ *
+ * `schemaVersion: { "const": "1.0.0" }` is not that. It appears twice in an intake output, it is
+ * fixed by the schema, and the deterministic side knows it perfectly well. Discarding a complete,
+ * correct interpretation of a bug report because the model did not restate a constant is not
+ * rigour — it costs a provider call, a repair attempt, and the operator's afternoon, and it
+ * protects nothing. A field with exactly one legal value has exactly one correct completion, so
+ * filling it is arithmetic rather than judgement.
+ *
+ * Deliberately narrow. It fills ONLY `const`, only where the property is `required`, and only
+ * into an object that already exists — it never invents a missing object, never picks from an
+ * `enum`, and never supplies a `default`. Those all involve a choice, and a choice the model was
+ * supposed to make is exactly what validation is for.
+ */
+export function fillSchemaConstants(schemaName: string, value: unknown, depth = 0): unknown {
+  if (depth > 6 || value === null || typeof value !== "object") return value;
+  const registry = schemaRegistry();
+  if (!registry.has(schemaName)) return value;
+  const doc = registry.raw(schemaName) as Record<string, unknown> | null;
+  if (doc) fillNode(doc, value as Record<string, unknown>, doc, depth);
+  return value;
+}
+
+function fillNode(
+  schema: Record<string, unknown>,
+  node: unknown,
+  doc: Record<string, unknown>,
+  depth: number
+): void {
+  if (depth > 6 || node === null || typeof node !== "object") return;
+
+  const ref = typeof schema["$ref"] === "string" ? (schema["$ref"] as string) : null;
+  if (ref) {
+    if (ref.endsWith(".json")) {
+      const registry = schemaRegistry();
+      if (!registry.has(ref)) return;
+      const target = registry.raw(ref) as Record<string, unknown> | null;
+      if (target) fillNode(target, node, target, depth + 1);
+      return;
+    }
+    const local = localRef(doc, ref);
+    if (local) fillNode(local, node, doc, depth + 1);
+    return;
+  }
+
+  const items = schema["items"] as Record<string, unknown> | undefined;
+  if (Array.isArray(node)) {
+    if (items) for (const entry of node) fillNode(items, entry, doc, depth + 1);
+    return;
+  }
+
+  const obj = node as Record<string, unknown>;
+  const props = (schema["properties"] as Record<string, Record<string, unknown>>) ?? {};
+  const required = (schema["required"] as string[] | undefined) ?? [];
+
+  for (const key of required) {
+    const prop = props[key];
+    if (prop && "const" in prop && obj[key] === undefined) obj[key] = prop["const"];
+  }
+  for (const [key, prop] of Object.entries(props)) {
+    if (obj[key] !== undefined) fillNode(prop, obj[key], doc, depth + 1);
+  }
+}
+
 function validateOutput(
   rawText: string,
   schemaName: string,
@@ -528,6 +598,8 @@ function validateOutput(
 ): { ok: true; value: unknown } | { ok: false; report: ValidationReport } {
   const parsed = parseStrictJson(rawText);
   if (!parsed.ok) return { ok: false, report: { ok: false, issues: [parsed.issue] } };
+
+  fillSchemaConstants(schemaName, parsed.value);
 
   const schemaReport = validateAgainstSchema(schemaName, parsed.value);
   if (!schemaReport.ok) return { ok: false, report: schemaReport };

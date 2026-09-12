@@ -760,6 +760,17 @@ So the question an intermittent bug turns on is answered by arithmetic. The mode
 answer and proposes what it means, and then:
 
 - Output is parsed, schema-validated with unknown fields **rejected**, then reference-validated.
+- **Strictness applies to what the model decided, not to bookkeeping.** Before validation, any
+  required property the schema pins to a single value (`"const"`) is filled in if it is absent.
+  `schemaVersion: "1.0.0"` appears twice in an intake output, is fixed by the schema, and is
+  already known to the deterministic side — discarding a correct interpretation of a bug report
+  because the model did not restate a constant cost a provider call and protected nothing. For
+  the same reason `investigationId` is now SENT to the flow rather than invented by it and then
+  overwritten. Filling is deliberately narrow: only `const`, only where `required`, only into an
+  object that already exists. It never invents a missing object, never picks from an `enum`, and
+  never supplies a `default` — each of those is a choice, and a choice the model was supposed to
+  make is precisely what validation is for. `packages/ai-flows/src/shape.spec.ts` asserts both
+  halves.
 - A citation to a run the tools never returned is a fabrication — the output is refused, not
   repaired into plausibility.
 - A claim at `probable_trigger` or above needs a citation carrying a **field and an expected
