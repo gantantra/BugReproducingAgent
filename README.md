@@ -1,6 +1,8 @@
 # ReproAgent
 
-A standalone local CLI agent that investigates intermittent Chrome-based web issues.
+A standalone local CLI agent that investigates **intermittent** Chrome-based web issues — the
+bugs that happen one time in five, that nobody can reproduce on demand, and that get closed as
+"cannot reproduce".
 
 > Playwright produces evidence. Deterministic software normalizes and measures evidence. DeepSeek
 > interprets and prioritizes evidence. Humans authorize consequential transitions.
@@ -9,39 +11,79 @@ That sentence is the architectural contract, not a slogan. Browser execution and
 are deterministic and never call a model; a model never decides an outcome, a statistic, or an
 approval. Any change that violates it is rejected regardless of convenience or test coverage.
 
-**Internal package identifiers are `@investigator/*`.** ReproAgent is the product name; the
-namespace was deliberately not renamed (`docs/m0-decisions.md`).
+---
+
+## The problem this exists for
+
+An intermittent bug is hard for a specific reason: **a single run tells you almost nothing.** One
+green run is not evidence the defect is gone, and one red run is not evidence of where it lives.
+You need many runs, executed identically, with enough captured from each to tell them apart
+afterwards.
+
+That is tedious to do by hand, and the usual shortcuts quietly corrupt the answer:
+
+| The shortcut                             | What it costs you                                                           |
+| ---------------------------------------- | --------------------------------------------------------------------------- |
+| Re-run until it passes                   | The failure is now invisible, and the rate is unknown                       |
+| Retry on failure                         | A product defect gets hidden by the retry that "fixed" it                   |
+| Let a model look at logs and explain     | A fluent explanation with no way to check whether it is true                |
+| "It failed, so the app is broken"        | A broken selector in your own script counted as a defect in the application |
+| Eyeball two runs and spot the difference | Works for three runs, not thirty                                            |
+
+ReproAgent is the opposite of each of those. It runs the same approved sequence N times, captures
+a fixed evidence set from every run, classifies each run by an ordered rule set, and then answers
+_"what is different about the runs that failed?"_ **by arithmetic**. A model is used only to
+interpret that measurement, and only where every claim it makes can be checked against it.
+
+## What it actually does
+
+```
+  a human's bug report
+          │
+          ▼
+   ① intake ──────────► stored verbatim, redacted, content-hashed
+          │                   └─ optional: DeepSeek reads it into a structured Flow
+          ▼
+   ② plan ────────────► a gate-1 proposal: ranked experiments, each with a FALSIFIER
+          │
+          ▼
+   ③ approve ─────────► a HUMAN decision, SHA-256-bound to the exact bytes they read
+          │              (nothing below this line can happen without it)
+          ▼
+   ④ run ─────────────► N deterministic Chromium runs, fresh context each,
+          │              full evidence capture, redacted before it is stored
+          ▼
+   ⑤ analyze ─────────► what separates failing runs from passing ones — computed
+          │                   └─ optional: DeepSeek reads that contrast and proposes causes
+          ▼
+   ⑥ suite generate ──► a standalone Playwright spec you hand to a developer
+```
+
+Every arrow is auditable afterwards: `investigate lineage <runId>` walks an append-only,
+hash-chained graph and tells you which human decision authorised each step, and which flow and
+prompt bytes produced each interpretation.
 
 ## Status
 
 | Milestone                                                  | State                                                     |
 | ---------------------------------------------------------- | --------------------------------------------------------- |
 | M0 — architecture, ADRs, schemas                           | Accepted with recorded corrections (`docs/FREEZE-M0.md`)  |
-| M1 — deterministic execution and evidence core             | Implemented; gate green, 100/100 with zero retries        |
+| M1 — deterministic execution and evidence core             | Implemented; 100/100 runs, zero retries                   |
 | M2 — lineage, the three approval gates, CLI workflow       | Implemented                                               |
 | M3 — AI gateway, flows, read-only tools, eval harness      | Implemented; `intake --ai` verified against live DeepSeek |
 | M4–M8 — classification, frequency, minimization, reporting | **Not implemented**                                       |
 
-M1 is the deterministic foundation: it executes an experiment in Chromium, captures evidence,
-redacts before persistence, normalizes deterministically, and classifies the run.
+**What you can do today:** run a full investigation end to end against a local fixture or a real
+target, with human approval, full evidence capture, provenance, an exported Playwright
+reproduction, and a measured contrast between failing and passing runs.
 
-M2 adds what makes the governing principle real: **nothing reaches a browser without a recorded
-human decision.** `investigate run` refuses unless gate 1 is approved; the approval is bound by
-SHA-256 to the exact proposal bytes a human read; and what executes is the _effective_ proposal —
-the post-edit document — never the one that was merely proposed. Provenance is recorded in an
-append-only, hash-chained lineage graph that answers "what authorised this run?" offline.
-
-M3 adds interpretation, strictly bounded: a provider gateway with typed error classification and
-six-dimension budgets, three versioned flows under `ai/flows/`, read-only tools that cannot reach
-a browser, and a validation pipeline that refuses to persist output failing schema or reference
-checks. `investigate analyze` sits on top and is deliberately two-part — see below.
-
-M4 through M8 are not built: run clustering, failure-frequency statistics with confidence
-intervals, minimization, and Jira-ready reporting. The CLI is honest about it — every
-unimplemented command is registered and exits 1 naming its milestone.
+**What you cannot:** get a failure-rate statistic with a confidence interval, automatic run
+clustering, minimization of a reproduction down to its essential steps, or a Jira-ready report.
+Those are M4–M8. Every unimplemented command is registered and exits 1 naming its milestone,
+rather than silently doing nothing:
 
 ```bash
-node apps/cli/dist/bin.js classify                  # -> NOT_IMPLEMENTED, "Arrives in M4"
+node apps/cli/dist/bin.js classify      # -> NOT_IMPLEMENTED, "Arrives in M4"
 ```
 
 ## Setup and first run
@@ -273,46 +315,206 @@ is never miscounted as a defect in your application.
 | `No runs with normalized evidence`             | `analyze` before anything ran. Do step 7 first                                                              |
 | Reliability suite fails on **wall clock only** | Machine contention. Run it on an otherwise idle machine                                                     |
 
-## The AI path
+## How it works
 
-Three versioned flows live under `ai/flows/`, each a directory of files — `flow.yaml`,
-`system.md`, `examples.jsonl` — hashed together into a `flowHash` recorded on every call, so the
-exact prompt bytes behind any output are recoverable. Prompts are never string literals in
-TypeScript.
+### The one rule everything follows
 
-| Command        | Flow                  | What it does                                                                |
-| -------------- | --------------------- | --------------------------------------------------------------------------- |
-| `intake --ai`  | `intake_to_flow`      | Interprets a bug report into steps, unknowns, and a suspected failure point |
-| `plan --ai`    | `propose_experiments` | Drafts ranked experiments, each with what would disprove it                 |
-| `analyze --ai` | `analyze_failures`    | Reads the measured runs and proposes findings and reproduction steps        |
+Four kinds of work, kept strictly apart, because mixing them is how an investigation tool starts
+lying:
 
-Configure it with five variables, or put them in a gitignored `.env` (see `.env.example`). The
-real environment always wins over the file, so a stale file cannot shadow a deliberate export;
-`REPROAGENT_NO_ENV_FILE=1` disables it entirely. `llm.apiKeyEnv` in `config.yaml` names the
-variable holding the key, so an existing credential can be pointed at without copying it.
+| Who                    | Does                                      | Never does                                        |
+| ---------------------- | ----------------------------------------- | ------------------------------------------------- |
+| **Playwright**         | Drives a browser, produces raw evidence   | Decides what the evidence means                   |
+| **Deterministic code** | Normalizes, redacts, measures, classifies | Guesses, or asks a model                          |
+| **DeepSeek**           | Interprets, ranks, hypothesises, explains | Touches a browser, or decides an outcome          |
+| **A human**            | Authorizes every consequential transition | Gets bypassed by a `--yes` flag — there isn't one |
 
-Two properties are worth stating plainly, because they are the whole design:
+The import graph enforces the second and third rows rather than trusting them.
+`packages/execution`, `packages/evidence` and `packages/test-fixtures` **cannot** import
+`ai-gateway` or `ai-flows`; `tests/docs/import-boundary.spec.ts` walks the resolved module graph
+and fails if they ever do.
 
-**The measurement is never the model's.** `analyze` computes its contrast — what differs between
-failing and passing runs — as a pure function over evidence the extractor already produced. That
-answer prints whether or not a provider is reachable. The model reads the contrast and says what
-it means; it does not produce it.
+### Layering
 
-**Nothing invalid is persisted.** Every AI output is parsed, schema-validated with unknown fields
-rejected, then reference-validated: a finding citing a run the tools never returned is a
-fabrication and the output is refused rather than repaired into plausibility. A claim at
-`probable_trigger` or above additionally needs a citation carrying a field and an expected value,
-because "see RUN-17" establishes only that RUN-17 exists.
+```
+core ← storage ← execution ← evidence ← lineage ← ai-gateway ← tools ← ai-flows ← reporting
+                     ↑                                                       |
+                     └───────────────────── approvals ───────────────────────┘
 
-An interpretation must also be able to say _"the reporter never told me this"_. A selector may use
-the `described` strategy to carry the reporter's own words, and a `goto` may have a null URL paired
-with the `unknownRef` that names the gap. Both are **unexecutable by design**: the executor and the
-suite generator each refuse them with `EXEC_VALUE_UNRESOLVED`, classified `AUTOMATION_FAILED`.
-Without this, a flow had to invent a selector or a URL to be schema-valid at all.
+apps/cli depends on everything. Nothing depends on apps/cli.
+```
+
+| Package         | Responsibility                                                                   |
+| --------------- | -------------------------------------------------------------------------------- |
+| `core`          | Vocabulary, ids, config, errors, schema registry, `Secret`, clock and seeded RNG |
+| `storage`       | SQLite metadata store, durable job queue, content-hashed artifact store          |
+| `execution`     | The Playwright worker, action interpreter, collector, destructive classifier     |
+| `evidence`      | Redaction, the normalization plane, capture status, the outcome rules            |
+| `lineage`       | The append-only, hash-chained provenance graph                                   |
+| `approvals`     | Gate state, the edit surface, checksum binding, the nine approval checks         |
+| `ai-gateway`    | Provider adapter, retry and circuit breaker, budgets, cost ledger, validation    |
+| `tools`         | Read-only projections over normalized evidence, and `contrastRuns`               |
+| `ai-flows`      | Flow loading, `flowHash`, the turn loop with double allowlist enforcement        |
+| `test-fixtures` | Deterministic local applications that fail in specified ways                     |
+| `reporting`     | M7. A placeholder today                                                          |
+
+### Determinism
+
+Reproducibility is the whole product, so it is a constraint on the code, not an aspiration:
+
+- No `Math.random()`, `Date.now()` or ambient locale/timezone in execution or normalization. A
+  seeded `Rng` and an injected `Clock` are passed in.
+- Normalization is a **pure function** of `(raw artifacts, redaction policy version, normalizer
+version)`. The same inputs produce byte-identical output, and a session can be rebuilt offline
+  from stored artifacts with the network and browser unavailable — asserted by
+  `tests/reliability/offline_session_reconstruction.spec.ts`.
+- Every artifact is SHA-256 content-hashed at write time. Manifests are immutable once sealed;
+  SQLite triggers reject any update or delete.
+- One browser per batch, a **fresh `BrowserContext` per run** (ADR-0025). Runs cannot leak state
+  into each other.
+
+### Evidence, and being honest about it
+
+Twelve categories are captured: `actions`, `navigation`, `console`, `exceptions`,
+`networkMetadata`, `responseBodies`, `domSnapshots`, `storage`, `screenshots`, `video`, `trace`,
+`webSocketFrames`.
+
+Each carries a status, every run, for every category — there are no absent keys, because an
+omitted key is indistinguishable from a forgotten one:
+
+`complete` · `partial` · `missing` · `redacted` · `unsupported` · `corrupted` · `disabled`
+
+This matters more than it sounds. **An absent signal in a `missing` category means "not
+captured", never "did not happen"**, and a finding that leans on it is capped accordingly. The
+human-readable limitations are generated from the machine-readable reasons, so the prose and the
+data cannot drift apart.
+
+Redaction happens **before persistence**, and fails closed: a store call arriving without a
+`RedactionStamp` raises `REDACTION_NOT_APPLIED`. There is no code path that writes evidence
+without one.
+
+The one deliberate exception is **video**, which is raw pixels no text rule can mask. It is
+written only when explicitly enabled, and stamped `video-raw-unredactable` rather than inheriting
+a stamp implying the bytes were cleaned.
+
+### How a run is classified
+
+Six ordered rules. The order is the design:
+
+| #   | Outcome                 | When                                                                  |
+| --- | ----------------------- | --------------------------------------------------------------------- |
+| 1   | `INTERRUPTED`           | The run was cut short. Nothing else about it is trustworthy           |
+| 2   | `INFRASTRUCTURE_FAILED` | The harness or environment failed — not the product                   |
+| 3   | `AUTOMATION_FAILED`     | Our instructions were wrong: a selector missed, an origin was refused |
+| 4   | `PRODUCT_FAILED`        | A declared assertion failed, or a failure predicate matched           |
+| 5   | `VALID_COMPLETED`       | Everything declared passed **and** required evidence is usable        |
+| 6   | `INCONCLUSIVE`          | Green, but a required evidence category is missing                    |
+
+**Rule 3 precedes rule 4** so a broken script is never reported as a product defect — the single
+most damaging mistake this tool could make. **Rule 6 follows rule 5** so a green run with missing
+evidence is not counted as proof of correctness.
+
+Queue state and run outcome are separate dimensions (ADR-0005) and are never conflated:
+`JobState` (`PENDING`/`CLAIMED`/`RUNNING`/`TERMINAL`), `JobTerminalReason`
+(`COMPLETED`/`INTERRUPTED`/`WORKER_ERROR`), and `RunOutcome` above. The legal combinations are
+enforced by SQLite CHECK constraints, so an illegal pair cannot be written even by buggy code.
+
+**Retries cannot hide a product failure.** Only `INFRASTRUCTURE_FAILED` and `INTERRUPTED` are
+retryable. `AUTOMATION_FAILED` is deliberately not: it means the approved sequence is wrong, which
+is a human decision, not something to paper over with another attempt.
+
+### Approvals
+
+Three gates: `experiment_selection`, `target_failure`, `final_reproduction`. All file-based, all
+SHA-256-bound to the exact proposal bytes a human read.
+
+- Scaffolding approves nothing. It writes a schema-valid file with an empty decision.
+- Editing is allowed, but only inside that gate's **edit surface**. The result is the _effective_
+  proposal, and **execution consumes the effective proposal**, never the one merely proposed.
+- Removing an item from `approvedItemIds` rejects it by omission.
+- A destructive action requires a per-action acknowledgement with a written justification.
+- There is no `--yes`, no `--force-approve`, no `--auto`. A test asserts their absence, and
+  another walks the source to assert only the `approve` command can create an approval record.
+
+### Lineage
+
+Every consequential step appends an edge to a per-investigation, append-only, hash-chained graph.
+Each record hashes its own content together with its predecessor's hash, so rewriting history
+means rewriting everything after it.
+
+It answers, offline: _what authorised this run?_ — and for an AI-produced node, which flow,
+version and `flowHash` produced it. `verifyChain` distinguishes a sequence gap from a broken link
+from an in-place edit, because those are different failures.
+
+It is tamper-**evident**, not tamper-proof. That is the honest guarantee for a local tool.
+
+### Where the AI boundary actually sits
+
+The most important line in the system: **`analyze` computes its contrast, then asks a model what
+it means.**
+
+`contrastRuns` is a pure function over measurements the extractor already produced — which console
+fingerprints appear only in failing runs, which request orderings separate the groups, how timings
+differ. It decides nothing, and it runs whether or not a provider is reachable.
+
+So the question an intermittent bug turns on is answered by arithmetic. The model reads that
+answer and proposes what it means, and then:
+
+- Output is parsed, schema-validated with unknown fields **rejected**, then reference-validated.
+- A citation to a run the tools never returned is a fabrication — the output is refused, not
+  repaired into plausibility.
+- A claim at `probable_trigger` or above needs a citation carrying a **field and an expected
+  value**, because "see RUN-17" establishes only that RUN-17 exists.
+- `confirmed_root_cause` is unreachable by design: it requires approved direct evidence from
+  inside the application, which a client-boundary tool cannot have.
+
+Claims use a level ladder, and the level is a promise about the evidence behind it:
+
+`observed` → `correlated` → `probable_trigger` → `high_confidence_trigger` → `confirmed_trigger` →
+`root_cause_hypothesis` → `confirmed_root_cause`
+
+An interpretation must also be able to say _"the reporter never told me this."_ A selector may use
+the `described` strategy to carry the reporter's own words, and a `goto` may have a null URL
+paired with the `unknownRef` naming the gap. Both are **unexecutable by design** — the executor
+and the suite generator each refuse them with `EXEC_VALUE_UNRESOLVED`, classified
+`AUTOMATION_FAILED`. Without this, a flow had to invent a selector or a URL just to be
+schema-valid.
+
+## Tech stack, and why
+
+| Choice                        | Why                                                                                | ADR        |
+| ----------------------------- | ---------------------------------------------------------------------------------- | ---------- |
+| TypeScript, npm workspaces    | One toolchain; workspaces after pnpm/Turborepo proved unnecessary overhead         | 0019, 0023 |
+| **Playwright** (Chromium)     | The only thing that touches a browser                                              | 0001       |
+| **`node:sqlite`** WAL         | No native module, no node-gyp, no prebuild matrix, no Windows install pain         | 0021, 0002 |
+| Content-hashed artifact store | Integrity is verifiable rather than assumed                                        | 0004       |
+| **Ajv** strict, 28 schemas    | Every persisted and AI-produced document is validated at its boundary              | 0015       |
+| **Vitest**, four projects     | `unit`, `docs`, `e2e`, `reliability` — one runner, separated by cost               | 0024       |
+| **DeepSeek** via an adapter   | Provider shapes never leak past `ai-gateway`; capabilities are probed, not assumed | 0009       |
+| Flows as filesystem artifacts | Prompts are versioned files hashed into every call, never string literals          | 0010       |
+
+No database server, no message broker, no container, no cloud dependency. A workspace is a
+directory; the queue is a SQLite table.
+
+## The AI path in practice
+
+Three versioned flows live under `ai/flows/`, each a directory — `flow.yaml`, `system.md`,
+`examples.jsonl` — hashed together into a `flowHash` recorded on every call, so the exact prompt
+bytes behind any output are recoverable later.
+
+| Command        | Flow                  | What it produces                                                     |
+| -------------- | --------------------- | -------------------------------------------------------------------- |
+| `intake --ai`  | `intake_to_flow`      | Steps, unknowns, and the point in the flow the **report** implicates |
+| `plan --ai`    | `propose_experiments` | Ranked experiments, each with what would disprove it                 |
+| `analyze --ai` | `analyze_failures`    | Findings with checked citations, and reproduction steps              |
+
+Each has a six-dimension budget — turns, tool calls, tokens, cost, wall clock, repairs — checked
+**before** dispatch, so a ceiling is never discovered by exceeding it. Budget exhaustion returns a
+typed partial or inconclusive result, never a silently truncated answer.
 
 ### What is verified, and what is not
 
-`intake --ai` has been run against live DeepSeek end to end. On a report that named no URL and no
+`intake --ai` has run against live DeepSeek end to end. Given a report naming no URL and no
 selector, it named the failure point with a supporting quote, emitted `url: null` with an
 `unknownRef`, used a `described` selector, and recorded four unknowns — refusing to invent any of
 it.
@@ -342,20 +544,12 @@ intermittent issue reproducible instead of merely frequent. Failing seeds below 
 
 ```bash
 npm run build && npm run lint && npm run format:check && npm run typecheck
-npm run test:docs      # governing principle, schemas, import boundaries, fixture validity
-npm test               # unit
-npm run test:e2e       # CLI against the built binary
-npm run test:reliability
-npm run gate:twice     # the M1 reliability gate, twice sequentially (~13 min)
+npm run test:docs        # governing principle, schemas, import boundaries, flow examples
+npm test                 # unit
+npm run test:e2e         # the CLI, against the built binary
+npm run test:reliability # browser-backed behavioural gates
+npm run gate:twice       # the M1 reliability gate, twice sequentially (~13 min)
 ```
-
-Current counts: **329** unit and docs tests, **40** e2e against the built binary, **48**
-reliability. The 100-run gate completes 100/100 `VALID_COMPLETED` with zero retries and zero
-infrastructure failures in roughly 130 seconds.
-
-Run the reliability project on an otherwise idle machine. It asserts a wall-clock budget, and
-running other suites alongside it will fail that assertion on contention rather than on
-correctness.
 
 On Windows, one command runs the same sequence:
 
@@ -363,36 +557,61 @@ On Windows, one command runs the same sequence:
 pwsh -File scripts/verify.ps1 -Gate
 ```
 
+Current counts: **329** unit and docs tests, **40** e2e, **48** reliability. The 100-run gate
+completes 100/100 `VALID_COMPLETED` with zero retries and zero infrastructure failures in roughly
+130 seconds.
+
+Run the reliability project on an otherwise idle machine. It asserts a wall-clock budget, and
+running other suites alongside it fails that assertion on contention rather than on correctness.
+
 CI is **GitLab** (`.gitlab-ci.yml`). The GitHub Actions file is a non-authoritative mirror and is
-labelled as such in its own header.
+labelled as such in its own header. The GitLab pipeline is gated on a Windows runner that is not
+yet registered, so CI has not executed; every number above was produced locally.
 
 ## Key guarantees, and where to check them
 
 | Guarantee                                                                        | Enforced by                                                                                                                      |
 | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | DeepSeek is never reachable from execution, evidence, or fixtures                | `tests/docs/import-boundary.spec.ts` walks the resolved module graph                                                             |
+| Nothing reaches a browser without a recorded human decision                      | `tests/e2e/m2-gates.test.ts`; `run` exits 2 and enqueues zero jobs                                                               |
 | Sensitive evidence is redacted before it is persisted                            | `tests/reliability/redaction_before_persistence.spec.ts`; a store call without a `RedactionStamp` raises `REDACTION_NOT_APPLIED` |
 | Normalization is a pure function; a session rebuilds byte-identically offline    | `tests/reliability/offline_session_reconstruction.spec.ts`, with network and browser unavailable                                 |
 | A product failure is never hidden by a retry                                     | `tests/reliability/no_retry_hides_product_failure.spec.ts`                                                                       |
-| Queue state and run outcome are separate concepts                                | `JobState` / `JobTerminalReason` / `RunOutcome` in `packages/core/src/types.ts`                                                  |
+| A broken script is never reported as a product defect                            | Rule 3 before rule 4 in `packages/evidence/src/outcome.ts`; `tests/e2e/described-selector.test.ts`                               |
+| Queue state and run outcome are separate concepts                                | `JobState` / `JobTerminalReason` / `RunOutcome` in `packages/core/src/types.ts`, plus SQLite CHECK constraints                   |
 | The 100-run fixture completes with zero retries and zero infrastructure failures | `tests/reliability/same_test_100_runs.spec.ts`                                                                                   |
 | Every artifact is content-hashed and verifiable                                  | `tests/reliability/artifact_integrity_hashes.spec.ts`                                                                            |
 | Mobile runs are Chromium **emulation**, recorded as read back from the browser   | `tests/reliability/mobile_emulation.spec.ts`                                                                                     |
 | The API key never reaches a log, artifact, or error                              | `packages/core/src/secret.spec.ts`, plus a canary assertion in the CLI e2e suite                                                 |
 | An AI finding cannot cite evidence it was never shown                            | `apps/cli/src/commands/analyze.ts` validates every reference against only the runs the tools returned                            |
-| What differs between failing and passing runs is computed, not inferred          | `contrastRuns` is a pure function; `packages/tools/src/analysis-tools.spec.ts` covers it, including what it refuses to claim     |
+| What differs between failing and passing runs is computed, not inferred          | `contrastRuns` is pure; `packages/tools/src/analysis-tools.spec.ts` covers what it refuses to claim as well as what it finds     |
 | A persisted video is never presented as redacted                                 | stamped `video-raw-unredactable`; `packages/evidence/src/capture-status.spec.ts` asserts the wording a reader actually sees      |
-| A value the reporter never gave cannot be silently guessed at run time           | `EXEC_VALUE_UNRESOLVED` in `tests/e2e/described-selector.test.ts`, at both execution and export                                  |
-| Each investigation keeps its own provenance chain                                | `packages/lineage/src/lineage.spec.ts`; migration 2 scopes the lineage primary key per investigation                             |
+| A value the reporter never gave cannot be silently guessed at run time           | `EXEC_VALUE_UNRESOLVED`, at both execution and export                                                                            |
+| Each investigation keeps its own provenance chain                                | `packages/lineage/src/lineage.spec.ts`; the lineage primary key is scoped per investigation                                      |
 | A flow's few-shot examples satisfy the schema its output is validated against    | `tests/docs/flow-examples.spec.ts`, over every shipped flow                                                                      |
+
+## Exit codes
+
+Scriptable, and distinct on purpose — a refusal is not a crash.
+
+| Code | Meaning                | Code | Meaning              |
+| ---- | ---------------------- | ---- | -------------------- |
+| 0    | OK                     | 6    | Provider unavailable |
+| 1    | Usage                  | 7    | Execution failed     |
+| 2    | Gate required          | 8    | Evidence incomplete  |
+| 3    | Gate checksum mismatch | 9    | Integrity failed     |
+| 4    | AI output invalid      | 10   | Inconclusive         |
+| 5    | Budget exceeded        |      |                      |
+
+A run that observes a product defect exits **0**. Finding the bug is the job.
 
 ## Scope boundary
 
 Chrome desktop and Chrome mobile-**emulated** web, reproducible at least occasionally, observable
 from the browser and client boundary, in authorized test environments.
 
-ReproAgent does not claim to reproduce real-device Android Chrome behaviour, and does not claim
-to capture all browser-visible data. What it captures is "the configured, technically accessible,
+ReproAgent does not claim to reproduce real-device Android Chrome behaviour, and does not claim to
+capture all browser-visible data. What it captures is "the configured, technically accessible,
 authorized, and successfully collected client-observable evidence" — and where a category is
 missing, partial, redacted, unsupported or corrupted, it says so explicitly rather than implying
 completeness.
@@ -402,20 +621,22 @@ developers, or observability tooling.
 
 ## Documentation
 
-| Path                                | Contents                                                                                                                                                                                                            |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `CLAUDE.md`                         | Repo-wide rules for AI coding agents. **Not committed** — `.gitignore` excludes it by project convention, so a clone will not contain it. The rules it states are reflected in the ADRs and in `docs/architecture/` |
-| `docs/prompt-a.txt`                 | The frozen originating brief, byte-for-byte, with a SHA-256 checksum                                                                                                                                                |
-| `docs/m0-decisions.md`              | Human decisions, adapter choices, and what supersedes the brief                                                                                                                                                     |
-| `docs/FREEZE-M0.md`                 | M0 sign-off and the amendment log                                                                                                                                                                                   |
-| `docs/adrs/`                        | 27 architecture decision records                                                                                                                                                                                    |
-| `docs/architecture/`                | Component, evidence, queue, approval and evidence-reference models                                                                                                                                                  |
-| `docs/milestones/`                  | Authoritative scope per milestone                                                                                                                                                                                   |
-| `ai/flows/`                         | Versioned prompt artifacts, hashed into every AI call's `flowHash`                                                                                                                                                  |
-| `eval/`                             | Replay datasets and the scorer that gates model behaviour in CI                                                                                                                                                     |
-| `docs/operations/runbook.md`        | Operating, troubleshooting and incident procedures                                                                                                                                                                  |
-| `docs/operations/windows-runner.md` | Provisioning the Windows GitLab runner                                                                                                                                                                              |
-| `schemas/`                          | 28 versioned JSON schemas                                                                                                                                                                                           |
+| Path                                | Contents                                                                                                                                 |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `DEMO.md`                           | Running the demo for an audience: what each chapter proves, and the questions people ask                                                 |
+| `docs/prompt-a.txt`                 | The frozen originating brief, byte-for-byte, with a SHA-256 checksum                                                                     |
+| `docs/m0-decisions.md`              | Human decisions, adapter choices, and what supersedes the brief                                                                          |
+| `docs/FREEZE-M0.md`                 | M0 sign-off and the amendment log                                                                                                        |
+| `docs/adrs/`                        | 26 architecture decision records                                                                                                         |
+| `docs/architecture/`                | Component, evidence, queue, approval and evidence-reference models                                                                       |
+| `docs/milestones/`                  | Authoritative scope per milestone                                                                                                        |
+| `docs/security/`                    | The security model and the redaction policy                                                                                              |
+| `docs/operations/runbook.md`        | Operating, troubleshooting and incident procedures                                                                                       |
+| `docs/operations/windows-runner.md` | Provisioning the Windows GitLab runner                                                                                                   |
+| `ai/flows/`                         | Versioned prompt artifacts, hashed into every AI call's `flowHash`                                                                       |
+| `eval/`                             | Replay datasets and the scorer that gates model behaviour in CI                                                                          |
+| `schemas/`                          | 28 versioned JSON schemas                                                                                                                |
+| `CLAUDE.md`                         | Repo-wide rules for AI coding agents. **Not committed** — `.gitignore` excludes it by project convention, so a clone will not contain it |
 
 ## Security posture
 
@@ -429,14 +650,14 @@ A gitignored `.env` may supply the non-secret settings. It never overrides a var
 in the real environment, so a stale file cannot shadow a deliberate export — the one dotenv
 failure mode that would matter here, because the shadowed value would be a credential.
 
-Raw sensitive evidence exists only in bounded process memory during collection and
-transformation. It is redacted before durable persistence, provider transmission, normalized
-indexing, diagnostic logging, report generation, and any export. The agent disables its own
-crash-dump and heap-snapshot paths. OS-level paging is documented as residual risk in
+Raw sensitive evidence exists only in bounded process memory during collection and transformation.
+It is redacted before durable persistence, provider transmission, normalized indexing, diagnostic
+logging, report generation, and any export. The agent disables its own crash-dump and
+heap-snapshot paths. OS-level paging is documented as residual risk in
 `docs/security/security-model.md`.
 
-Approvals are file-based and SHA-256-bound to the exact proposal bytes. There is no `--yes`,
-no `--force-approve`, and no `--auto` flag — a test asserts their absence.
+Approvals are file-based and SHA-256-bound to the exact proposal bytes. There is no `--yes`, no
+`--force-approve`, and no `--auto` flag — a test asserts their absence.
 
 **One artifact is deliberately not redacted: video.** A recording is raw pixels, and no text rule
 can mask a credential that was visible on screen. It is written only when `execution.video` is
