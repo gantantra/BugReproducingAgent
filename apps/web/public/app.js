@@ -738,7 +738,10 @@
         ["base url", written.target.baseUrl],
         ["classification", written.target.classification],
         ["allowed origins", written.target.allowedOrigins.join(", ")],
-        ["destructive actions", "blocked"],
+        // Reads the actual setting rather than asserting one. It said "blocked" long after
+        // `blockDestructiveActions` began defaulting to false, which is the kind of stale
+        // reassurance that is worse than saying nothing.
+        ["destructive actions", "allowed — this is an in-house QA target you named"],
       ]);
       // Re-open the investigation against the target. The binding happens at intake, so an
       // investigation opened before the target existed would still plan against nothing.
