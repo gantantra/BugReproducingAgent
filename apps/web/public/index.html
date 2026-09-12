@@ -81,15 +81,32 @@
         border-color: #6b3232;
       }
 
-      /* Pipeline rail */
+      /* The pipeline, shown only while something is actually being waited on. */
+      .waiting {
+        max-width: 860px;
+        margin: 0 auto 10px;
+        padding: 10px 12px;
+        background: var(--panel-2);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+      }
+      .waiting .now {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        font: 12px/1.4 var(--mono);
+        color: var(--text);
+        margin-bottom: 9px;
+      }
+      .waiting .elapsed {
+        margin-left: auto;
+        color: var(--muted);
+        font-size: 11px;
+      }
       .rail {
         display: flex;
         gap: 6px;
-        padding: 9px 16px;
-        background: var(--panel-2);
-        border-bottom: 1px solid var(--line);
         overflow-x: auto;
-        flex: 0 0 auto;
       }
       .rail .step {
         font: 11px/1 var(--mono);
@@ -356,11 +373,18 @@
       <span class="pill" id="inv">no investigation</span>
     </header>
 
-    <div class="rail" id="rail"></div>
-
     <main><div class="wrap" id="transcript"></div></main>
 
     <footer>
+      <div class="waiting" id="waiting" hidden>
+        <div class="now">
+          <span class="spin"></span>
+          <span id="waitingLabel">Working…</span>
+          <span class="elapsed" id="waitingElapsed"></span>
+        </div>
+        <div class="rail" id="rail"></div>
+      </div>
+
       <div class="composer">
         <textarea
           id="input"

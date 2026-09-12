@@ -16,9 +16,27 @@
     input: document.getElementById("input"),
     send: document.getElementById("send"),
     rail: document.getElementById("rail"),
+    waiting: document.getElementById("waiting"),
+    waitingLabel: document.getElementById("waitingLabel"),
+    waitingElapsed: document.getElementById("waitingElapsed"),
     ws: document.getElementById("ws"),
     provider: document.getElementById("provider"),
     inv: document.getElementById("inv"),
+  };
+
+  /* What the agent is doing while you wait on each step. The pipeline now appears only against
+   * the loader: a permanent rail across the top is scenery once you have read it, whereas the
+   * moment you are actually waiting is exactly when "where am I, and what is it doing?" is a real
+   * question. */
+  const BUSY_LABEL = {
+    describe: "Storing your report…",
+    interpret: "Reading the report into a structured flow…",
+    clarify: "Re-reading the report with your answers…",
+    propose: "Proposing experiments…",
+    approve: "Recording your decision…",
+    record: "Running in Chromium…",
+    repeat: "Running the repetitions…",
+    rca: "Contrasting the runs…",
   };
 
   const STEPS = [
@@ -389,7 +407,10 @@
   function renderRail() {
     el.rail.replaceChildren();
     for (const [id, label] of STEPS) {
-      const cls = state.done.has(id) ? "step done" : state.step === id ? "step active" : "step";
+      // Active wins over done. The pipeline is walked backwards routinely — answering an unknown
+      // returns to Interpret — and a step you are sitting on must not render as finished just
+      // because it was finished once.
+      const cls = state.step === id ? "step active" : state.done.has(id) ? "step done" : "step";
       el.rail.appendChild(node("div", cls, label));
     }
   }
@@ -400,14 +421,46 @@
       if (s === id) break;
       state.done.add(s);
     }
+    // Re-entering a step un-finishes it, so the state matches what is shown.
+    state.done.delete(id);
     state.step = id;
-    renderRail();
+    if (!el.waiting.hidden) {
+      renderRail();
+      el.waitingLabel.textContent = BUSY_LABEL[state.step] || "Working…";
+    }
   }
 
-  function setBusy(on) {
+  let waitingSince = 0;
+  let waitingTimer = null;
+
+  /**
+   * Busy is the only time the pipeline is shown. `label` overrides the step's default wording for
+   * a wait that is not simply "the current step" — recording a target, say.
+   */
+  function setBusy(on, label) {
     state.busy = on;
     el.send.disabled = on;
     el.input.disabled = on;
+
+    if (!on) {
+      el.waiting.hidden = true;
+      if (waitingTimer) clearInterval(waitingTimer);
+      waitingTimer = null;
+      return;
+    }
+
+    el.waitingLabel.textContent = label || BUSY_LABEL[state.step] || "Working…";
+    renderRail();
+    el.waiting.hidden = false;
+
+    // Some of these take minutes. A counter is the difference between "it is thinking" and
+    // "it has hung", which is otherwise indistinguishable from a spinner alone.
+    waitingSince = Date.now();
+    el.waitingElapsed.textContent = "0s";
+    if (waitingTimer) clearInterval(waitingTimer);
+    waitingTimer = setInterval(() => {
+      el.waitingElapsed.textContent = `${Math.round((Date.now() - waitingSince) / 1000)}s`;
+    }, 1000);
   }
 
   /** Render a CLI failure exactly as the CLI reported it. */
@@ -456,6 +509,7 @@
     state.aiReady = cfg.aiConfig === "configured" && cfg.apiKeyConfigured === true;
     el.provider.textContent = `${cfg.provider || "?"} · ${state.aiReady ? "ai ready" : "ai missing"}`;
     el.provider.className = `pill ${state.aiReady ? "ok" : "bad"}`;
+    setBusy(false);
     if (!state.aiReady) {
       const c = card("DeepSeek is not configured", true);
       kv(c, [
@@ -739,6 +793,7 @@
     );
 
     const choose = async (classification) => {
+      setBusy(true, "Recording the target…");
       const written = await api("/api/targets", {
         method: "POST",
         body: JSON.stringify({
@@ -747,6 +802,7 @@
           classification,
         }),
       });
+      setBusy(false);
       if (written.ok !== true) {
         showFailure(written, "That target was refused");
         await askForTarget();
@@ -1134,6 +1190,7 @@
       return;
     }
 
+    setBusy(true, "Checking the provider…");
     say(
       "I investigate intermittent Chrome issues by reproducing them many times and contrasting the runs that fail against the runs that pass.\n\nDescribe the bug below — the URL, the steps, what you expected, what actually happens, and roughly how often. I will turn it into a structured flow, show you exactly where I think it breaks, and ask before anything runs."
     );

@@ -421,7 +421,13 @@ npm run web -- --workspace ./my-workspace --port 9999
 
 A local page that walks the same pipeline as a conversation: describe the bug, see the flow it
 inferred and where it thinks the break is, answer what it could not infer, approve a proposal,
-watch the batch run, play the recording, and read the contrast. The recording is why this is a
+watch the batch run, play the recording, and read the contrast.
+
+The pipeline is shown against the loader rather than as a permanent strip across the top. A rail
+you have already read is scenery; the moment you are waiting is exactly when "where am I, and what
+is it doing?" is a real question. So while anything is in flight the page shows what it is doing
+in words, which step is live, and how long it has been going — the last of those being the
+difference between "it is thinking" and "it has hung", which a spinner alone cannot tell you. The recording is why this is a
 browser page rather than a terminal UI — a video is the artefact the second gate asks you to
 judge, and a terminal cannot show one.
 
