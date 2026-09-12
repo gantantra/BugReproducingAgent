@@ -1,10 +1,13 @@
 import {
+  makeContrastRuns,
   makeGetApplicationConstraints,
+  makeGetFailureEvidence,
   makeGetFlow,
   makeGetPreviousExperimentSummary,
   type ApplicationConstraints,
   type FlowFacts,
   type PreviousExperimentSummary,
+  type RunEvidenceFacts,
   type Tool,
 } from "@investigator/tools";
 import { ACTION_TYPES } from "@investigator/core";
@@ -144,4 +147,83 @@ export async function readFlowFacts(
     steps: (parsed["steps"] ?? []) as FlowFacts["steps"],
     unknowns: (parsed["unknowns"] ?? []) as FlowFacts["unknowns"],
   };
+}
+
+/**
+ * Read the deterministic per-run measurements the analysis tools project over.
+ *
+ * Everything here comes from artifacts that were written, hashed, and redacted during the run.
+ * Nothing is recomputed: the extractor already decided what the features are, and a second
+ * opinion computed here would be a second source of truth.
+ */
+export async function readRunEvidence(
+  rt: Runtime,
+  investigationId: string
+): Promise<RunEvidenceFacts[]> {
+  const runs = await rt.metadata.read((t) => t.listRuns(investigationId));
+  const normalized = await rt.artifacts.list(investigationId, { kind: "normalized-evidence" });
+  const byRun = new Map<string, (typeof normalized)[number]>();
+  for (const ref of normalized) if (ref.runId) byRun.set(ref.runId, ref);
+
+  const out: RunEvidenceFacts[] = [];
+  for (const run of runs) {
+    const ref = byRun.get(run.runId);
+    if (!ref) continue;
+
+    let doc: Record<string, unknown>;
+    try {
+      doc = JSON.parse(await rt.artifacts.getText(ref)) as Record<string, unknown>;
+    } catch {
+      // Unusable evidence is skipped rather than guessed at. `contrast_runs` reports the shortfall
+      // through its own caveats, which is where a reader will look for it.
+      continue;
+    }
+
+    const outcome = (doc["outcome"] ?? {}) as Record<string, unknown>;
+    const capture = (doc["captureStatus"] ?? {}) as Record<string, unknown>;
+    const categories = (capture["categories"] ?? {}) as Record<string, { status?: string }>;
+
+    out.push({
+      runId: run.runId,
+      experimentId: run.experimentId ?? null,
+      outcome: String(outcome["outcome"] ?? run.outcome ?? "UNKNOWN"),
+      outcomeRuleId: Number(outcome["ruleId"] ?? run.outcomeRuleId ?? 0),
+      outcomeDetail: String(outcome["detail"] ?? ""),
+      attemptIndex: run.attemptIndex,
+      durationMs: run.durationMs,
+      features: (doc["features"] ?? {}) as Record<string, unknown>,
+      captureStatus: Object.fromEntries(
+        Object.entries(categories).map(([k, v]) => [k, String(v?.status ?? "unknown")])
+      ),
+      limitations: ((capture["limitations"] ?? []) as unknown[]).map(String),
+      actions: ((doc["actions"] ?? []) as Array<Record<string, unknown>>).map((a) => ({
+        actionId: String(a["actionId"] ?? ""),
+        actionType: String(a["actionType"] ?? ""),
+        status: String(a["status"] ?? ""),
+        failureReason: a["failureReason"] === undefined ? null : String(a["failureReason"]),
+        selectorCanonical:
+          a["selectorCanonical"] === undefined || a["selectorCanonical"] === null
+            ? null
+            : String(a["selectorCanonical"]),
+        startDeltaMs: a["startDeltaMs"] === undefined ? null : Number(a["startDeltaMs"]),
+        endDeltaMs: a["endDeltaMs"] === undefined ? null : Number(a["endDeltaMs"]),
+      })),
+    });
+  }
+  return out;
+}
+
+/** The registry `analyze_failures` is allowed to reach. */
+export function buildAnalysisRegistry(
+  rt: Runtime,
+  investigationId: string,
+  data: { flow: FlowFacts | null; runs: RunEvidenceFacts[] }
+): Map<string, Tool<never, unknown>> {
+  const registry = new Map<string, Tool<never, unknown>>();
+  registry.set("get_flow", makeGetFlow(() => data.flow) as never);
+  registry.set("get_failure_evidence", makeGetFailureEvidence(() => data.runs) as never);
+  registry.set("contrast_runs", makeContrastRuns(() => data.runs) as never);
+  void rt;
+  void investigationId;
+  return registry;
 }

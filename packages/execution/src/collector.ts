@@ -45,7 +45,10 @@ export interface CollectorNote {
     | "PARSE_FAILED"
     | "HASH_MISMATCH"
     | "DROPPED_BACKPRESSURE"
-    | "TARGET_DETACHED";
+    | "TARGET_DETACHED"
+    | "PERSISTED_UNREDACTED"
+    | "NO_RECORDING_PRODUCED"
+    | "PERSIST_FAILED";
   count?: number;
   limitBytes?: number;
 }

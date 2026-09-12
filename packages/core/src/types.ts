@@ -126,6 +126,11 @@ export const CAPTURE_REASON_CODES = [
   "HASH_MISMATCH",
   "DROPPED_BACKPRESSURE",
   "TARGET_DETACHED",
+  // Video-specific. A recording is raw pixels, so "captured" and "redacted" come apart for
+  // it in a way they do not for text evidence -- these three say which happened.
+  "PERSISTED_UNREDACTED",
+  "NO_RECORDING_PRODUCED",
+  "PERSIST_FAILED",
 ] as const;
 export type CaptureReasonCode = (typeof CAPTURE_REASON_CODES)[number];
 

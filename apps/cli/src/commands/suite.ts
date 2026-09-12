@@ -37,6 +37,20 @@ function q(value: string): string {
 function locator(sel: Record<string, unknown>): string {
   const strategy = String(sel["strategy"]);
   const value = String(sel["value"] ?? "");
+
+  if (strategy === "described") {
+    // `described` holds the reporter's words for a control nobody has located yet. There is no
+    // honest Playwright expression for it: emitting `getByText("the Verified filter")` would
+    // produce a script that compiles, runs, and tests something nobody chose. Refusing names the
+    // exact action to fix instead.
+    return fail(
+      "EXEC_VALUE_UNRESOLVED",
+      `Cannot generate a reproduction for a selector that is still described in prose ` +
+        `("${value}"). Resolve it to a real selector in the proposal, re-approve, and retry.`,
+      { context: { strategy, described: value } }
+    );
+  }
+
   switch (strategy) {
     case "testid":
       return `page.getByTestId(${q(value)})`;
@@ -112,11 +126,24 @@ function actionLines(a: Record<string, unknown>, indent: string): string[] {
   const timeout = a["timeoutMs"] ? `{ timeout: ${String(a["timeoutMs"])} }` : "";
   const id = String(a["actionId"]);
   switch (type) {
-    case "goto":
+    case "goto": {
+      // `?? "/"` would silently emit a script that navigates to the target root — a reproduction
+      // of something nobody approved, indistinguishable from a real one once it is running.
+      const url = a["url"];
+      if (url === null || url === undefined || url === "") {
+        return fail(
+          "EXEC_VALUE_UNRESOLVED",
+          `Cannot generate a reproduction: action ${id} has no URL and is still pending ` +
+            `the unresolved value ${String(a["unknownRef"] ?? "(unnamed)")}. Answer it in the ` +
+            `proposal, re-approve, and retry.`,
+          { context: { actionId: id, unknownRef: String(a["unknownRef"] ?? "") } }
+        );
+      }
       return [
         `${indent}// ${id}`,
-        `${indent}await page.goto(BASE_URL + ${q(String(a["url"] ?? "/"))}, { waitUntil: ${q(String(a["waitUntil"] ?? "load"))} });`,
+        `${indent}await page.goto(BASE_URL + ${q(String(url))}, { waitUntil: ${q(String(a["waitUntil"] ?? "load"))} });`,
       ];
+    }
     case "click":
       return [`${indent}// ${id}`, `${indent}await ${locator(sel!)}.click(${timeout});`];
     case "dblclick":

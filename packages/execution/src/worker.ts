@@ -1,5 +1,5 @@
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -49,6 +49,15 @@ import { deriveJobId } from "./enqueue.js";
  *
  * This file imports no AI code and never will (ADR-0006).
  */
+
+/**
+ * Stamped on a persisted video instead of the normal applied-rule list.
+ *
+ * A redaction stamp is a claim about what was done to the bytes. No text rule can act on a
+ * frame, so claiming the policy's rules ran over a recording would be false in exactly the place
+ * an auditor would rely on it. This names the truth: the bytes are raw.
+ */
+export const VIDEO_UNREDACTABLE_RULE = "video-raw-unredactable";
 
 export interface WorkerDeps {
   config: ResolvedConfig;
@@ -514,6 +523,49 @@ export class Worker {
       }
       // The browser is owned by the worker and closed in `drain`, not here: it is shared across
       // every run in the batch (ADR-0025).
+
+      // Persist the recording BEFORE the scratch directory goes away. Playwright only finalises
+      // the file on context close, so this must sit between the close above and the rmSync below.
+      //
+      // A video is raw pixels. Redaction cannot mask an OTP, a name, or a card number that was
+      // visible on screen, so this is durable UNREDACTABLE evidence and is stamped as such
+      // rather than inheriting a stamp that would imply the bytes had been cleaned. It is
+      // written only when the operator explicitly set `execution.video: on` -- the same
+      // opt-in shape ADR-0022 uses for raw traces.
+      if (videoDir && cfg.execution.video === "on") {
+        try {
+          const videoRoot = join(videoDir, "video");
+          const recordings = existsSync(videoRoot)
+            ? readdirSync(videoRoot).filter((f) => f.endsWith(".webm"))
+            : [];
+          for (const [i, file] of recordings.entries()) {
+            const ref = await this.deps.artifacts.put({
+              investigationId: job.investigationId,
+              runId,
+              kind: "video",
+              filename: recordings.length > 1 ? `${runId}-${i + 1}.webm` : `${runId}.webm`,
+              bytes: readFileSync(join(videoRoot, file)),
+              contentType: "video/webm",
+              redactionApplied: {
+                ...this.deps.redactor.stamp(),
+                appliedRules: [{ ruleId: VIDEO_UNREDACTABLE_RULE, occurrences: 1 }],
+              },
+            });
+            artifacts.push(ref);
+          }
+          collector.note({
+            category: "video",
+            code: recordings.length ? "PERSISTED_UNREDACTED" : "NO_RECORDING_PRODUCED",
+            ...(recordings.length ? { count: recordings.length } : {}),
+          });
+        } catch (e) {
+          // A recording that cannot be saved must not fail a run whose evidence is otherwise
+          // intact. It is reported, not swallowed.
+          warnings.push(`video could not be persisted: ${(e as Error).message}`);
+          collector.note({ category: "video", code: "PERSIST_FAILED" });
+        }
+      }
+
       if (videoDir) {
         try {
           rmSync(videoDir, { recursive: true, force: true });

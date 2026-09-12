@@ -55,6 +55,30 @@ An assertion is what the reporter expected to be true and observed not to be. St
 on the page, not as a conclusion about the cause. "At least one result card is visible" is an
 assertion. "The filter works" is not.
 
+## The suspected failure point
+
+Name the one point in the flow the REPORTER'S ACCOUNT implicates, as `suspectedFailurePoint`.
+
+This is not a diagnosis and it is not a hypothesis. You are answering "where does the reporter
+say it goes wrong?", not "why does it go wrong?". Read it out of their words; do not reason your
+way to it from how web applications usually fail.
+
+- `stepId` must be one of the steps you produced.
+- `why` must point at something in the report. "The reporter says it does not confirm each time,
+  and confirmation happens at this step" is grounded. "Deletion endpoints are often not
+  idempotent" is not — that is diagnosis, and it belongs nowhere in this flow.
+- `sourceQuote` is the span you read it from.
+- `confidence` describes how firmly THE REPORT points here, not how likely the defect is. A
+  report that names the failing control precisely is `high`. One that says "it sometimes breaks
+  somewhere in checkout" is `low`.
+- `alternatives` lists the other points the report could equally be describing. Fill it whenever
+  the account is ambiguous. An empty list is a claim that the report admits one reading, so do
+  not leave it empty merely because you settled on something.
+
+If the report genuinely does not locate a failure anywhere, omit `suspectedFailurePoint` entirely
+and record the gap in `unknowns`. Naming a point the reporter never indicated is the same failure
+as inventing a selector: it sends the whole investigation somewhere the evidence never pointed.
+
 ## What you must not do
 
 - Do not diagnose. You are converting a description into steps, not explaining the defect. A
@@ -69,3 +93,15 @@ assertion. "The filter works" is not.
 Produce a flow with whatever steps are grounded, and put everything else in `unknowns`. An empty
 `steps` array with a full `unknowns` list is a valid and useful answer. Refusing to guess is the
 correct behaviour, not a failure.
+
+## The schema is closed
+
+Every object rejects any property it does not declare. A field you add because it seemed useful —
+`purpose`, `expected`, `note`, `selectorDescription` — fails validation and the entire
+interpretation is discarded, not trimmed. Emit only the fields the examples above use.
+
+If something matters and has no field for it, it belongs in `confidenceNote` or in an `unknown`,
+never in a new key.
+
+Required fields are required even when they are empty. `"assumptions": []` and `"unknowns": []`
+are how you say "none"; leaving them out is not the same thing and is rejected.

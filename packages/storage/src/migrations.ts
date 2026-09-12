@@ -263,6 +263,67 @@ CREATE TRIGGER artifacts_tombstone_only BEFORE UPDATE ON artifact_refs
   BEGIN SELECT RAISE(ABORT, 'STORE_APPEND_ONLY_VIOLATION: only a retention tombstone may modify an artifact ref'); END;
 `,
   },
+  {
+    version: 2,
+    name: "lineage-id-is-per-investigation",
+    sql: `
+-- A lineage id is allocated from a PER-INVESTIGATION sequence (LineageWriter calls
+-- nextSequence(investigationId, 'lineage')), but v1 made lineage_id a GLOBAL primary key. The
+-- second investigation in a workspace therefore collided on LIN-000001 the moment it recorded
+-- its first edge, and a workspace could hold provenance for exactly one investigation.
+--
+-- The id format is pattern-locked in common.v1.json and appears in stored records, so the fix is
+-- to make the constraint match the documented semantics rather than to change the ids. SQLite
+-- cannot alter a primary key in place, hence the rebuild.
+DROP TRIGGER IF EXISTS lineage_no_update;
+DROP TRIGGER IF EXISTS lineage_no_delete;
+
+ALTER TABLE lineage RENAME TO lineage_v1;
+
+CREATE TABLE lineage (
+  lineage_id        TEXT NOT NULL,
+  investigation_id  TEXT NOT NULL REFERENCES investigations(investigation_id),
+  seq               INTEGER NOT NULL,
+  edge              TEXT NOT NULL,
+  from_kind         TEXT NOT NULL,
+  from_id           TEXT NOT NULL,
+  to_kind           TEXT NOT NULL,
+  to_id             TEXT NOT NULL,
+  actor_kind        TEXT NOT NULL CHECK (actor_kind IN ('human','deterministic','ai')),
+  actor_component   TEXT NULL,
+  actor_version     TEXT NULL,
+  actor_name        TEXT NULL,
+  created_at        TEXT NOT NULL,
+  inputs_json       TEXT NULL,
+  approval_id       TEXT NULL,
+  ai_call_id        TEXT NULL,
+  flow_id           TEXT NULL,
+  flow_version      TEXT NULL,
+  flow_hash         TEXT NULL,
+  record_hash       TEXT NOT NULL,
+  prev_record_hash  TEXT NULL,
+  CHECK (actor_kind IS NOT 'ai' OR (ai_call_id IS NOT NULL AND flow_id IS NOT NULL AND flow_hash IS NOT NULL)),
+  CHECK (actor_kind IS NOT 'human' OR approval_id IS NOT NULL),
+  CHECK (actor_kind IS NOT 'deterministic' OR (actor_component IS NOT NULL AND actor_version IS NOT NULL)),
+  PRIMARY KEY (investigation_id, lineage_id),
+  UNIQUE (investigation_id, seq)
+);
+
+INSERT INTO lineage SELECT * FROM lineage_v1;
+
+-- DROP TABLE does not fire the BEFORE DELETE trigger, and the trigger is gone by now regardless.
+-- Rows were copied first, so no chain is lost.
+DROP TABLE lineage_v1;
+
+CREATE INDEX lineage_from ON lineage (investigation_id, from_kind, from_id);
+CREATE INDEX lineage_to   ON lineage (investigation_id, to_kind, to_id);
+
+CREATE TRIGGER lineage_no_update BEFORE UPDATE ON lineage
+  BEGIN SELECT RAISE(ABORT, 'STORE_APPEND_ONLY_VIOLATION: lineage is append-only'); END;
+CREATE TRIGGER lineage_no_delete BEFORE DELETE ON lineage
+  BEGIN SELECT RAISE(ABORT, 'STORE_APPEND_ONLY_VIOLATION: lineage is append-only'); END;
+`,
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

@@ -264,3 +264,81 @@ describe("authorisation query", () => {
     expect(unauthorisedRuns(records)).toEqual(["RUN-002"]);
   });
 });
+
+/**
+ * A workspace holds many investigations, and each keeps its own provenance chain.
+ *
+ * This regressed for real: `lineage_id` is allocated from a PER-INVESTIGATION sequence, but the
+ * v1 schema made it a GLOBAL primary key. The second investigation in a workspace collided on
+ * LIN-000001 the instant it recorded its first edge, so a workspace could hold provenance for
+ * exactly one investigation. Every test until now used a single investigation, and every e2e
+ * flow created a fresh workspace, so nothing noticed.
+ */
+describe("lineage ids are scoped to their investigation", () => {
+  const OTHER = "INV-002";
+
+  beforeEach(async () => {
+    await store.tx((t) =>
+      t.insertInvestigation({
+        investigationId: OTHER,
+        title: "second",
+        targetName: null,
+        createdAt: systemClock.nowIso(),
+        status: "open",
+      })
+    );
+  });
+
+  const firstEdge = (investigationId: string) => ({
+    investigationId,
+    edge: "executed_as" as const,
+    fromKind: "job" as const,
+    fromId: "JOB-1",
+    toKind: "run" as const,
+    toId: "RUN-001",
+    actor: DET,
+  });
+
+  it("two investigations each start at LIN-000001 without colliding", async () => {
+    const writer = new LineageWriter(store);
+    const a = await writer.append(firstEdge(INV));
+    const b = await writer.append(firstEdge(OTHER));
+
+    expect(a.lineageId).toBe("LIN-000001");
+    expect(b.lineageId).toBe("LIN-000001");
+    expect(a.seq).toBe(1);
+    expect(b.seq).toBe(1);
+  });
+
+  it("keeps the two chains separate", async () => {
+    const writer = new LineageWriter(store);
+    await writer.append(firstEdge(INV));
+    await writer.append(firstEdge(OTHER));
+    await writer.append({ ...firstEdge(INV), toId: "RUN-002" });
+
+    const mine = await store.read((t) => t.listLineage(INV));
+    const theirs = await store.read((t) => t.listLineage(OTHER));
+    expect(mine).toHaveLength(2);
+    expect(theirs).toHaveLength(1);
+
+    // Each chain verifies on its own. A shared id space would have let one investigation's
+    // record become the other's predecessor, which is precisely the tamper-evidence this
+    // structure exists to provide.
+    expect(verifyChain(mine).ok).toBe(true);
+    expect(verifyChain(theirs).ok).toBe(true);
+  });
+
+  it("still refuses a duplicate id within ONE investigation", async () => {
+    // Narrowing the constraint must not have removed it. Re-inserting the same (investigation,
+    // lineage id) has to fail, or append-only means nothing.
+    const writer = new LineageWriter(store);
+    const first = await writer.append(firstEdge(INV));
+    let threw = false;
+    try {
+      await store.tx((t) => t.insertLineage({ ...first }));
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(true);
+  });
+});

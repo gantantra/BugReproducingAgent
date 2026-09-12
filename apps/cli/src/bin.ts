@@ -19,6 +19,7 @@ import { approveCommand } from "./commands/approve.js";
 import { suiteGenerateCommand } from "./commands/suite.js";
 import { lineageCommand, showCommand, statusCommand } from "./commands/inspect.js";
 import { retentionApplyCommand } from "./commands/retention.js";
+import { analyzeCommand } from "./commands/analyze.js";
 import { loadEnvFile } from "./env-file.js";
 
 /**
@@ -278,6 +279,28 @@ program
   .option("--replay <dir>", "replay recorded provider responses instead of calling one")
   .action(async function (this: Command) {
     await dispatch(this, (rt, g) => planCommand(rt, this.opts(), g));
+  });
+
+program
+  .command("analyze")
+  .description(
+    "read the runs already measured and report what separates the failures (--ai interprets them)"
+  )
+  .option("--ai", "add a DeepSeek reading: findings, root-cause hypotheses, reproduction steps")
+  .option("--replay <dir>", "replay recorded provider responses instead of calling one")
+  .action(async function (this: Command) {
+    const g = globalsFrom(this);
+    const logger = new Logger({ json: g.json === true });
+    let rt;
+    try {
+      rt = await openRuntime(g);
+      const result = await analyzeCommand(rt, this.opts(), g);
+      emit(result.json, g.json === true, result.human);
+    } catch (e) {
+      reportAndExit(e, logger, g.json === true);
+    } finally {
+      await rt?.close?.();
+    }
   });
 
 program

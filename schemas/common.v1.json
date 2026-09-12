@@ -4,77 +4,274 @@
   "title": "Shared definitions",
   "description": "Shared primitive definitions referenced by every other schema. Not itself a persisted record.",
   "$defs": {
-    "semver": { "type": "string", "pattern": "^[0-9]+[.][0-9]+[.][0-9]+$" },
-    "investigationId": { "type": "string", "pattern": "^INV-[0-9]{3,}$" },
-    "experimentId": { "type": "string", "pattern": "^EXP-[0-9]{3,}$" },
-    "approvedExperimentId": { "type": "string", "pattern": "^AEXP-[0-9]{3,}$" },
-    "jobId": { "type": "string", "pattern": "^JOB-[0-9a-z]{8,}$" },
-    "runId": { "type": "string", "pattern": "^RUN-[0-9]{1,6}$" },
-    "eventId": { "type": "string", "pattern": "^EV-[0-9]{1,7}$" },
-    "actionId": { "type": "string", "pattern": "^A[0-9]{1,4}$" },
-    "artifactId": { "type": "string", "pattern": "^[A-Z]+-[0-9A-Za-z._-]{1,64}$" },
-    "findingId": { "type": "string", "pattern": "^FIND-[0-9]{3,}$" },
-    "signatureId": { "type": "string", "pattern": "^A?SIG-[0-9]{3,}$" },
-    "clusterId": { "type": "string", "pattern": "^CLU-[0-9]{2,}$" },
-    "candidateId": { "type": "string", "pattern": "^MIN-[0-9]{3,}$" },
-    "reproductionId": { "type": "string", "pattern": "^A?REPRO-[0-9]{3,}$" },
-    "approvalId": { "type": "string", "pattern": "^APPR-[0-9]{3,}$" },
-    "aiCallId": { "type": "string", "pattern": "^AIC-[0-9]{4,}$" },
-    "statisticId": { "type": "string", "pattern": "^STAT-[0-9]{3,}$" },
-    "comparisonId": { "type": "string", "pattern": "^CMP-[0-9]{3,}$" },
-    "lineageId": { "type": "string", "pattern": "^LIN-[0-9]{6,}$" },
-    "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
-    "hexSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "timestamp": { "type": "string", "format": "date-time" },
-    "jsonPointer": { "type": "string", "pattern": "^(/[^/]*)*$" },
-    "jsonPrimitive": { "type": ["string", "number", "integer", "boolean", "null"] },
-    "gate": { "enum": ["experiment_selection", "target_failure", "final_reproduction"] },
-    "jobState": { "enum": ["PENDING", "CLAIMED", "RUNNING", "TERMINAL"] },
-    "jobTerminalReason": { "enum": ["COMPLETED", "INTERRUPTED", "WORKER_ERROR"] },
+    "semver": {
+      "type": "string",
+      "pattern": "^[0-9]+[.][0-9]+[.][0-9]+$"
+    },
+    "investigationId": {
+      "type": "string",
+      "pattern": "^INV-[0-9]{3,}$"
+    },
+    "experimentId": {
+      "type": "string",
+      "pattern": "^EXP-[0-9]{3,}$"
+    },
+    "approvedExperimentId": {
+      "type": "string",
+      "pattern": "^AEXP-[0-9]{3,}$"
+    },
+    "jobId": {
+      "type": "string",
+      "pattern": "^JOB-[0-9a-z]{8,}$"
+    },
+    "runId": {
+      "type": "string",
+      "pattern": "^RUN-[0-9]{1,6}$"
+    },
+    "eventId": {
+      "type": "string",
+      "pattern": "^EV-[0-9]{1,7}$"
+    },
+    "actionId": {
+      "type": "string",
+      "pattern": "^A[0-9]{1,4}$"
+    },
+    "artifactId": {
+      "type": "string",
+      "pattern": "^[A-Z]+-[0-9A-Za-z._-]{1,64}$"
+    },
+    "findingId": {
+      "type": "string",
+      "pattern": "^FIND-[0-9]{3,}$"
+    },
+    "signatureId": {
+      "type": "string",
+      "pattern": "^A?SIG-[0-9]{3,}$"
+    },
+    "clusterId": {
+      "type": "string",
+      "pattern": "^CLU-[0-9]{2,}$"
+    },
+    "candidateId": {
+      "type": "string",
+      "pattern": "^MIN-[0-9]{3,}$"
+    },
+    "reproductionId": {
+      "type": "string",
+      "pattern": "^A?REPRO-[0-9]{3,}$"
+    },
+    "approvalId": {
+      "type": "string",
+      "pattern": "^APPR-[0-9]{3,}$"
+    },
+    "aiCallId": {
+      "type": "string",
+      "pattern": "^AIC-[0-9]{4,}$"
+    },
+    "statisticId": {
+      "type": "string",
+      "pattern": "^STAT-[0-9]{3,}$"
+    },
+    "comparisonId": {
+      "type": "string",
+      "pattern": "^CMP-[0-9]{3,}$"
+    },
+    "lineageId": {
+      "type": "string",
+      "pattern": "^LIN-[0-9]{6,}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "hexSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "jsonPointer": {
+      "type": "string",
+      "pattern": "^(/[^/]*)*$"
+    },
+    "jsonPrimitive": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+    "gate": {
+      "enum": [
+        "experiment_selection",
+        "target_failure",
+        "final_reproduction"
+      ]
+    },
+    "jobState": {
+      "enum": [
+        "PENDING",
+        "CLAIMED",
+        "RUNNING",
+        "TERMINAL"
+      ]
+    },
+    "jobTerminalReason": {
+      "enum": [
+        "COMPLETED",
+        "INTERRUPTED",
+        "WORKER_ERROR"
+      ]
+    },
     "runOutcome": {
-      "enum": ["VALID_COMPLETED", "PRODUCT_FAILED", "AUTOMATION_FAILED",
-               "INFRASTRUCTURE_FAILED", "INTERRUPTED", "INCONCLUSIVE"]
+      "enum": [
+        "VALID_COMPLETED",
+        "PRODUCT_FAILED",
+        "AUTOMATION_FAILED",
+        "INFRASTRUCTURE_FAILED",
+        "INTERRUPTED",
+        "INCONCLUSIVE"
+      ]
     },
     "evidenceCategory": {
-      "enum": ["actions", "navigation", "console", "exceptions", "networkMetadata",
-               "responseBodies", "domSnapshots", "storage", "screenshots", "video",
-               "trace", "webSocketFrames"]
+      "enum": [
+        "actions",
+        "navigation",
+        "console",
+        "exceptions",
+        "networkMetadata",
+        "responseBodies",
+        "domSnapshots",
+        "storage",
+        "screenshots",
+        "video",
+        "trace",
+        "webSocketFrames"
+      ]
     },
     "captureStatusValue": {
-      "enum": ["complete", "partial", "missing", "redacted", "unsupported", "corrupted", "disabled"]
+      "enum": [
+        "complete",
+        "partial",
+        "missing",
+        "redacted",
+        "unsupported",
+        "corrupted",
+        "disabled"
+      ]
     },
     "findingLevel": {
-      "enum": ["observed", "correlated", "probable_trigger", "high_confidence_trigger",
-               "confirmed_trigger", "root_cause_hypothesis", "confirmed_root_cause"]
+      "enum": [
+        "observed",
+        "correlated",
+        "probable_trigger",
+        "high_confidence_trigger",
+        "confirmed_trigger",
+        "root_cause_hypothesis",
+        "confirmed_root_cause"
+      ]
     },
-    "sideEffectClass": { "enum": ["read", "local-write", "remote-write", "destructive"] },
-    "targetClassification": { "enum": ["fixture", "test", "staging"] },
-    "actorKind": { "enum": ["human", "deterministic", "ai"] },
-    "modelAlias": { "enum": ["FAST_MODEL", "REASONING_MODEL", "FALLBACK_MODEL"] },
+    "sideEffectClass": {
+      "enum": [
+        "read",
+        "local-write",
+        "remote-write",
+        "destructive"
+      ]
+    },
+    "targetClassification": {
+      "enum": [
+        "fixture",
+        "test",
+        "staging"
+      ]
+    },
+    "actorKind": {
+      "enum": [
+        "human",
+        "deterministic",
+        "ai"
+      ]
+    },
+    "modelAlias": {
+      "enum": [
+        "FAST_MODEL",
+        "REASONING_MODEL",
+        "FALLBACK_MODEL"
+      ]
+    },
     "artifactKind": {
-      "enum": ["trace", "video", "screenshot", "dom-snapshot", "network-log", "console-log",
-               "storage-snapshot", "raw-event-log", "normalized-evidence", "run-manifest",
-               "proposal", "effective-proposal", "approval-file", "intake-report", "statistics",
-               "reproducer-package", "report", "reset-script-output", "storage-state"]
+      "enum": [
+        "trace",
+        "video",
+        "screenshot",
+        "dom-snapshot",
+        "network-log",
+        "console-log",
+        "storage-snapshot",
+        "raw-event-log",
+        "normalized-evidence",
+        "run-manifest",
+        "proposal",
+        "effective-proposal",
+        "approval-file",
+        "intake-report",
+        "statistics",
+        "reproducer-package",
+        "report",
+        "reset-script-output",
+        "storage-state"
+      ]
     },
     "redactionStamp": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["policyId", "policyVersion", "policyHash", "mode", "appliedRules"],
+      "required": [
+        "policyId",
+        "policyVersion",
+        "policyHash",
+        "mode",
+        "appliedRules"
+      ],
       "properties": {
-        "policyId": { "type": "string", "minLength": 1 },
-        "policyVersion": { "$ref": "#/$defs/semver" },
-        "policyHash": { "$ref": "#/$defs/sha256" },
-        "mode": { "enum": ["strict", "permissive"] },
+        "policyId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "policyVersion": {
+          "$ref": "#/$defs/semver"
+        },
+        "policyHash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "mode": {
+          "enum": [
+            "strict",
+            "permissive"
+          ]
+        },
         "appliedRules": {
           "type": "array",
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["ruleId", "occurrences"],
+            "required": [
+              "ruleId",
+              "occurrences"
+            ],
             "properties": {
-              "ruleId": { "type": "string", "minLength": 1 },
-              "occurrences": { "type": "integer", "minimum": 0 }
+              "ruleId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "occurrences": {
+                "type": "integer",
+                "minimum": 0
+              }
             }
           }
         }
@@ -83,44 +280,120 @@
     "artifactRef": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["artifactId", "kind", "filename", "contentType", "byteLength", "sha256",
-                   "storedAt", "redactionApplied"],
+      "required": [
+        "artifactId",
+        "kind",
+        "filename",
+        "contentType",
+        "byteLength",
+        "sha256",
+        "storedAt",
+        "redactionApplied"
+      ],
       "properties": {
-        "artifactId": { "$ref": "#/$defs/artifactId" },
-        "runId": { "$ref": "#/$defs/runId" },
-        "kind": { "$ref": "#/$defs/artifactKind" },
-        "filename": { "type": "string", "minLength": 1 },
-        "contentType": { "type": "string", "minLength": 1 },
-        "byteLength": { "type": "integer", "minimum": 0 },
-        "sha256": { "$ref": "#/$defs/sha256" },
-        "storedAt": { "$ref": "#/$defs/timestamp" },
-        "redactionApplied": { "$ref": "#/$defs/redactionStamp" },
-        "tombstoned": { "type": "boolean" },
-        "tombstonedAt": { "$ref": "#/$defs/timestamp" },
-        "tombstoneReason": { "type": "string" }
+        "artifactId": {
+          "$ref": "#/$defs/artifactId"
+        },
+        "runId": {
+          "$ref": "#/$defs/runId"
+        },
+        "kind": {
+          "$ref": "#/$defs/artifactKind"
+        },
+        "filename": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contentType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "byteLength": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "storedAt": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "redactionApplied": {
+          "$ref": "#/$defs/redactionStamp"
+        },
+        "tombstoned": {
+          "type": "boolean"
+        },
+        "tombstonedAt": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "tombstoneReason": {
+          "type": "string"
+        }
       }
     },
     "wilsonInterval": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["lower", "upper", "confidence"],
+      "required": [
+        "lower",
+        "upper",
+        "confidence"
+      ],
       "properties": {
-        "lower": { "type": "number", "minimum": 0, "maximum": 1 },
-        "upper": { "type": "number", "minimum": 0, "maximum": 1 },
-        "confidence": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1 }
+        "lower": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "upper": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "confidence": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "exclusiveMaximum": 1
+        }
       }
     },
     "selector": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["strategy"],
+      "required": [
+        "strategy"
+      ],
       "properties": {
-        "strategy": { "enum": ["testid", "role", "label", "placeholder", "text", "css", "xpath"] },
-        "value": { "type": "string" },
-        "role": { "type": "string" },
-        "name": { "type": "string" },
-        "exact": { "type": "boolean" },
-        "nth": { "type": "integer", "minimum": 0 },
+        "strategy": {
+          "enum": [
+            "testid",
+            "role",
+            "label",
+            "placeholder",
+            "text",
+            "css",
+            "xpath",
+            "described"
+          ],
+          "description": "How to find the element. `described` is the ONLY strategy that is not executable: it carries the reporter's own words for a control whose selector is not yet known. It exists so a flow can say 'the Verified filter' without inventing `[data-testid=...]`, and the executor refuses to run it. Resolving it into a real strategy is a separate, deliberate step."
+        },
+        "value": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "exact": {
+          "type": "boolean"
+        },
+        "nth": {
+          "type": "integer",
+          "minimum": 0
+        },
         "canonical": {
           "type": "string",
           "description": "Normalized canonical form, computed deterministically by the normalizer."
@@ -130,76 +403,218 @@
     "versionStamps": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["collectorVersion", "normalizerVersion", "extractorVersion"],
+      "required": [
+        "collectorVersion",
+        "normalizerVersion",
+        "extractorVersion"
+      ],
       "properties": {
-        "collectorVersion": { "type": "string", "minLength": 1 },
-        "normalizerVersion": { "type": "string", "minLength": 1 },
-        "extractorVersion": { "type": "string", "minLength": 1 }
+        "collectorVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "normalizerVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extractorVersion": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "resolvedEmulation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["profileName", "profileSource", "resolved", "browser"],
+      "required": [
+        "profileName",
+        "profileSource",
+        "resolved",
+        "browser"
+      ],
       "properties": {
-        "profileName": { "type": "string", "minLength": 1 },
-        "profileSource": { "type": "string", "minLength": 1 },
+        "profileName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "profileSource": {
+          "type": "string",
+          "minLength": 1
+        },
         "resolved": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["viewport", "screen", "deviceScaleFactor", "isMobile", "hasTouch",
-                       "userAgent", "locale", "timezoneId", "colorScheme"],
+          "required": [
+            "viewport",
+            "screen",
+            "deviceScaleFactor",
+            "isMobile",
+            "hasTouch",
+            "userAgent",
+            "locale",
+            "timezoneId",
+            "colorScheme"
+          ],
           "properties": {
-            "viewport": { "$ref": "#/$defs/dimensions" },
-            "screen": { "$ref": "#/$defs/dimensions" },
-            "deviceScaleFactor": { "type": "number", "exclusiveMinimum": 0 },
-            "isMobile": { "type": "boolean" },
-            "hasTouch": { "type": "boolean" },
-            "maxTouchPoints": { "type": "integer", "minimum": 0 },
-            "userAgent": { "type": "string", "minLength": 1 },
-            "userAgentSource": { "enum": ["config", "browser-default", "read-back"] },
-            "locale": { "type": "string", "minLength": 2 },
-            "timezoneId": { "type": "string", "minLength": 1 },
-            "colorScheme": { "enum": ["light", "dark", "no-preference"] },
-            "reducedMotion": { "enum": ["reduce", "no-preference"] },
-            "forcedColors": { "enum": ["active", "none"] },
+            "viewport": {
+              "$ref": "#/$defs/dimensions"
+            },
+            "screen": {
+              "$ref": "#/$defs/dimensions"
+            },
+            "deviceScaleFactor": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "isMobile": {
+              "type": "boolean"
+            },
+            "hasTouch": {
+              "type": "boolean"
+            },
+            "maxTouchPoints": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "userAgent": {
+              "type": "string",
+              "minLength": 1
+            },
+            "userAgentSource": {
+              "enum": [
+                "config",
+                "browser-default",
+                "read-back"
+              ]
+            },
+            "locale": {
+              "type": "string",
+              "minLength": 2
+            },
+            "timezoneId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "colorScheme": {
+              "enum": [
+                "light",
+                "dark",
+                "no-preference"
+              ]
+            },
+            "reducedMotion": {
+              "enum": [
+                "reduce",
+                "no-preference"
+              ]
+            },
+            "forcedColors": {
+              "enum": [
+                "active",
+                "none"
+              ]
+            },
             "network": {
-              "type": ["object", "null"],
+              "type": [
+                "object",
+                "null"
+              ],
               "additionalProperties": false,
-              "required": ["profile", "downloadKbps", "uploadKbps", "latencyMs", "offline"],
+              "required": [
+                "profile",
+                "downloadKbps",
+                "uploadKbps",
+                "latencyMs",
+                "offline"
+              ],
               "properties": {
-                "profile": { "type": "string" },
-                "downloadKbps": { "type": "number", "minimum": 0 },
-                "uploadKbps": { "type": "number", "minimum": 0 },
-                "latencyMs": { "type": "number", "minimum": 0 },
-                "offline": { "type": "boolean" }
+                "profile": {
+                  "type": "string"
+                },
+                "downloadKbps": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "uploadKbps": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "latencyMs": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "offline": {
+                  "type": "boolean"
+                }
               }
             },
             "cpu": {
-              "type": ["object", "null"],
+              "type": [
+                "object",
+                "null"
+              ],
               "additionalProperties": false,
-              "required": ["throttlingRate"],
-              "properties": { "throttlingRate": { "type": "number", "minimum": 1 } }
+              "required": [
+                "throttlingRate"
+              ],
+              "properties": {
+                "throttlingRate": {
+                  "type": "number",
+                  "minimum": 1
+                }
+              }
             },
-            "geolocation": { "type": ["object", "null"] },
-            "permissions": { "type": "array", "items": { "type": "string" } }
+            "geolocation": {
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "permissions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           }
         },
         "browser": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["engine", "playwrightVersion", "browserVersion", "headless"],
+          "required": [
+            "engine",
+            "playwrightVersion",
+            "browserVersion",
+            "headless"
+          ],
           "properties": {
-            "engine": { "const": "chromium" },
-            "channel": { "type": ["string", "null"] },
-            "playwrightVersion": { "type": "string", "minLength": 1 },
+            "engine": {
+              "const": "chromium"
+            },
+            "channel": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "playwrightVersion": {
+              "type": "string",
+              "minLength": 1
+            },
             "browserVersion": {
               "type": "string",
               "minLength": 1,
               "description": "Observed at launch. Never templated, never assumed."
             },
-            "headless": { "type": "boolean" },
-            "launchArgs": { "type": "array", "items": { "type": "string" } }
+            "headless": {
+              "type": "boolean"
+            },
+            "launchArgs": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           }
         },
         "discrepancies": {
@@ -208,11 +623,21 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["field", "requested", "observed"],
+            "required": [
+              "field",
+              "requested",
+              "observed"
+            ],
             "properties": {
-              "field": { "type": "string" },
-              "requested": { "$ref": "#/$defs/jsonPrimitive" },
-              "observed": { "$ref": "#/$defs/jsonPrimitive" }
+              "field": {
+                "type": "string"
+              },
+              "requested": {
+                "$ref": "#/$defs/jsonPrimitive"
+              },
+              "observed": {
+                "$ref": "#/$defs/jsonPrimitive"
+              }
             }
           }
         }
@@ -221,10 +646,19 @@
     "dimensions": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["width", "height"],
+      "required": [
+        "width",
+        "height"
+      ],
       "properties": {
-        "width": { "type": "integer", "exclusiveMinimum": 0 },
-        "height": { "type": "integer", "exclusiveMinimum": 0 }
+        "width": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "height": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        }
       }
     }
   }

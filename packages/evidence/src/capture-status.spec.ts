@@ -75,3 +75,49 @@ describe("CaptureStatus reason codes", () => {
     expect(sealed.categories["console"]?.status).not.toBe("complete");
   });
 });
+
+/**
+ * A persisted video is the one artifact redaction cannot clean.
+ *
+ * Playwright produces evidence. Deterministic software normalizes and measures evidence. DeepSeek interprets and prioritizes evidence. Humans authorize consequential transitions.
+ *
+ * The limitation string is the ONLY place a reader is told the recording may show a credential
+ * that was on screen, so it is asserted on its wording, not merely on the code being present.
+ */
+describe("video is captured but unredactable", () => {
+  it("states plainly that the recording was stored without redaction", () => {
+    const b = new CaptureStatusBuilder(["video"]);
+    b.collected("video", 1);
+    b.reason("video", "PERSISTED_UNREDACTED", { count: 1 });
+
+    const sealed = b.seal(sealArgs);
+    expect(sealed.categories["video"]?.status).toBe("complete");
+    const text = sealed.limitations.join(" ");
+    expect(text).toMatch(/WITHOUT redaction/);
+    expect(text).toMatch(/visible on screen/);
+    expect(text).toMatch(/credentials or personal data/);
+  });
+
+  it("reads grammatically for one recording and for several", () => {
+    // "Videos was stored" shipped once. A limitation a reader stumbles over is a limitation a
+    // reader skims past.
+    const one = new CaptureStatusBuilder(["video"]);
+    one.reason("video", "PERSISTED_UNREDACTED", { count: 1 });
+    expect(one.seal(sealArgs).limitations.join(" ")).toContain("A recording was stored");
+
+    const many = new CaptureStatusBuilder(["video"]);
+    many.reason("video", "PERSISTED_UNREDACTED", { count: 3 });
+    expect(many.seal(sealArgs).limitations.join(" ")).toContain("3 recordings were stored");
+  });
+
+  it("distinguishes capture enabled-but-empty from capture that failed to store", () => {
+    const none = new CaptureStatusBuilder(["video"]);
+    none.reason("video", "NO_RECORDING_PRODUCED", { count: 1 });
+    expect(none.seal(sealArgs).limitations.join(" ")).toMatch(/produced no recording/);
+
+    const lost = new CaptureStatusBuilder(["video"]);
+    lost.reason("video", "PERSIST_FAILED", { count: 1 });
+    // Losing a recording must not read like never having made one: the first is a fault.
+    expect(lost.seal(sealArgs).limitations.join(" ")).toMatch(/could not be stored, and is lost/);
+  });
+});

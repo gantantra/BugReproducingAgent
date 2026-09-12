@@ -14,7 +14,13 @@ import type {
  */
 
 export interface SelectorSpec {
-  strategy: "testid" | "role" | "label" | "placeholder" | "text" | "css" | "xpath";
+  /**
+   * `described` is the only NON-EXECUTABLE strategy: the reporter's own words for a control whose
+   * selector nobody has established yet. It lets an interpreted flow say "the Verified filter"
+   * instead of inventing `[data-testid=...]`. The interpreter refuses it, so a flow still carrying
+   * one cannot silently run against a guess.
+   */
+  strategy: "testid" | "role" | "label" | "placeholder" | "text" | "css" | "xpath" | "described";
   value?: string;
   role?: string;
   name?: string;
@@ -69,7 +75,13 @@ export interface ActionSpec {
   sideEffect?: SideEffectClass;
   computedSideEffect?: SideEffectClass;
   // Type-specific
-  url?: string;
+  /**
+   * Null when the reporter never gave a path. An interpretation must not invent one, so the gap
+   * is carried explicitly and `unknownRef` names the unknown that has to be answered first.
+   */
+  url?: string | null;
+  /** The `unknowns[].id` this action is waiting on, when a required value is absent. */
+  unknownRef?: string;
   waitUntil?: "commit" | "domcontentloaded" | "load" | "networkidle";
   selector?: SelectorSpec;
   value?: TestDataValue;

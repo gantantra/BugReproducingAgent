@@ -5,18 +5,40 @@
   "description": "The structured interpretation of a human-reported issue. Produced by intake_to_flow, edited by a human, and the input to propose_experiments.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "flowId", "investigationId", "title", "steps", "assumptions", "unknowns"],
+  "required": [
+    "schemaVersion",
+    "flowId",
+    "investigationId",
+    "title",
+    "steps",
+    "assumptions",
+    "unknowns"
+  ],
   "properties": {
-    "schemaVersion": { "const": "1.0.0" },
-    "flowId": { "type": "string", "pattern": "^FLOW-[0-9]{3,}$" },
-    "investigationId": { "$ref": "common.v1.json#/$defs/investigationId" },
-    "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "schemaVersion": {
+      "const": "1.0.0"
+    },
+    "flowId": {
+      "type": "string",
+      "pattern": "^FLOW-[0-9]{3,}$"
+    },
+    "investigationId": {
+      "$ref": "common.v1.json#/$defs/investigationId"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
     "targetName": {
       "type": "string",
       "description": "Named target from config.execution.targets. Must exist; the flow may not introduce a target."
     },
     "reportedFrequency": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "Verbatim or lightly normalized from the human report, for example one in twenty. Never converted into a numeric rate: that is measured, not reported."
     },
     "steps": {
@@ -25,14 +47,26 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["stepId", "description", "actions"],
+        "required": [
+          "stepId",
+          "description",
+          "actions"
+        ],
         "properties": {
-          "stepId": { "type": "string", "pattern": "^S[0-9]{1,3}$" },
-          "description": { "type": "string", "minLength": 1 },
+          "stepId": {
+            "type": "string",
+            "pattern": "^S[0-9]{1,3}$"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
           "actions": {
             "type": "array",
             "minItems": 0,
-            "items": { "$ref": "action.v1.json" }
+            "items": {
+              "$ref": "action.v1.json"
+            }
           },
           "sourceQuote": {
             "type": "string",
@@ -41,12 +75,19 @@
         }
       }
     },
-    "expectedBehaviour": { "type": "string" },
-    "observedBehaviour": { "type": "string" },
+    "expectedBehaviour": {
+      "type": "string"
+    },
+    "observedBehaviour": {
+      "type": "string"
+    },
     "assumptions": {
       "type": "array",
       "description": "Interpretations the flow made that the report did not state. Required so the human can correct them at gate 1.",
-      "items": { "type": "string", "minLength": 1 }
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
     "unknowns": {
       "type": "array",
@@ -54,14 +95,33 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "field", "why"],
+        "required": [
+          "id",
+          "field",
+          "why"
+        ],
         "properties": {
-          "id": { "type": "string", "pattern": "^U[0-9]{1,3}$" },
-          "field": { "type": "string", "minLength": 1 },
-          "why": { "type": "string", "minLength": 1 },
-          "resolvedValue": { "$ref": "common.v1.json#/$defs/jsonPrimitive" },
-          "resolvedBy": { "$ref": "common.v1.json#/$defs/approvalId" },
-          "resolvedAt": { "$ref": "common.v1.json#/$defs/timestamp" }
+          "id": {
+            "type": "string",
+            "pattern": "^U[0-9]{1,3}$"
+          },
+          "field": {
+            "type": "string",
+            "minLength": 1
+          },
+          "why": {
+            "type": "string",
+            "minLength": 1
+          },
+          "resolvedValue": {
+            "$ref": "common.v1.json#/$defs/jsonPrimitive"
+          },
+          "resolvedBy": {
+            "$ref": "common.v1.json#/$defs/approvalId"
+          },
+          "resolvedAt": {
+            "$ref": "common.v1.json#/$defs/timestamp"
+          }
         }
       }
     },
@@ -72,15 +132,97 @@
     "provenance": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["actorKind"],
+      "required": [
+        "actorKind"
+      ],
       "properties": {
-        "actorKind": { "$ref": "common.v1.json#/$defs/actorKind" },
-        "aiCallId": { "$ref": "common.v1.json#/$defs/aiCallId" },
-        "flowArtifactId": { "type": "string" },
-        "flowArtifactVersion": { "$ref": "common.v1.json#/$defs/semver" },
-        "flowHash": { "$ref": "common.v1.json#/$defs/sha256" },
-        "intakeReportArtifactId": { "$ref": "common.v1.json#/$defs/artifactId" },
-        "createdAt": { "$ref": "common.v1.json#/$defs/timestamp" }
+        "actorKind": {
+          "$ref": "common.v1.json#/$defs/actorKind"
+        },
+        "aiCallId": {
+          "$ref": "common.v1.json#/$defs/aiCallId"
+        },
+        "flowArtifactId": {
+          "type": "string"
+        },
+        "flowArtifactVersion": {
+          "$ref": "common.v1.json#/$defs/semver"
+        },
+        "flowHash": {
+          "$ref": "common.v1.json#/$defs/sha256"
+        },
+        "intakeReportArtifactId": {
+          "$ref": "common.v1.json#/$defs/artifactId"
+        },
+        "createdAt": {
+          "$ref": "common.v1.json#/$defs/timestamp"
+        }
+      }
+    },
+    "suspectedFailurePoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The single point in the flow the reporter's account implicates. Derived from the report, never measured: it is where to LOOK, not a finding. It carries no claim level and must never be cited as evidence.",
+      "required": [
+        "stepId",
+        "what",
+        "why",
+        "confidence"
+      ],
+      "properties": {
+        "stepId": {
+          "type": "string",
+          "pattern": "^S[0-9]{1,3}$",
+          "description": "The step this failure is attributed to. Must exist in steps."
+        },
+        "actionId": {
+          "type": "string",
+          "description": "The specific action within that step, when the report is that precise."
+        },
+        "what": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The action or event believed to fail, in the reporter's terms."
+        },
+        "why": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What in the report points here. Grounded in the text, not in general knowledge."
+        },
+        "sourceQuote": {
+          "type": "string",
+          "description": "The span of the report this was read from."
+        },
+        "confidence": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "description": "How firmly the REPORT implicates this point. Not a measurement."
+        },
+        "alternatives": {
+          "type": "array",
+          "description": "Other points the report could equally implicate. Present whenever the account is ambiguous; an empty list asserts the report admits one reading.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "stepId",
+              "what"
+            ],
+            "properties": {
+              "stepId": {
+                "type": "string",
+                "pattern": "^S[0-9]{1,3}$"
+              },
+              "what": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
       }
     }
   }

@@ -132,6 +132,13 @@ export async function intakeCommand(
     sha256: string;
     steps: number;
     unknowns: number;
+    suspectedFailurePoint?: {
+      stepId?: string;
+      actionId?: string;
+      what?: string;
+      why?: string;
+      confidence?: string;
+    };
     aiRequestIds: string[];
   } | null = null;
   if (opts.ai) {
@@ -141,10 +148,23 @@ export async function intakeCommand(
       flowId: "intake_to_flow",
       ...(opts.replay ? { replayDir: opts.replay } : {}),
     });
+    // The envelope `intake.output.v1.json` declares, NOT a bare Flow. Reading `value.flowId`
+    // here silently yielded FLOW-001 with zero steps for every report, because the Flow is
+    // nested under `flow`.
     const result = await runFlow<{
-      flowId?: string;
-      steps?: unknown[];
-      unknowns?: unknown[];
+      flow?: {
+        flowId?: string;
+        steps?: unknown[];
+        unknowns?: unknown[];
+        suspectedFailurePoint?: {
+          stepId?: string;
+          actionId?: string;
+          what?: string;
+          why?: string;
+          confidence?: string;
+        };
+      };
+      groundingNotes?: unknown[];
     }>(
       {
         flow: session.flow,
@@ -180,7 +200,8 @@ export async function intakeCommand(
     }
 
     const value = result.value;
-    const flowId = String(value.flowId ?? "FLOW-001");
+    const interpreted = value.flow ?? {};
+    const flowId = String(interpreted.flowId ?? "FLOW-001");
 
     // Persist the interpretation as an artifact, not merely as a lineage edge.
     //
@@ -192,7 +213,7 @@ export async function intakeCommand(
       investigationId,
       kind: "flow",
       filename: `${flowId}.json`,
-      bytes: canonicalJson({ ...value, investigationId }),
+      bytes: canonicalJson({ ...interpreted, investigationId }),
       contentType: "application/json",
       redactionApplied: rt.redactor.policyStamp(),
     });
@@ -222,8 +243,11 @@ export async function intakeCommand(
       flowId,
       artifactId: flowRef.artifactId,
       sha256: flowRef.sha256,
-      steps: (value.steps ?? []).length,
-      unknowns: (value.unknowns ?? []).length,
+      steps: (interpreted.steps ?? []).length,
+      unknowns: (interpreted.unknowns ?? []).length,
+      ...(interpreted.suspectedFailurePoint
+        ? { suspectedFailurePoint: interpreted.suspectedFailurePoint }
+        : {}),
       aiRequestIds: result.record.aiRequestIds,
     };
   }

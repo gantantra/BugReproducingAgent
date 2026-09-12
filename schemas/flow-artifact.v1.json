@@ -23,7 +23,8 @@
         "classify_runs",
         "analyze_pass_fail",
         "suggest_minimization",
-        "generate_report"
+        "generate_report",
+        "analyze_failures"
       ]
     },
     "version": {
@@ -70,7 +71,9 @@
           "get_investigation_summary",
           "get_approved_findings",
           "get_validation_results",
-          "get_artifact_references"
+          "get_artifact_references",
+          "get_failure_evidence",
+          "contrast_runs"
         ]
       }
     },

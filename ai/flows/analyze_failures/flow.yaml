@@ -1,0 +1,28 @@
+# analyze_failures — read measured runs, say what they show, and propose how to reproduce it.
+#
+# Tool-using and multi-turn, unlike intake_to_flow: the whole point is that the model must LOOK
+# at the deterministic contrast before proposing anything, rather than reasoning from the report.
+# The allowlist is what it may look at, and it is short on purpose.
+id: analyze_failures
+version: 1.0.0
+modelAlias: REASONING_MODEL
+temperature: 0
+tools:
+  - get_flow
+  - get_failure_evidence
+  - contrast_runs
+inputSchema: schemas/common.v1.json
+outputSchema: schemas/analyze-failures.output.v1.json
+budget:
+  maxTurns: 8
+  maxToolCalls: 6
+  maxEvidenceBytes: 131072
+  maxInputTokens: 60000
+  maxOutputTokens: 6000
+  maxCostUsd: 0.5
+  maxWallClockMs: 180000
+validation:
+  schemaStrict: true
+  rejectUnknownFields: true
+  referenceCheck: true
+  repairAttempts: 1

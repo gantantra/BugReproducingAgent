@@ -1,4 +1,4 @@
-import { canonicalJson, fail, systemClock, type Clock } from "@investigator/core";
+import { canonicalJson, fail, schemaRegistry, systemClock, type Clock } from "@investigator/core";
 import {
   BudgetTracker,
   decideDegradation,
@@ -71,6 +71,51 @@ function budgetLimits(flow: LoadedFlow) {
   };
 }
 
+/**
+ * A compact outline of the required shape of a flow's output, generated from the schemas.
+ *
+ * The system prompt tells a model to produce "a single JSON object matching the output schema"
+ * and then never shows it the schema. Few-shot examples demonstrate the shape but do not state
+ * it, so a model reproduces what it noticed: live calls came back missing one required field at
+ * a time, each repair fixing the previous omission and revealing the next.
+ *
+ * Generated rather than written by hand so it cannot drift from the schema it describes, and
+ * deliberately an OUTLINE rather than the full document -- resolving every $ref would cost more
+ * input budget than the evidence being reasoned about.
+ */
+function requiredShape(schemaName: string, depth = 0, seen = new Set<string>()): string[] {
+  if (depth > 2 || seen.has(schemaName)) return [];
+  seen.add(schemaName);
+
+  const registry = schemaRegistry();
+  if (!registry.has(schemaName)) return [];
+  const doc = registry.raw(schemaName) as Record<string, unknown> | null;
+  if (!doc) return [];
+
+  const lines: string[] = [];
+  const pad = "  ".repeat(depth);
+  const required = (doc["required"] as string[] | undefined) ?? [];
+  const props = (doc["properties"] as Record<string, Record<string, unknown>>) ?? {};
+
+  if (required.length) lines.push(`${pad}${schemaName} requires: ${required.join(", ")}`);
+
+  for (const key of required) {
+    const prop = props[key];
+    if (!prop) continue;
+    const ref = typeof prop["$ref"] === "string" ? (prop["$ref"] as string) : null;
+    const itemRef =
+      prop["type"] === "array" &&
+      typeof (prop["items"] as Record<string, unknown>)?.["$ref"] === "string"
+        ? ((prop["items"] as Record<string, unknown>)["$ref"] as string)
+        : null;
+    const target = ref ?? itemRef;
+    if (target && target.endsWith(".json")) {
+      lines.push(...requiredShape(target, depth + 1, seen));
+    }
+  }
+  return lines;
+}
+
 export async function runFlow<T>(
   invocation: FlowInvocation,
   ctx: FlowRunContext
@@ -108,8 +153,42 @@ export async function runFlow<T>(
     allowed.set(name, tool);
   }
 
+  const shape = requiredShape(def.outputSchema.replace(/^schemas\//, ""));
+  const systemWithShape =
+    shape.length === 0
+      ? flow.system
+      : [
+          flow.system,
+          "",
+          "## Required output shape",
+          "",
+          "Generated from the schema your output is validated against. Every field listed is",
+          'mandatory; an empty array or an explicit null is how you say "none", never omission.',
+          "",
+          ...shape,
+        ].join("\n");
+
   const budget = new BudgetTracker(budgetLimits(flow), clock.nowMs());
-  const messages: LlmMessage[] = [{ role: "user", content: invocation.userContent }];
+
+  // The few-shot examples are SENT, not merely hashed.
+  //
+  // They were loaded and folded into `flowHash` but never placed in the prompt, so the model was
+  // asked for "a single JSON object matching the output schema" and shown neither the schema nor
+  // an example of it. Every live call failed validation on a missing top-level field, which is
+  // the correct refusal to persist invalid output and a useless way to run a flow.
+  //
+  // They go in as user/assistant pairs rather than prose: the shape of a reply is taught far more
+  // reliably by a reply than by a description of one. Provenance is unaffected because
+  // examples.jsonl is already inside `flowHash`.
+  const messages: LlmMessage[] = [];
+  for (const example of flow.examples) {
+    const input = example["input"];
+    const output = example["output"];
+    if (input === undefined || output === undefined) continue;
+    messages.push({ role: "user", content: canonicalJson(input) });
+    messages.push({ role: "assistant", content: canonicalJson(output) });
+  }
+  messages.push({ role: "user", content: invocation.userContent });
   const outputSchemaName = def.outputSchema.replace(/^schemas\//, "");
   let illegalToolAttempt: string | null = null;
 
@@ -141,7 +220,7 @@ export async function runFlow<T>(
     const call = await ctx.gateway.call(
       {
         alias: def.modelAlias,
-        system: flow.system,
+        system: systemWithShape,
         messages,
         responseSchema: { $ref: outputSchemaName },
         ...(allowed.size

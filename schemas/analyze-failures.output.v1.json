@@ -1,0 +1,193 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://investigator.local/schemas/analyze-failures.output.v1.json",
+  "title": "analyze_failures output",
+  "description": "The model's reading of runs that have already been measured. It emits judgement only: `findingId`, `investigationId` and provenance are minted by the deterministic layer, because asking a model for a fact the system already holds is asking it to fabricate one. Every finding is reference-validated against the runs the tools actually returned, and a finding at probable_trigger or above additionally needs a reference carrying a field and an expectedValue -- an existential citation cannot support a causal claim.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "summary",
+    "findings",
+    "reproductionSteps"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0.0"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What the runs show, in plain language a reporter would recognise. States what was measured, not what is suspected."
+    },
+    "findings": {
+      "type": "array",
+      "minItems": 0,
+      "description": "Ranked, most load-bearing first. An empty array is a valid answer when the evidence supports nothing.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "level",
+          "statement",
+          "supportingEvidence",
+          "confidence"
+        ],
+        "properties": {
+          "level": {
+            "$ref": "common.v1.json#/$defs/findingLevel"
+          },
+          "statement": {
+            "type": "string",
+            "minLength": 1,
+            "description": "One sentence. What is claimed, at the claimed level and no higher."
+          },
+          "claimCategory": {
+            "enum": [
+              "network",
+              "console",
+              "exception",
+              "dom",
+              "storage",
+              "navigation",
+              "timing"
+            ],
+            "description": "Which kind of evidence backs it. Determines which artifact kinds may support it."
+          },
+          "mechanism": {
+            "type": "string",
+            "description": "How the trigger would produce the observed failure. Required in spirit for any trigger-level claim: a level above correlated with no mechanism is a correlation wearing a causal word."
+          },
+          "supportingEvidence": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "finding.v1.json#/$defs/evidenceReference"
+            }
+          },
+          "contradictingEvidence": {
+            "type": "array",
+            "description": "Runs or measurements that do NOT fit the claim. Emitting this is required behaviour, not optional candour: a claim presented with only its supporting half is not a finding.",
+            "items": {
+              "$ref": "finding.v1.json#/$defs/evidenceReference"
+            }
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Recorded and displayed. Never a gate."
+          }
+        }
+      }
+    },
+    "reproductionSteps": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The best steps the evidence supports, with how confidently it supports them.",
+      "required": [
+        "confidence",
+        "basedOnRunIds",
+        "steps"
+      ],
+      "properties": {
+        "confidence": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        "basedOnRunIds": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "common.v1.json#/$defs/runId"
+          },
+          "description": "The runs these steps were derived from. Must be runs a tool returned."
+        },
+        "preconditions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "ordinal",
+              "action"
+            ],
+            "properties": {
+              "ordinal": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "action": {
+                "type": "string",
+                "minLength": 1
+              },
+              "expected": {
+                "type": "string"
+              },
+              "timingSensitive": {
+                "type": "boolean",
+                "description": "True when the step must happen within a window for the defect to appear. The thing a human reproducing it by hand most needs told."
+              }
+            }
+          }
+        },
+        "whyThisReproduces": {
+          "type": "string"
+        },
+        "notReproducedBy": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Variations measured NOT to trigger it. Narrows the search as much as the positive steps do."
+        }
+      }
+    },
+    "openQuestions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "question",
+          "whyItMatters"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "minLength": 1
+          },
+          "whyItMatters": {
+            "type": "string",
+            "minLength": 1
+          },
+          "howToAnswer": {
+            "type": "string",
+            "description": "A concrete next experiment, where one exists."
+          }
+        }
+      },
+      "description": "What the evidence cannot settle. Naming these is how the analysis stays honest about its own limits."
+    },
+    "evidenceGaps": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Categories that were missing, redacted or corrupted and therefore could not be reasoned over. An absent signal in a missing category means 'not captured', never 'did not happen'."
+    }
+  }
+}

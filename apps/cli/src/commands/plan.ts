@@ -96,7 +96,13 @@ export async function planCommand(
     const flow = await readFlowFacts(rt, investigationId);
     const registry = buildToolRegistry(rt, investigationId, { flow, previous });
 
-    const result = await runFlow<{ items?: Array<Record<string, unknown>> }>(
+    // `propose-experiments.output.v1.json`: summary + items only. The model must not mint
+    // `gate`, `investigationId` or `renderedAt` -- the system already knows those, and asking a
+    // model for a fact it cannot observe is asking it to fabricate one.
+    const result = await runFlow<{
+      summary?: string;
+      items?: Array<Record<string, unknown>>;
+    }>(
       {
         flow: session.flow,
         input: { investigationId },

@@ -128,7 +128,13 @@ export function preflight(args: PreflightArgs): PreflightResult {
       worstCaseUsd: null,
     };
   }
-  if (spent.toolCalls >= limits.maxToolCalls) {
+  // `maxToolCalls: 0` means the flow is TOOL-FREE, not that its tool budget is spent. Without the
+  // `> 0` guard, `0 >= 0` refused the first call of every single-shot flow -- `intake_to_flow`
+  // could never run at all, and said "budget exhausted: BUDGET_TOOL_CALLS" while doing it.
+  //
+  // Exhaustion is also only ever a reason to stop CALLING TOOLS, never a reason to refuse a plain
+  // text turn; the model can still answer from what it already gathered.
+  if (limits.maxToolCalls > 0 && spent.toolCalls >= limits.maxToolCalls) {
     return {
       allowed: false,
       stopReason: "BUDGET_TOOL_CALLS",
@@ -250,7 +256,10 @@ export class BudgetTracker {
   exhausted(nowMs: number): BudgetStopReason | null {
     if (this.spend.turns >= this.limits.maxTurns) return "BUDGET_TURNS";
     if (this.elapsed(nowMs) >= this.limits.maxWallClockMs) return "BUDGET_WALLCLOCK";
-    if (this.spend.toolCalls >= this.limits.maxToolCalls) return "BUDGET_TOOL_CALLS";
+    // See `preflight`: zero is "tools not permitted", not "tool budget spent".
+    if (this.limits.maxToolCalls > 0 && this.spend.toolCalls >= this.limits.maxToolCalls) {
+      return "BUDGET_TOOL_CALLS";
+    }
     if (this.spend.totalTokens >= this.limits.maxTotalTokens) return "BUDGET_TOKENS";
     if (this.limits.maxUsd !== null && this.spend.usd >= this.limits.maxUsd) return "BUDGET_COST";
     if (this.spend.repairs > this.limits.maxRepairs) return "BUDGET_REPAIRS";

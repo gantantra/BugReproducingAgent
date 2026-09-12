@@ -173,3 +173,4 @@ export const PACKAGE_NAME = "@investigator/tools";
 export const TOOLS_VERSION = "0.1.0";
 
 export * from "./read-tools.js";
+export * from "./analysis-tools.js";

@@ -51,6 +51,11 @@
     },
     "computedSideEffect": {
       "$ref": "common.v1.json#/$defs/sideEffectClass"
+    },
+    "unknownRef": {
+      "type": "string",
+      "pattern": "^U[0-9]{1,3}$",
+      "description": "The unknowns[].id this action is waiting on. Present whenever a required value is absent, so the gap is traceable to the question that would close it."
     }
   },
   "allOf": [
@@ -74,9 +79,12 @@
         ],
         "properties": {
           "url": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "uri-reference",
-            "description": "Absolute, or relative to the target baseUrl -- the executor resolves it with `new URL(action.url, target.baseUrl)`, so a target-relative path like `/search` is the normal form and keeps an experiment portable across environments. Either way the RESOLVED origin must be present in safety.allowedOrigins, which is validated outside JSON Schema against the resolved config (enqueueExperiment)."
+            "description": "Absolute, or relative to the target baseUrl -- the executor resolves it with `new URL(action.url, target.baseUrl)`, so a target-relative path like `/search` is the normal form and keeps an experiment portable across environments. Either way the RESOLVED origin must be present in safety.allowedOrigins, which is validated outside JSON Schema against the resolved config (enqueueExperiment). Null when the reporter never supplied a path: an interpretation must not invent one. A null url requires unknownRef, and the executor refuses it with EXEC_VALUE_UNRESOLVED rather than defaulting to the target root."
           },
           "waitUntil": {
             "enum": [
@@ -87,7 +95,34 @@
             ]
           }
         },
-        "type": "object"
+        "type": "object",
+        "allOf": [
+          {
+            "if": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "url"
+              ]
+            },
+            "then": {
+              "type": "object",
+              "required": [
+                "unknownRef"
+              ],
+              "properties": {
+                "unknownRef": {
+                  "type": "string",
+                  "pattern": "^U[0-9]{1,3}$"
+                }
+              }
+            }
+          }
+        ]
       }
     },
     {

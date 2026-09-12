@@ -83,6 +83,7 @@ Rules:
 | `EXEC_TARGET_UNREACHABLE` | 7 | yes | Pre-navigation network failure |
 | `EXEC_ORIGIN_NOT_ALLOWED` | 7 | no | Navigation outside `safety.allowedOrigins`; maps to `AUTOMATION_FAILED` |
 | `EXEC_ACTION_FAILED` | 7 | no | Selector/precondition failure; maps to `AUTOMATION_FAILED` |
+| `EXEC_VALUE_UNRESOLVED` | 7 | no | A value the reporter never supplied reached execution: a `described` selector, or a `goto` whose URL is null pending an unknown. Maps to `AUTOMATION_FAILED`, never to a product failure |
 | `EXEC_DESTRUCTIVE_BLOCKED` | 7 | no | Destructive action without an approved safety flag |
 | `EXEC_RUN_BUDGET_EXCEEDED` | 7 | no | `runWallClockBudgetMs` exceeded; maps to `INCONCLUSIVE` |
 | `EXEC_INVESTIGATION_LIMIT` | 7 | no | `maxRunsPerInvestigation` or investigation wall clock |

@@ -91,6 +91,10 @@ export async function runCommand(
 
   const lineage = new LineageWriter(rt.metadata, systemClock);
   const enqueued: Array<{ experimentId: string; jobIds: string[]; repetitions: number }> = [];
+  // Surfaced, not swallowed. Re-running an experiment whose repetitions all already exist
+  // enqueues nothing, and reporting only "0 of 6 completed" reads as a silent failure rather
+  // than as the idempotency it actually is.
+  let skippedExisting = 0;
   let totalRepetitions = 0;
 
   for (const item of selected) {
@@ -134,6 +138,7 @@ export async function runCommand(
       clock: systemClock,
     });
     enqueued.push({ experimentId: item.itemId, jobIds: result.jobIds, repetitions });
+    skippedExisting += result.skippedExisting;
 
     for (const jobId of result.jobIds) {
       await lineage.append({
@@ -218,6 +223,13 @@ export async function runCommand(
         `Authorised by ${authorised.approvalId}  (effective ${authorised.effectiveProposalChecksum.slice(0, 23)}...)`,
         `Experiments:  ${enqueued.map((e) => e.experimentId).join(", ")}`,
         `Runs completed: ${results.length} of ${totalRepetitions} requested`,
+        ...(skippedExisting > 0
+          ? [
+              `  ${skippedExisting} repetition(s) already existed and were not re-enqueued.`,
+              "  Repetitions are keyed by (experiment, repetition index), so re-running the same",
+              "  experiment re-executes nothing. Raise --repeat, or approve a new experiment.",
+            ]
+          : []),
         "",
         "Outcomes:",
       ];

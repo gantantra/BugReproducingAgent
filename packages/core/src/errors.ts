@@ -43,6 +43,7 @@ export const ERROR_CODES = [
   "TOOL_RESULT_TOO_LARGE",
   // Execution
   "EXEC_BROWSER_LAUNCH_FAILED",
+  "EXEC_VALUE_UNRESOLVED",
   "EXEC_TARGET_UNREACHABLE",
   "EXEC_ORIGIN_NOT_ALLOWED",
   "EXEC_ACTION_FAILED",
@@ -124,6 +125,7 @@ const SPEC: Readonly<Record<ErrorCode, CodeSpec>> = {
   TOOL_RESULT_TOO_LARGE: { exitCode: EXIT.AI_INVALID_OUTPUT, retryable: false },
 
   EXEC_BROWSER_LAUNCH_FAILED: { exitCode: EXIT.EXECUTION_FAILED, retryable: true },
+  EXEC_VALUE_UNRESOLVED: { exitCode: EXIT.EXECUTION_FAILED, retryable: false },
   EXEC_TARGET_UNREACHABLE: { exitCode: EXIT.EXECUTION_FAILED, retryable: true },
   EXEC_ORIGIN_NOT_ALLOWED: { exitCode: EXIT.EXECUTION_FAILED, retryable: false },
   EXEC_ACTION_FAILED: { exitCode: EXIT.EXECUTION_FAILED, retryable: false },

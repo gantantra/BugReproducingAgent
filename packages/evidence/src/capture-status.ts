@@ -43,6 +43,18 @@ const TEMPLATES: Record<CaptureReasonCode, (c: CaptureReason, cat: EvidenceCateg
     `${count(c.count)} ${noun(cat, c.count)} were dropped because event volume exceeded the in-process buffer.`,
   TARGET_DETACHED: (_c, cat) =>
     `${capitalize(categoryLabel(cat))} could not be captured because the page or context closed first.`,
+
+  // A recording is raw pixels: no text rule can act on a frame. This wording is the ONLY place a
+  // reader is told that, so it states the consequence rather than the mechanism.
+  //
+  // These three are video-only, so they name the subject outright instead of going through
+  // `categoryLabel`, which is plural and produced "Videos was stored".
+  PERSISTED_UNREDACTED: (c) =>
+    `${c.count === 1 ? "A recording was" : `${c.count} recordings were`} stored WITHOUT ` +
+    `redaction. Redaction cannot mask content that was visible on screen, so this may show ` +
+    `credentials or personal data. It was written because video capture was explicitly enabled.`,
+  NO_RECORDING_PRODUCED: () => `Video capture was enabled but the browser produced no recording.`,
+  PERSIST_FAILED: () => `A recording was made but could not be stored, and is lost.`,
 };
 
 const NOUNS: Partial<Record<EvidenceCategory, [string, string]>> = {

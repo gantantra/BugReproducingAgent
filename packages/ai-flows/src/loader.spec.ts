@@ -46,22 +46,26 @@ function codeOf(fn: () => unknown): string {
 }
 
 describe("the shipped flows load and validate", () => {
-  it("lists both M3 flows", () => {
-    expect(listFlows(FLOWS)).toEqual(["intake_to_flow", "propose_experiments"]);
+  it("lists every shipped flow", () => {
+    expect(listFlows(FLOWS)).toEqual(["analyze_failures", "intake_to_flow", "propose_experiments"]);
   });
 
-  it.each(["intake_to_flow", "propose_experiments"])("%s loads and hashes", (id) => {
-    const flow = loadFlow(id, { flowsRoot: FLOWS });
-    expect(flow.definition.id).toBe(id);
-    expect(flow.flowHash).toMatch(/^sha256:[0-9a-f]{64}$/);
-    expect(flow.system.length).toBeGreaterThan(200);
-    expect(flow.promptVersion).toBe(flow.definition.version);
-  });
+  it.each(["intake_to_flow", "propose_experiments", "analyze_failures"])(
+    "%s loads and hashes",
+    (id) => {
+      const flow = loadFlow(id, { flowsRoot: FLOWS });
+      expect(flow.definition.id).toBe(id);
+      expect(flow.flowHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+      expect(flow.system.length).toBeGreaterThan(200);
+      expect(flow.promptVersion).toBe(flow.definition.version);
+    }
+  );
 
-  it("the two flows hash differently", () => {
-    expect(loadFlow("intake_to_flow", { flowsRoot: FLOWS }).flowHash).not.toBe(
-      loadFlow("propose_experiments", { flowsRoot: FLOWS }).flowHash
+  it("every flow hashes differently from every other", () => {
+    const hashes = ["intake_to_flow", "propose_experiments", "analyze_failures"].map(
+      (id) => loadFlow(id, { flowsRoot: FLOWS }).flowHash
     );
+    expect(new Set(hashes).size).toBe(hashes.length);
   });
 
   it("hashing is stable across loads", () => {

@@ -11,7 +11,7 @@ tools:
   - get_application_constraints
   - get_previous_experiment_summary
 inputSchema: schemas/intake.output.v1.json
-outputSchema: schemas/gate-proposal.v1.json
+outputSchema: schemas/propose-experiments.output.v1.json
 partialCapable: true
 unitField: items
 budget:

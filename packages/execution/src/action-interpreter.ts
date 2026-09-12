@@ -55,6 +55,16 @@ export interface InterpreterResult {
 }
 
 function locatorFor(page: Page, sel: SelectorSpec): Locator {
+  if (sel.strategy === "described") {
+    // Deliberately a hard refusal rather than a best guess. Treating the reporter's phrase as a
+    // text selector would sometimes work, and that is exactly the danger: the run would pass or
+    // fail for reasons nobody chose, and the evidence would look just as authoritative either way.
+    fail(
+      "EXEC_VALUE_UNRESOLVED",
+      `Selector is still described in prose ("${sel.value ?? ""}") and was never resolved to a real one`,
+      { context: { strategy: sel.strategy, described: sel.value ?? "" } }
+    );
+  }
   switch (sel.strategy) {
     case "testid":
       return page.getByTestId(sel.value ?? "");
@@ -323,7 +333,18 @@ export class ActionInterpreter {
 
     switch (action.type) {
       case "goto": {
-        const url = new URL(action.url ?? "", this.opts.baseUrl).toString();
+        // A null url means the reporter never gave a path and the interpretation refused to
+        // invent one. `?? ""` would resolve it to the target root and navigate somewhere nobody
+        // chose, then measure whatever happened to be there — a wrong answer that looks like a
+        // real one. Refusing keeps it an automation failure, which is what it is.
+        if (action.url === null || action.url === undefined || action.url === "") {
+          fail(
+            "EXEC_VALUE_UNRESOLVED",
+            `Navigation has no URL: it is still pending the unresolved value ${action.unknownRef ?? "(unnamed)"}`,
+            { context: { actionId: action.actionId, unknownRef: action.unknownRef ?? "" } }
+          );
+        }
+        const url = new URL(action.url, this.opts.baseUrl).toString();
         if (!isOriginAllowed(url, this.opts.allowedOrigins)) {
           fail("EXEC_ORIGIN_NOT_ALLOWED", "Navigation target is not in safety.allowedOrigins", {
             context: { actionId: action.actionId, origin: new URL(url).origin },

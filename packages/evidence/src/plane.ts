@@ -226,6 +226,12 @@ function buildCaptureStatus(
         ...(n.limitBytes !== undefined ? { limitBytes: n.limitBytes } : {}),
       }
     );
+    // Applied on THIS path too, not only the caller-supplied one below. A rebuild reads notes
+    // from the log alone, and a capture status that differed between the live run and its
+    // rebuild would break the byte-identical guarantee the plane exists to provide.
+    if (n.code === "PERSISTED_UNREDACTED") {
+      builder.collected(n.evidenceCategory as EvidenceCategory, n.count ?? 1);
+    }
   }
   const alreadyFromLog = new Set(fromLog.map((n) => `${n.evidenceCategory}:${n.code}`));
   for (const note of input.collectorNotes ?? []) {
@@ -234,6 +240,13 @@ function buildCaptureStatus(
       ...(note.count !== undefined ? { count: note.count } : {}),
       ...(note.limitBytes !== undefined ? { limitBytes: note.limitBytes } : {}),
     });
+
+    // A stored recording is not an event in the raw log, so the per-category event counter never
+    // sees it. Without this the video category sealed as "complete, collected 0" — a status that
+    // says the opposite of what happened and would have a reader conclude nothing was captured.
+    if (note.code === "PERSISTED_UNREDACTED") {
+      builder.collected(note.category, note.count ?? 1);
+    }
   }
 
   if (truncatedTail || input.interrupted) {

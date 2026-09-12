@@ -13,8 +13,11 @@ budget:
   maxTurns: 3
   maxToolCalls: 0
   maxEvidenceBytes: 0
-  maxInputTokens: 6000
-  maxOutputTokens: 2000
+  # Sized WITH the few-shot examples in the prompt. They are ~3.5KB of JSON and teach the exact
+  # output envelope, which is the difference between this flow working and every call failing
+  # validation. 6000 was set when they were loaded but never sent.
+  maxInputTokens: 22000
+  maxOutputTokens: 7000
   maxCostUsd: 0.05
   maxWallClockMs: 60000
 validation:

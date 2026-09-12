@@ -98,6 +98,15 @@ export class SchemaRegistry {
     }
   }
 
+  /**
+   * The schema document as written, for callers that need to DESCRIBE a shape rather than
+   * validate against one. Returns the parsed JSON, never a compiled validator.
+   */
+  raw(name: string): Record<string, unknown> | null {
+    if (!this.loaded.has(name)) return null;
+    return (this.ajv.getSchema(name)?.schema as Record<string, unknown>) ?? null;
+  }
+
   has(name: string): boolean {
     return this.loaded.has(name);
   }
