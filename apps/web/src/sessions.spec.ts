@@ -63,15 +63,18 @@ describe("one live session per address", () => {
     expect(first.status).toBe("active");
   });
 
-  it("reports busy for a second caller without a session", () => {
+  it("gives a second caller its own session rather than refusing", () => {
+    // This asserted `busy` while every session shared one workspace, database and investigation
+    // numbering. Sessions now own separate folders, so two tabs collide over nothing and the
+    // refusal was a queue for one user — the server is loopback-only, so "per address" meant
+    // per machine.
     const { store } = storeWith();
-    store.acquire("loopback");
+    const first = store.acquire("loopback");
     const second = store.acquire("loopback");
-    expect(second.status).toBe("busy");
-    if (second.status === "busy") {
-      expect(second.expiresInMs).toBeGreaterThan(0);
-    }
-    expect(store.size()).toBe(1);
+    expect(second.status).toBe("active");
+    if (first.status !== "active" || second.status !== "active") throw new Error("expected active");
+    expect(second.session.id).not.toBe(first.session.id);
+    expect(store.size()).toBe(2);
   });
 
   it("resumes the same session when the cookie comes back — this is what a refresh does", () => {
@@ -101,30 +104,37 @@ describe("one live session per address", () => {
     }
   });
 
-  it("never evicts a live holder in favour of a newcomer", () => {
+  it("never disturbs a live session when a newcomer arrives", () => {
+    // The guarantee that survives the lock's removal: opening a second tab must not take, reset
+    // or expire the transcript the first one is still using.
     const { store, clock } = storeWith();
     const holder = store.acquire("loopback");
     if (holder.status !== "active") throw new Error("expected active");
+    store.setState(holder.session.id, { log: [1, 2, 3] });
+
     for (let i = 0; i < 5; i++) {
       clock.advance(1_000);
       store.touch(holder.session.id);
-      expect(store.acquire("loopback").status).toBe("busy");
+      expect(store.acquire("loopback").status).toBe("active");
     }
-    expect(store.get(holder.session.id)).toBeDefined();
+    expect(store.get(holder.session.id)?.state).toEqual({ log: [1, 2, 3] });
   });
 });
 
-describe("a closed tab must not lock the operator out", () => {
-  it("frees the lock once the TTL lapses with no heartbeat", () => {
+describe("an abandoned session expires, a live one does not", () => {
+  it("drops a session once the TTL lapses with no heartbeat", () => {
+    // Expiry still matters after the lock's removal, for a different reason: a lapsed session is
+    // what makes the server refuse a write rather than send it to the shared root workspace.
     const { store, clock } = storeWith(60_000);
-    store.acquire("loopback");
-    expect(store.acquire("loopback").status).toBe("busy");
+    const held = store.acquire("loopback");
+    if (held.status !== "active") throw new Error("expected active");
 
     clock.advance(60_001);
-    expect(store.acquire("loopback").status).toBe("active");
+    expect(store.get(held.session.id)).toBeUndefined();
+    expect(store.size()).toBe(0);
   });
 
-  it("keeps the lock while heartbeats arrive", () => {
+  it("keeps a session alive indefinitely while heartbeats arrive", () => {
     const { store, clock } = storeWith(60_000);
     const held = store.acquire("loopback");
     if (held.status !== "active") throw new Error("expected active");
@@ -133,16 +143,16 @@ describe("a closed tab must not lock the operator out", () => {
       clock.advance(30_000);
       expect(store.touch(held.session.id), `heartbeat ${i}`).toBe(true);
     }
-    expect(store.acquire("loopback").status).toBe("busy");
+    expect(store.get(held.session.id)).toBeDefined();
   });
 
-  it("frees the lock immediately on an explicit release", () => {
+  it("drops a session immediately on an explicit release", () => {
     const { store } = storeWith();
     const held = store.acquire("loopback");
     if (held.status !== "active") throw new Error("expected active");
 
     expect(store.release(held.session.id)).toBe(true);
-    expect(store.acquire("loopback").status).toBe("active");
+    expect(store.get(held.session.id)).toBeUndefined();
   });
 
   it("refuses to resurrect an expired session through touch or setState", () => {

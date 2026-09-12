@@ -176,7 +176,9 @@ export function assertSafeToEnqueue(input: SafetyGateInput): void {
   // Destructive actions need a per-sequence acknowledgement, and are blocked outright on
   // staging unless the operator has explicitly turned the block off.
   for (const actionId of classification.destructiveActionIds) {
-    if (targetClassification === "staging" && input.blockDestructiveActions) {
+    // `&& input.blockDestructiveActions` was redundant here: the early return above already
+    // handled the false case. Left as-is it read like the staging refusal had its own switch.
+    if (targetClassification === "staging") {
       fail("EXEC_DESTRUCTIVE_BLOCKED", "Destructive action is blocked on a staging target", {
         context: { experimentId: experiment.experimentId, actionId, targetClassification },
       });
@@ -224,15 +226,74 @@ export function assertSafeToEnqueue(input: SafetyGateInput): void {
  * Origin allowlist check. Applied at enqueue for static URLs and again at navigation time for
  * anything the page triggers.
  */
+/**
+ * Should the executor refuse this job because it contains destructive actions?
+ *
+ * Extracted from the worker so it can be tested without a browser. It is the last of three
+ * checkpoints — enqueue, approval acknowledgement, executor — and it was the one nothing switched
+ * off: turning `blockDestructiveActions` off cleared the first two and left this one throwing
+ * `EXEC_DESTRUCTIVE_BLOCKED` on the first delete. A flag that governs some of its checkpoints
+ * governs none of them, so the condition now lives in one named, tested place rather than being
+ * spelled out a third time inside a 600-line method.
+ */
+export function shouldBlockDestructiveExecution(input: {
+  blockDestructiveActions: boolean;
+  destructiveActionCount: number;
+  targetClassification: TargetClassification;
+}): boolean {
+  if (!input.blockDestructiveActions) return false;
+  if (input.destructiveActionCount === 0) return false;
+  // Fixture targets are local, disposable, and have no external state to protect.
+  return input.targetClassification !== "fixture";
+}
+
+/**
+ * Is this URL inside the allowlist?
+ *
+ * Exact origin match, OR a SUBDOMAIN of an allowed origin over the same protocol.
+ *
+ * The subdomain clause is not a loosening for its own sake; without it the allowlist blocked
+ * ordinary navigation. Sites put sign-in on `login.`, mobile on `m.`, static assets on `cdn.`,
+ * and a redirect to any of them from `https://www.example.com` failed the run mid-flow with
+ * EXEC_ORIGIN_NOT_ALLOWED. The operator had already named the site; being bounced to its own
+ * login host is what a real user's browser does, and refusing it protected nothing while
+ * stopping the investigation.
+ *
+ * What it still refuses is what it was for: a DIFFERENT site. `evil.com`, `example.com.attacker
+ * .net` and a downgrade from https to http are all rejected — the check is on host boundaries,
+ * so a suffix match cannot be smuggled through by appending the allowed host to another domain.
+ */
 export function isOriginAllowed(url: string, allowedOrigins: readonly string[]): boolean {
-  let origin: string;
+  let parsed: URL;
   try {
-    origin = new URL(url).origin;
+    parsed = new URL(url);
   } catch {
     return false;
   }
-  const norm = (o: string): string => o.replace(/\/+$/, "").toLowerCase();
-  return allowedOrigins.some((a) => norm(a) === norm(origin));
+  const origin = parsed.origin.replace(/\/+$/, "").toLowerCase();
+  const host = parsed.hostname.toLowerCase();
+  const protocol = parsed.protocol.toLowerCase();
+
+  return allowedOrigins.some((allowed) => {
+    const norm = allowed.replace(/\/+$/, "").toLowerCase();
+    if (norm === origin) return true;
+    let allowedUrl: URL;
+    try {
+      allowedUrl = new URL(norm);
+    } catch {
+      return false;
+    }
+    // Same protocol, and a dot-delimited suffix — so `login.example.com` passes for
+    // `example.com` while `notexample.com` and `example.com.evil.net` do not.
+    if (allowedUrl.protocol.toLowerCase() !== protocol) return false;
+    if (allowedUrl.port !== parsed.port) return false;
+    const allowedHost = allowedUrl.hostname.toLowerCase();
+    // `www.` is a subdomain like any other, so an allowlist entry of `www.example.com` is
+    // anchored at `example.com`. Without this the commonest redirect on the web — www to apex,
+    // or apex to www — failed the run, and the operator had plainly named that site.
+    const base = allowedHost.startsWith("www.") ? allowedHost.slice(4) : allowedHost;
+    return host === base || host.endsWith(`.${base}`);
+  });
 }
 
 export const DESTRUCTIVE_PATTERNS = DEFAULT_DESTRUCTIVE_PATTERNS;

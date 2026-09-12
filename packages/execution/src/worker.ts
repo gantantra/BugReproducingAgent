@@ -31,7 +31,7 @@ import {
 import { Collector } from "./collector.js";
 import { ActionInterpreter } from "./action-interpreter.js";
 import { ManifestWriter, type RunManifest } from "./manifest.js";
-import { classifyExperiment } from "./destructive-classifier.js";
+import { classifyExperiment, shouldBlockDestructiveExecution } from "./destructive-classifier.js";
 import type { ExperimentSpec } from "./types.js";
 import { resolveEmulation } from "./emulation.js";
 import { deriveJobId } from "./enqueue.js";
@@ -435,13 +435,27 @@ export class Worker {
       });
       manifestWriter.markStarted(this.clock);
 
-      // Safety: the destructive classifier is authoritative, and it is re-checked here even
-      // though enqueue already checked, because the enqueue-time check used the proposal and
-      // this one uses what is actually about to run.
+      // The destructive classifier is authoritative, and it is re-run here even though enqueue
+      // already ran it, because enqueue classified the PROPOSAL and this classifies what is
+      // actually about to execute.
+      //
+      // The refusal below is behind `blockDestructiveActions`, and was not always. It was the
+      // third copy of the same gate — after the staging refusal and the per-action
+      // acknowledgement — and the only one nothing switched off, so turning the flag off
+      // unblocked enqueue and left the executor still throwing EXEC_DESTRUCTIVE_BLOCKED on the
+      // first delete. A flag that governs two of three gates does not govern anything; the whole
+      // point of the setting is an in-house QA target where a destructive flow is the subject of
+      // the investigation rather than an accident.
       const classification = classifyExperiment(experiment, {
         extraDestructivePatterns: cfg.safety.destructivePatterns,
       });
-      if (classification.destructiveActionIds.length && target.classification !== "fixture") {
+      if (
+        shouldBlockDestructiveExecution({
+          blockDestructiveActions: cfg.safety.blockDestructiveActions,
+          destructiveActionCount: classification.destructiveActionIds.length,
+          targetClassification: target.classification,
+        })
+      ) {
         throw new InvestigatorError(
           "EXEC_DESTRUCTIVE_BLOCKED",
           "Destructive actions reached the executor without an acknowledged approval",

@@ -54,17 +54,123 @@ export interface InterpreterResult {
   snapshotSeqToArtifact: Map<number, string[]>;
 }
 
-function locatorFor(page: Page, sel: SelectorSpec): Locator {
-  if (sel.strategy === "described") {
-    // Deliberately a hard refusal rather than a best guess. Treating the reporter's phrase as a
-    // text selector would sometimes work, and that is exactly the danger: the run would pass or
-    // fail for reasons nobody chose, and the evidence would look just as authoritative either way.
-    fail(
-      "EXEC_VALUE_UNRESOLVED",
-      `Selector is still described in prose ("${sel.value ?? ""}") and was never resolved to a real one`,
-      { context: { strategy: sel.strategy, described: sel.value ?? "" } }
-    );
+/**
+ * Words that name what KIND of control the reporter meant, mapped to an ARIA role.
+ *
+ * "the delete button" and "the phone field" each name a role and a label, in the order English
+ * puts them. Reading that is not guessing; it is the reading a person does.
+ */
+const ROLE_NOUNS: ReadonlyArray<[RegExp, string]> = [
+  [/\bbuttons?\b/i, "button"],
+  [/\blinks?\b/i, "link"],
+  [/\bcheck\s?box(es)?\b/i, "checkbox"],
+  [/\bradio\b/i, "radio"],
+  [/\btabs?\b/i, "tab"],
+  [/\bmenus?\b/i, "menu"],
+  [/\b(fields?|inputs?|text\s?box(es)?|boxes|box)\b/i, "textbox"],
+  [/\bdrop\s?downs?\b|\bselects?\b/i, "combobox"],
+  [/\bheadings?\b|\btitles?\b/i, "heading"],
+  [/\bimages?\b|\bicons?\b/i, "img"],
+];
+
+/** Filler that carries no identifying information. Removing it widens a match, never narrows it. */
+const FILLER =
+  /\b(the|a|an|then|please|click|clicks|clicking|press|presses|pressing|tap|taps|type|types|typing|into|on|in|at|for|to|its|my|their|this|that|control|element|option|item|labelled|labeled|called|named)\b/gi;
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export interface DescribedResolution {
+  /** The ARIA role read out of the phrase, if it named one. */
+  role: string | null;
+  /** The identifying words, with filler and the role noun removed. */
+  name: string;
+}
+
+/**
+ * Read a reporter's phrase into a role and a name, deterministically.
+ *
+ * Exported so it can be tested directly: this is the one place where prose becomes something that
+ * touches a real page, and the mapping must be inspectable rather than buried in a locator chain.
+ */
+export function readDescribedSelector(phrase: string): DescribedResolution {
+  const raw = (phrase ?? "").trim();
+  let role: string | null = null;
+  let rest = raw;
+
+  for (const [pattern, mapped] of ROLE_NOUNS) {
+    if (pattern.test(rest)) {
+      role = mapped;
+      rest = rest.replace(pattern, " ");
+      break;
+    }
   }
+
+  const name = rest.replace(FILLER, " ").replace(/\s+/g, " ").trim();
+  // If stripping left nothing the phrase was all filler and role noun ("the button"), and the
+  // role is then the only information there is.
+  return { role, name };
+}
+
+/**
+ * Locate a control the reporter described in their own words.
+ *
+ * This was a hard refusal, on the reasoning that treating a phrase as a selector would sometimes
+ * work and that was the danger: the run would pass or fail for reasons nobody chose.
+ *
+ * The reasoning was wrong about where the risk sits. A person handed "click the delete button"
+ * finds it by reading the page, and so does Playwright — role and accessible name are not a guess,
+ * they are the same information a user acts on. What made the refusal feel safe was not that it
+ * avoided a wrong click but that it avoided ALL clicks, which is not a safety property. An
+ * investigator that stops at every control it was not handed a CSS selector for cannot
+ * investigate anything a reporter described in words, which is every real bug report.
+ *
+ * What is kept is the part that actually mattered: `describedResolutionFactor` records what the
+ * phrase resolved to as a declared factor on the run, so a human reading the evidence sees that
+ * the click came from prose and what it matched. Visible rather than silent is the property the
+ * refusal was really protecting.
+ *
+ * Candidates form one `or` chain in a fixed order, most specific first, so the same page and the
+ * same phrase always produce the same element.
+ */
+function describedLocator(page: Page, phrase: string): Locator {
+  const { role, name } = readDescribedSelector(phrase);
+  const needle = name.length > 0 ? new RegExp(escapeRegExp(name), "i") : /./;
+
+  const candidates: Locator[] = [];
+  if (role) {
+    candidates.push(page.getByRole(role as Parameters<Page["getByRole"]>[0], { name: needle }));
+  }
+  if (name.length > 0) {
+    candidates.push(page.getByLabel(needle));
+    candidates.push(page.getByPlaceholder(needle));
+    candidates.push(page.getByRole("button", { name: needle }));
+    candidates.push(page.getByRole("link", { name: needle }));
+    candidates.push(page.locator(`[aria-label*="${name.replace(/"/g, '\\"')}" i]`));
+    candidates.push(page.getByText(needle));
+  }
+  if (candidates.length === 0) {
+    // Nothing identifying at all. Refusing is right here: no reading of "" names a control, and
+    // clicking the first thing on the page would be an invention rather than an interpretation.
+    fail("EXEC_VALUE_UNRESOLVED", `Described selector carries no identifying words ("${phrase}")`, {
+      context: { described: phrase },
+    });
+  }
+
+  let locator = candidates[0]!;
+  for (const next of candidates.slice(1)) locator = locator.or(next);
+  return locator;
+}
+
+/** What a described phrase resolved to, for the run manifest. */
+export function describedResolutionFactor(phrase: string): string {
+  const { role, name } = readDescribedSelector(phrase);
+  return `"${phrase}" -> ${role ? `role=${role}` : "any role"}, name~="${name}"`;
+}
+
+function locatorFor(page: Page, sel: SelectorSpec): Locator {
+  if (sel.strategy === "described") return describedLocator(page, sel.value ?? "");
   switch (sel.strategy) {
     case "testid":
       return page.getByTestId(sel.value ?? "");
@@ -91,7 +197,12 @@ function locatorFor(page: Page, sel: SelectorSpec): Locator {
 
 function resolveLocator(page: Page, sel: SelectorSpec): Locator {
   const base = locatorFor(page, sel);
-  return sel.nth !== undefined ? base.nth(sel.nth) : base;
+  if (sel.nth !== undefined) return base.nth(sel.nth);
+  // A described phrase can legitimately match more than one element — "Delete" on a row button
+  // and again in the confirmation dialog. Taking the first in DOM order is what a person clicking
+  // the thing in front of them does, and it is deterministic. Explicit strategies keep
+  // Playwright's strict mode, where an ambiguous selector the model DID choose is a real error.
+  return sel.strategy === "described" ? base.first() : base;
 }
 
 /**

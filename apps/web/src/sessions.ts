@@ -158,10 +158,22 @@ export class SessionStore {
   }
 
   /**
-   * Resume `existingId` if it is still this address's session, otherwise take the lock if it is
-   * free. A different live session on the same address is reported as busy rather than evicted:
-   * silently stealing it would leave the other tab issuing commands into a transcript nobody is
-   * reading.
+   * Resume `existingId` if it is still this address's session, otherwise start a new one.
+   *
+   * This used to refuse a second session on the same address, and the reason it gave was that
+   * "two tabs would issue commands into the same workspace database and the same investigation,
+   * and each transcript would be missing half of what happened". That was true when every session
+   * shared one workspace. It stopped being true when each session got its own folder, its own
+   * database and its own investigation numbering: two tabs now collide over nothing.
+   *
+   * What remained was the cost. The server is loopback-only, so every connection resolves to one
+   * address, which made this one session per MACHINE — a second tab, a second browser, or a
+   * reopened window after a crash was told to go away for up to a minute. A concurrency guard
+   * protecting against a collision that can no longer happen is just a queue for one user.
+   *
+   * `AcquireResult` keeps its `busy` variant: the store is not the only possible caller, and
+   * removing a state from the type to express "this never happens now" loses the ability to say
+   * it later. Nothing in this method returns it.
    */
   acquire(ip: string, existingId?: string | null, userId?: string | null): AcquireResult {
     const now = this.clock.now();
@@ -174,16 +186,6 @@ export class SessionStore {
         this.flushSessions();
         return { status: "active", session: mine };
       }
-    }
-
-    const holder = this.holderFor(ip, now);
-    if (holder) {
-      return {
-        status: "busy",
-        heldSince: holder.createdAt,
-        lastSeenAt: holder.lastSeenAt,
-        expiresInMs: Math.max(0, this.ttlMs - (now - holder.lastSeenAt)),
-      };
     }
 
     const owner = this.identify(userId, ip);

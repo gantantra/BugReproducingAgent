@@ -242,42 +242,6 @@
     buttons(c, choices);
   }
 
-  /** Another tab on this machine holds the session. Say so, and offer nothing that would race it. */
-  function renderBusy(info) {
-    el.transcript.replaceChildren();
-    setBusy(true);
-    el.provider.textContent = "session in use";
-    el.provider.className = "pill bad";
-
-    const c = card("Another session is already running", true);
-    c.appendChild(
-      node(
-        "p",
-        null,
-        info.message ||
-          "Another session is already running on your machine. Close that tab or window first, then refresh here to use the agent."
-      )
-    );
-    kv(c, [
-      ["held since", info.heldSince ? new Date(info.heldSince).toLocaleTimeString() : "—"],
-      ["last seen", info.lastSeenAt ? new Date(info.lastSeenAt).toLocaleTimeString() : "—"],
-      [
-        "frees itself in",
-        info.expiresInMs != null
-          ? `${Math.ceil(info.expiresInMs / 1000)}s if that tab is gone`
-          : "—",
-      ],
-    ]);
-    c.appendChild(
-      node(
-        "p",
-        null,
-        "Only one session runs at a time because two would issue commands into the same workspace database and the same investigation, and each transcript would be missing half of what happened."
-      )
-    );
-    buttons(c, [{ label: "Retry", kind: "primary", onClick: () => window.location.reload() }]);
-  }
-
   function startHeartbeat(ttlMs) {
     const every = Math.max(5000, Math.floor((ttlMs || 60000) / 3));
     if (heartbeat) clearInterval(heartbeat);
@@ -1318,8 +1282,8 @@
     try {
       const res = await fetch("/api/session", { headers: { "x-investigator-token": TOKEN } });
       body = await res.json();
-      if (res.status === 409 || body.code === "SESSION_IN_USE") {
-        renderBusy(body);
+      if (body.ok === false) {
+        say(body.message || "The agent could not start a session. Refresh to try again.");
         return;
       }
     } catch {

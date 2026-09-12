@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { fail, systemClock } from "@investigator/core";
 import { LineageWriter } from "@investigator/lineage";
 import type { GlobalOptions, Runtime } from "../runtime.js";
+import { readDescribedSelector } from "@investigator/execution";
 import { requireGateApproval } from "../gates.js";
 
 /**
@@ -33,22 +34,47 @@ function q(value: string): string {
   return JSON.stringify(value);
 }
 
+/** Escape a phrase for embedding in a generated `new RegExp(...)`, matching the interpreter. */
+function escapeForRegExpLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /** One Playwright locator expression for the closed selector vocabulary. */
 function locator(sel: Record<string, unknown>): string {
   const strategy = String(sel["strategy"]);
   const value = String(sel["value"] ?? "");
 
   if (strategy === "described") {
-    // `described` holds the reporter's words for a control nobody has located yet. There is no
-    // honest Playwright expression for it: emitting `getByText("the Verified filter")` would
-    // produce a script that compiles, runs, and tests something nobody chose. Refusing names the
-    // exact action to fix instead.
-    return fail(
-      "EXEC_VALUE_UNRESOLVED",
-      `Cannot generate a reproduction for a selector that is still described in prose ` +
-        `("${value}"). Resolve it to a real selector in the proposal, re-approve, and retry.`,
-      { context: { strategy, described: value } }
-    );
+    // Emit exactly what the interpreter resolves, so the exported script reproduces the run.
+    //
+    // This used to refuse outright, on the reasoning that there was no honest Playwright
+    // expression for a phrase. That held only while the executor also refused. Now that a run
+    // resolves the phrase by role and accessible name, refusing here would mean the run works and
+    // the reproduction of that same run does not — one input, two answers, and the export is the
+    // artifact a developer who never used this tool is handed.
+    //
+    // `readDescribedSelector` is the SAME function the interpreter calls, imported rather than
+    // reimplemented, so the two cannot drift into disagreeing about what a phrase means.
+    const { role, name } = readDescribedSelector(value);
+    if (name.length === 0 && !role) {
+      return fail(
+        "EXEC_VALUE_UNRESOLVED",
+        `Cannot generate a reproduction for a described selector with no identifying words ("${value}")`,
+        { context: { strategy, described: value } }
+      );
+    }
+    const needle = `new RegExp(${q(escapeForRegExpLiteral(name))}, "i")`;
+    const parts: string[] = [];
+    if (role) parts.push(`page.getByRole(${q(role)}, { name: ${needle} })`);
+    if (name.length > 0) {
+      parts.push(`page.getByLabel(${needle})`);
+      parts.push(`page.getByPlaceholder(${needle})`);
+      parts.push(`page.getByRole("button", { name: ${needle} })`);
+      parts.push(`page.getByRole("link", { name: ${needle} })`);
+      parts.push(`page.getByText(${needle})`);
+    }
+    // `.first()` matches the interpreter: a phrase may legitimately match more than one element.
+    return `${parts.join(".or(")}${")".repeat(parts.length - 1)}.first()`;
   }
 
   switch (strategy) {

@@ -343,23 +343,19 @@ export function createInvestigatorServer(opts: ServerOptions) {
 
       try {
         /**
-         * Claim or resume the session for this address. The cookie is what survives a refresh;
-         * the address is what makes a second browser on the same machine wait rather than
-         * silently start a rival transcript against the same workspace.
+         * Resume this browser's session, or start one.
+         *
+         * A second tab used to be refused with SESSION_IN_USE, because every session shared one
+         * workspace database and one investigation sequence. Sessions own separate folders now,
+         * so there is nothing left to collide over and nothing here returns `busy`.
          */
         if (path === "/api/session" && req.method === "GET") {
           const result = sessions.acquire(clientIp, sessionId, userId);
-          if (result.status === "busy") {
-            sendJson(res, 409, {
+          if (result.status !== "active") {
+            sendJson(res, 500, {
               ok: false,
-              code: "SESSION_IN_USE",
-              message:
-                "Another session is already running on your machine. Close that tab or window " +
-                "first, then refresh here to use the agent.",
-              heldSince: result.heldSince,
-              lastSeenAt: result.lastSeenAt,
-              expiresInMs: result.expiresInMs,
-              ttlMs: sessions.ttlMs,
+              code: "SESSION_UNAVAILABLE",
+              message: "could not start a session",
             });
             return;
           }

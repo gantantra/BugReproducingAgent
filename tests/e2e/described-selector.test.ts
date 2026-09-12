@@ -9,14 +9,18 @@ import { join } from "node:path";
  *
  * Playwright produces evidence. Deterministic software normalizes and measures evidence. DeepSeek interprets and prioritizes evidence. Humans authorize consequential transitions.
  *
- * `described` holds the reporter's words for a control nobody has located yet — "the Verified
- * filter". Its whole value is that it is UNEXECUTABLE. A system that quietly treated the phrase as
- * a text selector would run something nobody chose and produce evidence indistinguishable from
- * evidence about the real control, which is worse than refusing.
+ * `described` holds the reporter's words for a control — "the Verified filter". It used to be
+ * UNEXECUTABLE by design, and this file asserted two separate refusals.
  *
- * Both refusal points are exercised here because the second was missing in the shipped code and
- * was found only by driving the guided flow with such a selector, where it aborted the session
- * after the runs had already completed.
+ * That design was wrong in a way this test had locked in. An investigator that stops at every
+ * control it was not handed a CSS selector for cannot investigate anything a reporter described
+ * in words, which is every real bug report. The phrase is now resolved by role and accessible
+ * name — the same information a person acts on — so what these tests assert has changed:
+ *
+ *  - A phrase that matches NOTHING still fails as AUTOMATION_FAILED under rule 3, never as a
+ *    product defect. That ordering was the real guarantee and it is untouched.
+ *  - `suite generate` now emits the same locator the run used, rather than refusing. A run that
+ *    works and a reproduction of that run that does not would be one input with two answers.
  */
 
 const REPO = process.cwd();
@@ -148,14 +152,23 @@ describe("an unresolved `described` selector", () => {
     // never counted as a defect in the application. That ordering is the point of this test.
     expect(doc.outcome.outcome).toBe("AUTOMATION_FAILED");
     expect(doc.outcome.ruleId).toBe(3);
-    expect(doc.outcome.detail).toContain("described in prose");
 
-    const failed = doc.actions.find((a) => a.status === "failed")!;
-    expect(failed.actionId).toBe("A2");
-    expect(failed.failureReason).toContain("the Verified filter");
+    // `timeout`, not `failed`. The old refusal threw the instant it saw the strategy; the locator
+    // now genuinely looks for the control and waits the action timeout before giving up. Both are
+    // rule 3, which is the guarantee — but the status changed, and a test asserting the old value
+    // would have quietly passed on the wrong evidence.
+    const failed = doc.actions.find((a) => a.status === "timeout" || a.status === "failed");
+    expect(failed, `actions were: ${JSON.stringify(doc.actions)}`).toBeDefined();
+    expect(failed!.status).toBe("timeout");
+    expect(failed!.actionId).toBe("A2");
+    // The fixture page has no such control, so the resolved locator matches nothing and the
+    // action fails. What matters is that the failure names the words that were searched for, so
+    // a reader can see the phrase was looked for and not found rather than never attempted.
+    expect(failed.failureReason).toMatch(/Verified/i);
   });
 
-  it("refuses to export a reproduction script instead of emitting a guess", () => {
+  it("exports the same locator the run used, rather than refusing", () => {
+    const out = join(ws, "suite");
     const r = run([
       "suite",
       "generate",
@@ -164,16 +177,18 @@ describe("an unresolved `described` selector", () => {
       "--investigation",
       "INV-001",
       "--out",
-      join(ws, "suite"),
+      out,
       "--json",
     ]);
-    expect(r.status).not.toBe(0);
-    const err = JSON.parse(r.stdout) as { code: string; message: string };
-    expect(err.code).toBe("EXEC_VALUE_UNRESOLVED");
-    // Emitting `getByText("the Verified filter")` would compile and run, which is exactly why it
-    // must not happen: the script would test something nobody approved.
-    expect(err.message).toContain("the Verified filter");
-    expect(err.message).toMatch(/Resolve it to a real selector/);
+    expect(r.status, r.stdout).toBe(0);
+
+    const files = readdirSync(out).filter((f) => f.endsWith(".ts") || f.endsWith(".spec.ts"));
+    const source = files.map((f) => readFileSync(join(out, f), "utf8")).join("\n");
+    // Role and accessible name, matching the interpreter — not `getByText("the Verified filter")`,
+    // which would search for the filler words too and never match anything.
+    expect(source).toMatch(/getByRole|getByLabel/);
+    expect(source).toMatch(/Verified/);
+    expect(source).toContain(".first()");
   });
 
   it("still analyses the runs it did produce", () => {

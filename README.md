@@ -366,7 +366,7 @@ execution:
 
 safety:
   allowedOrigins:
-    - https://staging.example.com # a navigation outside this list is refused
+    - https://staging.example.com # this origin and its subdomains; other sites are refused
 ```
 
 Then run against it with `--target my-target` instead of `--fixture-app`.
@@ -382,9 +382,18 @@ Three things that will stop you, by design:
    on for an environment where an unintended write would matter: it then requires a per-action
    justification in `safetyAcknowledgements`, and refuses outright on a `staging` target. It never
    affects the approval gates — a human authorises the batch either way.
-3. **Selectors must be real.** An interpretation will not invent one: it emits a `described`
-   selector carrying your words, which refuses to execute. Get real selectors with
-   `npx playwright codegen --device="Pixel 7" <your url>` and put them in the proposal.
+
+   The flag governs **three** checkpoints: enqueue, the approval acknowledgement, and the executor
+   itself. It governed only the first two for a while, so turning it off unblocked enqueue and
+   then threw `EXEC_DESTRUCTIVE_BLOCKED` on the first delete anyway. A flag that governs some of
+   its checkpoints governs none of them.
+
+3. **Selectors.** An interpretation will not invent a `css` or `testid` selector. What it emits
+   instead is a `described` selector carrying your words, and the executor RESOLVES that by role
+   and accessible name — the same information a person reading the page acts on. "the delete
+   button" becomes `getByRole("button", { name: /delete/i })`. If you have real selectors,
+   `npx playwright codegen --device="Pixel 7" <your url>` and put them in the proposal; they are
+   more precise and are used as written.
 
 A first run against a real site commonly returns `AUTOMATION_FAILED` rather than a product
 failure. That is the system working: rule 3 fires before rule 4, so a selector that did not match
@@ -402,7 +411,7 @@ is never miscounted as a defect in your application.
 | `Runs completed: 0 of N`                       | Those repetitions already ran. Repetitions are keyed by index; raise `--repeat` or approve a new experiment |
 | `EXEC_VALUE_UNRESOLVED`                        | A selector or URL was never resolved from prose. Fix it in the proposal and re-approve                      |
 | `AI_PROVIDER_UNAVAILABLE`                      | An `--ai` step with no configuration. It names the missing variables                                        |
-| `EXEC_ORIGIN_NOT_ALLOWED`                      | The target origin is not in `safety.allowedOrigins`                                                         |
+| `EXEC_ORIGIN_NOT_ALLOWED`                      | Navigation left `safety.allowedOrigins`. Subdomains of a listed origin are allowed; other sites are not     |
 | `No runs with normalized evidence`             | `analyze` before anything ran. Do step 7 first                                                              |
 | Reliability suite fails on **wall clock only** | Machine contention. Run it on an otherwise idle machine                                                     |
 
@@ -532,18 +541,22 @@ Refreshing the page does not lose your place. The transcript and where you got t
 side against a session cookie, so a reload resumes the conversation. Restored messages are history
 and their buttons are not live — a resume card offers the action that is actually next instead.
 
-**One session runs at a time per client address.** A second browser on the same machine is told
-another session is already running and asked to close it first, rather than being allowed to start
-a rival transcript: two tabs would issue commands into the same workspace database and the same
-investigation, and each transcript would be missing half of what happened. Because the server is
-loopback-only, every connection resolves to one address, so in practice this is one session per
-machine. It is a concurrency guard, not a security control.
+**Sessions run concurrently.** Open as many tabs as you like; each gets its own session, its own
+folder and its own investigation numbering, and they do not interfere.
 
-The page heartbeats while it is open and releases the lock as it unloads. A session that stops
-heartbeating expires after 60 seconds, so a crashed browser or a closed laptop frees the lock by
-itself — without that, closing a tab would lock you out of your own agent until you restarted the
-server. `apps/web/src/sessions.spec.ts` asserts both directions: a live holder is never evicted,
-and an abandoned one always expires.
+This used to be one session per client address, and the reason given was that "two tabs would
+issue commands into the same workspace database and the same investigation, and each transcript
+would be missing half of what happened". That was true while every session shared one workspace.
+It stopped being true when each session got its own — so the guard was protecting against a
+collision that can no longer happen, and since the server is loopback-only and every connection
+resolves to one address, what it actually did was make a second tab wait up to a minute. It is
+gone.
+
+The page heartbeats while it is open and releases its session as it unloads. A session that stops
+heartbeating expires after 60 seconds. Expiry still matters, for a different reason than before: a
+request arriving without a live session is refused rather than written into the shared root
+workspace. `apps/web/src/sessions.spec.ts` asserts both directions — a live session is never
+disturbed by a newcomer, and an abandoned one always expires.
 
 Users and sessions are written to the host's own disk, two files under `<workspace>/.web/`, so a
 session survives restarting the server and not just refreshing the page. They sit outside
@@ -725,11 +738,22 @@ Claims use a level ladder, and the level is a promise about the evidence behind 
 `root_cause_hypothesis` → `confirmed_root_cause`
 
 An interpretation must also be able to say _"the reporter never told me this."_ A selector may use
-the `described` strategy to carry the reporter's own words, and a `goto` may have a null URL
-paired with the `unknownRef` naming the gap. Both are **unexecutable by design** — the executor
-and the suite generator each refuse them with `EXEC_VALUE_UNRESOLVED`, classified
-`AUTOMATION_FAILED`. Without this, a flow had to invent a selector or a URL just to be
-schema-valid.
+the `described` strategy to carry the reporter's own words, and a `goto` may have a null URL paired
+with the `unknownRef` naming the gap. Without this, a flow had to invent a selector or a URL just
+to be schema-valid.
+
+The two are **not** treated alike, and that distinction was got wrong once and corrected:
+
+- A **null URL** is still unexecutable. There is no reading of "no URL" that names a page, and
+  defaulting to the target root would run something nobody chose. `EXEC_VALUE_UNRESOLVED`.
+- A **described selector** is now resolved, by role and accessible name. It was unexecutable by
+  design, on the reasoning that treating a phrase as a selector would sometimes work and that was
+  the danger. The reasoning was wrong about where the risk sits: what made the refusal feel safe
+  was not that it avoided a wrong click but that it avoided all clicks, and an investigator that
+  stops at every control it was not handed a CSS selector for cannot investigate anything a
+  reporter described in words — which is every real bug report. What is kept is the part that
+  mattered: an unmatched phrase fails as `AUTOMATION_FAILED` under rule 3, never as a product
+  defect, and the suite generator emits the same locator the run used rather than refusing.
 
 ## Tech stack, and why
 
@@ -1061,30 +1085,31 @@ server-side and is not visible while CI/CD is disabled; deleting it requires pro
 
 ## Key guarantees, and where to check them
 
-| Guarantee                                                                         | Enforced by                                                                                                                           |
-| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| DeepSeek is never reachable from execution, evidence, or fixtures                 | `tests/docs/import-boundary.spec.ts` walks the resolved module graph                                                                  |
-| Nothing reaches a browser without a recorded human decision                       | `tests/e2e/m2-gates.test.ts`; `run` exits 2 and enqueues zero jobs                                                                    |
-| The chat UI cannot bypass a gate or run an arbitrary command                      | `tests/e2e/web-actions.test.ts` drives every action against the built binary; `apps/web/src/actions.spec.ts` covers the allowlist     |
-| Sensitive evidence is redacted before it is persisted                             | `tests/reliability/redaction_before_persistence.spec.ts`; a store call without a `RedactionStamp` raises `REDACTION_NOT_APPLIED`      |
-| Normalization is a pure function; a session rebuilds byte-identically offline     | `tests/reliability/offline_session_reconstruction.spec.ts`, with network and browser unavailable                                      |
-| A product failure is never hidden by a retry                                      | `tests/reliability/no_retry_hides_product_failure.spec.ts`                                                                            |
-| A broken script is never reported as a product defect                             | Rule 3 before rule 4 in `packages/evidence/src/outcome.ts`; `tests/e2e/described-selector.test.ts`                                    |
-| Queue state and run outcome are separate concepts                                 | `JobState` / `JobTerminalReason` / `RunOutcome` in `packages/core/src/types.ts`, plus SQLite CHECK constraints                        |
-| The 100-run fixture completes with zero retries and zero infrastructure failures  | `tests/reliability/same_test_100_runs.spec.ts`                                                                                        |
-| Every artifact is content-hashed and verifiable                                   | `tests/reliability/artifact_integrity_hashes.spec.ts`                                                                                 |
-| Mobile runs are Chromium **emulation**, recorded as read back from the browser    | `tests/reliability/mobile_emulation.spec.ts`                                                                                          |
-| The API key never reaches a log, artifact, or error                               | `packages/core/src/secret.spec.ts`, plus a canary assertion in the CLI e2e suite                                                      |
-| An AI finding cannot cite evidence it was never shown                             | `apps/cli/src/commands/analyze.ts` validates every reference against only the runs the tools returned                                 |
-| What differs between failing and passing runs is computed, not inferred           | `contrastRuns` is pure; `packages/tools/src/analysis-tools.spec.ts` covers what it refuses to claim as well as what it finds          |
-| A persisted video is never presented as redacted                                  | stamped `video-raw-unredactable`; `packages/evidence/src/capture-status.spec.ts` asserts the wording a reader actually sees           |
-| A value the reporter never gave cannot be silently guessed at run time            | `EXEC_VALUE_UNRESOLVED`, at both execution and export                                                                                 |
-| Each investigation keeps its own provenance chain                                 | `packages/lineage/src/lineage.spec.ts`; the lineage primary key is scoped per investigation                                           |
-| A flow's few-shot examples satisfy the schema its output is validated against     | `tests/docs/flow-examples.spec.ts`, over every shipped flow                                                                           |
-| A supplied credential is usable but never lands in a prompt, an artifact, or argv | `packages/storage/src/credential-store.spec.ts`; `packages/evidence/src/masked-values.spec.ts` masks registered values in every scope |
-| The shape outline a model is shown describes the schema it is judged against      | `packages/ai-flows/src/shape.spec.ts` asserts the actual generated outline, including `oneOf` variants and closed enums               |
-| A closed vocabulary the CLI sends matches the enum the validator enforces         | `tests/docs/vocabulary-drift.spec.ts` compares `ACTION_TYPES` and `ASSERTION_KINDS` against the schemas                               |
-| A session writes only inside its own folder, or the request is refused            | `apps/web/src/session-workspace.spec.ts`; a lapsed session returns `SESSION_EXPIRED` rather than falling back to the root             |
+| Guarantee                                                                         | Enforced by                                                                                                                                                              |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| DeepSeek is never reachable from execution, evidence, or fixtures                 | `tests/docs/import-boundary.spec.ts` walks the resolved module graph                                                                                                     |
+| Nothing reaches a browser without a recorded human decision                       | `tests/e2e/m2-gates.test.ts`; `run` exits 2 and enqueues zero jobs                                                                                                       |
+| The chat UI cannot bypass a gate or run an arbitrary command                      | `tests/e2e/web-actions.test.ts` drives every action against the built binary; `apps/web/src/actions.spec.ts` covers the allowlist                                        |
+| Sensitive evidence is redacted before it is persisted                             | `tests/reliability/redaction_before_persistence.spec.ts`; a store call without a `RedactionStamp` raises `REDACTION_NOT_APPLIED`                                         |
+| Normalization is a pure function; a session rebuilds byte-identically offline     | `tests/reliability/offline_session_reconstruction.spec.ts`, with network and browser unavailable                                                                         |
+| A product failure is never hidden by a retry                                      | `tests/reliability/no_retry_hides_product_failure.spec.ts`                                                                                                               |
+| A broken script is never reported as a product defect                             | Rule 3 before rule 4 in `packages/evidence/src/outcome.ts`; `tests/e2e/described-selector.test.ts`                                                                       |
+| Queue state and run outcome are separate concepts                                 | `JobState` / `JobTerminalReason` / `RunOutcome` in `packages/core/src/types.ts`, plus SQLite CHECK constraints                                                           |
+| The 100-run fixture completes with zero retries and zero infrastructure failures  | `tests/reliability/same_test_100_runs.spec.ts`                                                                                                                           |
+| Every artifact is content-hashed and verifiable                                   | `tests/reliability/artifact_integrity_hashes.spec.ts`                                                                                                                    |
+| Mobile runs are Chromium **emulation**, recorded as read back from the browser    | `tests/reliability/mobile_emulation.spec.ts`                                                                                                                             |
+| The API key never reaches a log, artifact, or error                               | `packages/core/src/secret.spec.ts`, plus a canary assertion in the CLI e2e suite                                                                                         |
+| An AI finding cannot cite evidence it was never shown                             | `apps/cli/src/commands/analyze.ts` validates every reference against only the runs the tools returned                                                                    |
+| What differs between failing and passing runs is computed, not inferred           | `contrastRuns` is pure; `packages/tools/src/analysis-tools.spec.ts` covers what it refuses to claim as well as what it finds                                             |
+| A persisted video is never presented as redacted                                  | stamped `video-raw-unredactable`; `packages/evidence/src/capture-status.spec.ts` asserts the wording a reader actually sees                                              |
+| A URL the reporter never gave is never defaulted to the target root               | `EXEC_VALUE_UNRESOLVED`, at both execution and export; a described SELECTOR is resolved by role and name instead — `packages/execution/src/described-resolution.spec.ts` |
+| Relaxing the origin allowlist to subdomains did not open it to other sites        | `packages/execution/src/described-resolution.spec.ts` covers suffix-smuggling, protocol downgrade and port changes                                                       |
+| Each investigation keeps its own provenance chain                                 | `packages/lineage/src/lineage.spec.ts`; the lineage primary key is scoped per investigation                                                                              |
+| A flow's few-shot examples satisfy the schema its output is validated against     | `tests/docs/flow-examples.spec.ts`, over every shipped flow                                                                                                              |
+| A supplied credential is usable but never lands in a prompt, an artifact, or argv | `packages/storage/src/credential-store.spec.ts`; `packages/evidence/src/masked-values.spec.ts` masks registered values in every scope                                    |
+| The shape outline a model is shown describes the schema it is judged against      | `packages/ai-flows/src/shape.spec.ts` asserts the actual generated outline, including `oneOf` variants and closed enums                                                  |
+| A closed vocabulary the CLI sends matches the enum the validator enforces         | `tests/docs/vocabulary-drift.spec.ts` compares `ACTION_TYPES` and `ASSERTION_KINDS` against the schemas                                                                  |
+| A session writes only inside its own folder, or the request is refused            | `apps/web/src/session-workspace.spec.ts`; a lapsed session returns `SESSION_EXPIRED` rather than falling back to the root                                                |
 
 ## Exit codes
 
