@@ -123,8 +123,9 @@ The harness shows it to them, waits, and resumes this same session with their an
 lost — you keep the browser, the page and everything you have done. So ending a turn to ask is
 cheap, and it is the intended move, not a failure.
 
-Say what you need and why in the message above that line, so the question makes sense to someone
-who has not been watching. Then the sentinel line, alone, last.
+**Put the question itself after `QUESTION`, on that same line.** It is shown to the operator as
+the question, so a bare `AUTHORING: QUESTION` asks them nothing — they see an empty card and a
+button. Context and reasoning go in the message above; the ask goes on the line.
 
 ## Finishing
 

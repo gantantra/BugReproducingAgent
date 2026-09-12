@@ -1223,7 +1223,16 @@
   function askAuthoringQuestion(r) {
     setStep("clarify");
     const c = card("It needs to ask you something");
-    c.appendChild(node("p", r.question || r.message || "It needs more information."));
+    // Whatever arrived, in preference order. An empty card with a button is the one thing this
+    // must never be: the operator cannot answer a question they were not shown.
+    const asked = (r.question || "").trim() || (r.message || "").trim();
+    c.appendChild(
+      node(
+        "p",
+        asked ||
+          "It stopped to ask something but the question did not come through. Tell it what you think it needs, or say “I don't know” and it will explain."
+      )
+    );
     c.appendChild(
       node(
         "p",

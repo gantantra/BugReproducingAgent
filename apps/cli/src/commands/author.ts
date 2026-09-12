@@ -38,7 +38,7 @@ import {
  */
 
 /** Bumped whenever ai/authoring/brief.md changes in a way that changes behaviour. */
-export const AUTHORING_BRIEF_VERSION = "1.3.0";
+export const AUTHORING_BRIEF_VERSION = "1.4.0";
 
 /** How the session ended, read from the last line of the final message. */
 export type AuthoringOutcome =
@@ -54,6 +54,12 @@ export type AuthoringOutcome =
  * adjudicating every step; it needs the harness to know which of three things just happened. The
  * sentinel is scanned from the END, because the model may legitimately mention the format while
  * explaining itself.
+ *
+ * The question or reason may sit ON the sentinel line or in the message above it, and both are
+ * accepted. The brief used to ask for both at once -- "the question as the very last line" and
+ * then "the sentinel line, alone, last" -- so a session reasonably left the sentinel bare, and
+ * the page rendered a card asking nothing at all. The brief is fixed, but reading both forms is
+ * what makes that class of mistake stop mattering.
  */
 export function readAuthoringOutcome(finalMessage: string): AuthoringOutcome {
   const lines = finalMessage.trimEnd().split(/\r?\n/);
@@ -64,8 +70,13 @@ export function readAuthoringOutcome(finalMessage: string): AuthoringOutcome {
     const verb = m[1]!.toUpperCase();
     const rest = (m[2] ?? "").trim();
     if (verb === "DONE") return { kind: "done" };
-    if (verb === "QUESTION") return { kind: "question", question: rest };
-    return { kind: "stuck", reason: rest };
+
+    // The text may be on the sentinel line, or in the message above it. Both happen, and an
+    // empty question is useless to the person being asked -- the page rendered a card with a
+    // blank space in it and a button, which tells them nothing about what is wanted.
+    const body = () => lines.slice(0, i).join("\n").trim();
+    if (verb === "QUESTION") return { kind: "question", question: rest || body() };
+    return { kind: "stuck", reason: rest || body() };
   }
   // No sentinel. Reported as unknown rather than assumed complete: treating an unrecognised
   // ending as success would emit a script from a session that may have stopped halfway.

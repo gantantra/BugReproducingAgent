@@ -88,3 +88,43 @@ describe("naming the emitted test", () => {
     expect(deriveTitleForTest("   \n\n  ", "INV-007")).toBe("INV-007");
   });
 });
+
+describe("a question always carries its text", () => {
+  // The page renders this as the question. An empty one is a card with a blank space and a
+  // button, which tells the operator nothing about what is wanted — seen in a real session,
+  // because the brief asked for the text on the sentinel line AND for the sentinel to stand
+  // alone. Reading both forms is what makes that class of mistake stop mattering.
+  it("takes the text from the sentinel line when it is there", () => {
+    const out = readAuthoringOutcome(
+      "Looking at the login page.\n\nAUTHORING: QUESTION Which account?"
+    );
+    expect(out.kind).toBe("question");
+    if (out.kind === "question") expect(out.question).toBe("Which account?");
+  });
+
+  it("falls back to the message above a bare sentinel", () => {
+    const out = readAuthoringOutcome(
+      "I need the password for the test account to sign in.\n\nAUTHORING: QUESTION"
+    );
+    expect(out.kind).toBe("question");
+    if (out.kind === "question") expect(out.question).toContain("password for the test account");
+  });
+
+  it("never yields an empty question when anything was said at all", () => {
+    for (const msg of [
+      "Something.\nAUTHORING: QUESTION",
+      "AUTHORING: QUESTION the thing",
+      "Line one\nLine two\n\nAUTHORING: QUESTION   ",
+    ]) {
+      const out = readAuthoringOutcome(msg);
+      expect(out.kind, msg).toBe("question");
+      if (out.kind === "question") expect(out.question.length, msg).toBeGreaterThan(0);
+    }
+  });
+
+  it("does the same for a stuck reason", () => {
+    const out = readAuthoringOutcome("The login page shows a CAPTCHA.\n\nAUTHORING: STUCK");
+    expect(out.kind).toBe("stuck");
+    if (out.kind === "stuck") expect(out.reason).toContain("CAPTCHA");
+  });
+});
