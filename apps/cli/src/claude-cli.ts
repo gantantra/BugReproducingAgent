@@ -183,3 +183,62 @@ export function findClaudeCli(env: NodeJS.ProcessEnv = process.env): string | nu
   }
   return null;
 }
+
+/**
+ * The browser tools an authoring session may use, and — more importantly — the ones it may not.
+ *
+ * Playwright MCP exposes 66 tools. Handing over all of them would not just be loose, it would
+ * defeat the deliverable, because several of them let a session make the bug *appear* rather than
+ * reproduce it. The emitted script is re-run unattended to measure how often a real application
+ * really fails; a script that fakes the failure measures nothing.
+ *
+ * Refused, each for a specific reason rather than caution:
+ *
+ *  - `browser_evaluate`, `browser_run_code_unsafe` — arbitrary JavaScript in the page. A session
+ *    with these can satisfy any assertion without the application doing anything, and the emitted
+ *    script would be `page.evaluate(...)` rather than a user's actions.
+ *  - `browser_route`, `browser_unroute`, `browser_network_state_set` — network interception. This
+ *    is the dangerous one for this product: a session could stub the failing response and
+ *    "reproduce" a bug the server never produced.
+ *  - `browser_cookie_set`, `browser_localstorage_set`, `browser_sessionstorage_set`,
+ *    `browser_set_storage_state` — injecting state skips the flow that reaches it, and the flow is
+ *    what the reporter described.
+ *  - `browser_mouse_*_xy` — raw coordinates. They work once and break on a different window size,
+ *    which is exactly what a script re-run weeks later will meet.
+ *
+ * Everything a person can do with a keyboard, a mouse and their eyes is allowed.
+ */
+export const ALLOWED_PLAYWRIGHT_TOOLS: readonly string[] = [
+  // Going places
+  "browser_navigate",
+  "browser_navigate_back",
+  "browser_tabs",
+  "browser_resize",
+  // Looking
+  "browser_snapshot",
+  "browser_take_screenshot",
+  "browser_console_messages",
+  "browser_network_requests",
+  "browser_generate_locator",
+  // Acting, as a person would
+  "browser_click",
+  "browser_type",
+  "browser_fill_form",
+  "browser_press_key",
+  "browser_select_option",
+  "browser_hover",
+  "browser_drag",
+  "browser_drop",
+  "browser_file_upload",
+  "browser_handle_dialog",
+  "browser_wait_for",
+  // Checking what happened
+  "browser_verify_element_visible",
+  "browser_verify_text_visible",
+  "browser_verify_value",
+  "browser_verify_list_visible",
+  // Recording the run the operator approves by watching
+  "browser_start_video",
+  "browser_stop_video",
+  "browser_video_chapter",
+].map((t) => `mcp__playwright__${t}`);

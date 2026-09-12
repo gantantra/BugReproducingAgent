@@ -6,6 +6,7 @@ import { investigationDirs } from "@investigator/storage";
 import { LineageWriter } from "@investigator/lineage";
 import type { GlobalOptions, Runtime } from "../runtime.js";
 import {
+  ALLOWED_PLAYWRIGHT_TOOLS,
   AUTHORING_EFFORT,
   AUTHORING_MODEL,
   claudeCliArgs,
@@ -37,7 +38,7 @@ import {
  */
 
 /** Bumped whenever ai/authoring/brief.md changes in a way that changes behaviour. */
-export const AUTHORING_BRIEF_VERSION = "1.0.0";
+export const AUTHORING_BRIEF_VERSION = "1.2.0";
 
 /** How the session ended, read from the last line of the final message. */
 export type AuthoringOutcome =
@@ -167,6 +168,10 @@ export async function authorCommand(
 
   const args = claudeCliArgs({
     mcpConfigPath,
+    // Without this the session stops on its first navigation asking for permission, which is not
+    // a question the operator can usefully answer -- they approve the SCRIPT, at a gate, after
+    // watching it. The allowlist is where "what may this session do" is decided, once.
+    allowedTools: ALLOWED_PLAYWRIGHT_TOOLS,
     appendSystemPrompt: brief,
     maxTurns: opts.maxTurns ?? 60,
     outputFormat: "json",

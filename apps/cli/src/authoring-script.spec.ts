@@ -172,6 +172,12 @@ describe("the emitted config", () => {
   it("uses one worker, because repetitions of one flow are not independent", () => {
     expect(config).toContain("workers: 1");
   });
+
+  it("fails faster than Playwright's default, because failures are the point", () => {
+    // Measured: 30 runs of a 1-in-3 bug took 6.4 minutes, almost all of it ten failing runs
+    // waiting out a 30s timeout for an element that was never going to appear.
+    expect(config).toContain("timeout: 15_000");
+  });
 });
 
 describe("the emitted package manifest", () => {

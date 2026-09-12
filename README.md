@@ -73,7 +73,7 @@ prompt bytes produced each interpretation.
 | M3 — AI gateway, flows, read-only tools, eval harness      | Implemented; `intake --ai` verified against live DeepSeek |
 | Chat UI (`apps/web`)                                       | Implemented; drives the CLI, holds no pipeline logic      |
 | M4–M8 — classification, frequency, minimization, reporting | **Not implemented, and not planned**                      |
-| Authoring loop (ADR-0027)                                  | Mechanism proven end to end; not yet behind a command     |
+| Authoring loop (ADR-0027)                                  | Implemented as `investigate author`; proven end to end    |
 
 **What you can do today:** run a full investigation end to end against a local fixture or a real
 target, with human approval, full evidence capture, provenance, an exported Playwright
@@ -243,10 +243,42 @@ dressing up. Run `claude` once interactively to sign in again.
 
 ### What is proven, and what is not
 
-Verified end to end against a throwaway page: the Claude CLI drove Playwright MCP for 12 turns,
-the session yielded three statements, those rendered into a standalone spec, and
-`playwright test --repeat-each=3` produced **3 passes and 3 videos** in a folder with nothing in
-it but the emitted files.
+Verified against an application with a **deliberately seeded intermittent defect** — a search that
+drops its results on every third request — because a bug that always happens proves nothing about
+a tool built for bugs that do not.
+
+From this report, and nothing else. No URL path, no selectors, no steps:
+
+> On the Parts Catalogue page I type "bearing" into the search box and press Search. Most of the
+> time it lists three bearings. But every so often — maybe one time in three — it says "No parts
+> found" instead.
+
+The session worked out that clicking repeatedly was how to catch an intermittent fault, caught it
+on the third click, and reported what it saw rather than why: _"the Results region shows 'No parts
+found' with the exact same search text that returned 3 parts on the two prior clicks."_ It then
+emitted this:
+
+```ts
+test("Search sometimes shows no parts", async ({ page }) => {
+  await page.goto("http://localhost:8877");
+  await page.getByRole("textbox", { name: "Search parts" }).fill("bearing");
+  await page.getByRole("button", { name: "Search" }).click();
+  await page.getByText("3 parts found").first().waitFor({ state: "visible" });
+});
+```
+
+Run 30 times: **10 failed, 20 passed — 33%**, against a defect seeded at exactly one in three.
+Thirty videos. Reproduced on a second 30-run.
+
+Two things that only came out by running it, both now fixed in the brief:
+
+- The first session emitted **five clicks and no assertion**. It reproduced the bug perfectly and
+  produced a worthless script — one that passes 100 times out of 100 and measures nothing. The
+  brief now separates _exploring_ from _the sequence you finish on_, and says plainly that the
+  repetition is the harness's job: one attempt, checked, run N times.
+- The brief contradicted itself. It said "stop the moment you reproduce it", which is exactly when
+  the page is broken — so any assertion added at that moment would fail. Verifying the state
+  from when it WORKED is now explicit.
 
 Two things that verification found, which no amount of reading would have:
 
