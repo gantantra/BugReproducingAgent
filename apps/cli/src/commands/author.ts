@@ -38,7 +38,7 @@ import {
  */
 
 /** Bumped whenever ai/authoring/brief.md changes in a way that changes behaviour. */
-export const AUTHORING_BRIEF_VERSION = "1.2.0";
+export const AUTHORING_BRIEF_VERSION = "1.3.0";
 
 /** How the session ended, read from the last line of the final message. */
 export type AuthoringOutcome =

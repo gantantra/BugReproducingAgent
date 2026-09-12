@@ -76,17 +76,24 @@ rules:
     action: mask-match
 
   # --- PII -------------------------------------------------------------------
+  #
+  # These deliberately do NOT include `report.body`.
+  #
+  # Every other scope here is captured FROM a live application and may carry a real customer's
+  # data, so an email or a phone number in it is someone else's and is masked. A report body is
+  # different in kind: it is what an operator typed about a system they control, and the
+  # identifiers in it are how the agent reaches the bug -- the test account to sign in as, the
+  # order to open, the profile to visit.
+  #
+  # Masking them protected nobody and cost the product its job. A real report came through as
+  # "the QA account [redacted] cannot see order [redacted]", which is unreproducible, while the
+  # login OTP sitting beside it survived untouched because no rule happened to match six digits.
+  # The genuinely dangerous things in a report -- bearer tokens, JWTs, private keys, AWS keys,
+  # secrets in a pasted URL -- still ARE masked below, and a credential the operator wants used
+  # goes to the credential store by name instead of into the prose.
   - id: pii-email
     appliesTo:
-      [
-        console.text,
-        network.responseBody,
-        dom.text,
-        storage.values,
-        network.url,
-        exception.message,
-        report.body,
-      ]
+      [console.text, network.responseBody, dom.text, storage.values, network.url, exception.message]
     match:
       valueMatches: "[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\\.[A-Za-z]{2,24}"
     action: mask-match
@@ -94,14 +101,13 @@ rules:
       domainIn: [example.invalid, example.test, test.invalid, localhost]
 
   - id: pii-phone-in
-    appliesTo: [console.text, network.responseBody, dom.text, storage.values, report.body]
+    appliesTo: [console.text, network.responseBody, dom.text, storage.values]
     match:
       valueMatches: "(?:\\+91[- ]?)?[6-9]\\d{9}"
     action: mask-match
 
   - id: pii-card
-    appliesTo:
-      [console.text, network.responseBody, dom.text, storage.values, action.inputValue, report.body]
+    appliesTo: [console.text, network.responseBody, dom.text, storage.values, action.inputValue]
     # The regex bounds WHAT gets masked; luhnCandidate alone matches the whole value, which
     # under mask-match would wipe an entire page body rather than the number inside it.
     match:
@@ -109,7 +115,7 @@ rules:
     action: mask-match
 
   - id: pii-govt-id-in
-    appliesTo: [console.text, network.responseBody, dom.text, storage.values, report.body]
+    appliesTo: [console.text, network.responseBody, dom.text, storage.values]
     match:
       valueMatches: "[A-Z]{5}\\d{4}[A-Z]|\\d{4}\\s?\\d{4}\\s?\\d{4}"
     action: mask-match

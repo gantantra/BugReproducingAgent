@@ -218,6 +218,32 @@ Reconstruction is where drift lives: the run passes, the rebuilt script does not
 trusts it next is the one who finds out. Selectors arrive as role plus accessible name, which
 survives a CSS refactor — and this script is run N times, unattended, possibly weeks later.
 
+### What the operator supplies, and what survives
+
+A bug report is the only place some facts exist: which account to sign in as, which order to open,
+which profile shows the problem. So `report.body` is deliberately **not** subject to the PII rules
+that govern every other scope.
+
+That is a distinction in kind, not a relaxation. Every other scope holds bytes captured **from** a
+live application, where an email or a phone number belongs to a real customer and masking it
+protects them. A report body is what an operator typed about a system they control.
+
+Treating them alike had it backwards, demonstrably. A realistic report came through as:
+
+> On /orders/AB-99321 the QA account `[redacted]` (test user `[redacted]`) cannot see order
+> `[redacted]` after paying. Login OTP was **483920**.
+
+Unreproducible — every identifier needed to reach the bug was gone — while the login OTP beside
+them survived untouched, because no rule happened to match six bare digits.
+
+What a report still loses: bearer tokens, JWTs, private keys, AWS-shaped keys, and secrets pasted
+inside a URL's query. None of those is ever how a bug is reproduced. A credential the operator
+wants _used_ goes to the credential store by name, so its value reaches the browser without
+passing through the report, a prompt, or an artifact.
+
+`packages/evidence/src/report-body-scope.spec.ts` asserts all three directions: what a report
+keeps, what it still loses, and that captured evidence is unchanged.
+
 ### Running it
 
 ```bash
