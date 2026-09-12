@@ -556,6 +556,20 @@ What has gone is the round trip. The page previously scaffolded a file and told 
 workspace and type the word "approve" into a document the scaffold had already filled in, which
 was friction rather than a decision.
 
+**The checksum crosses the boundary in the CLI's own spelling**, `sha256:<64 hex>`, and is never
+reformatted on the way. That sounds like a detail and was a total failure: the allowlist pattern
+accepted only bare hex, so the page stripped the prefix to satisfy it, and `approve` — which
+compares the flag against `checksumOfBytes`, a prefixed value — rejected every single approval
+with `GATE_CHECKSUM_MISMATCH`. The refusal read as a tampered proposal when the two values were
+the same hash spelled two ways. An artifact `sha` IS bare, because it is addressed that way on
+disk; the two patterns are now separate and named for what they are.
+
+The test that missed it is worth naming too. `tests/e2e/web-actions.test.ts` spawned the real
+binary for every action but deliberately did not assert success, since most actions correctly fail
+on a precondition — and it passed a dummy checksum, so the mismatch looked like one of those. It
+now also runs plan → scaffold → approve with the checksum the CLI itself printed and requires exit 0. Verified against the running agent: gate 1 approved, `APPR-001`, two experiments bound to
+`sha256:d3daa040…`.
+
 ### Sessions
 
 Refreshing the page does not lose your place. The transcript and where you got to are held server

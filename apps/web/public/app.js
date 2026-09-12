@@ -455,8 +455,17 @@
       ["message", result.message],
       ["exit", result.exitCode],
     ];
-    if (result.context && result.context.milestone) {
-      pairs.push(["arrives in", result.context.milestone]);
+    /* Show the error's own context, not just its message.
+     *
+     * Every typed refusal in this system carries the values that identify it — the checksum
+     * provided against the one on disk, the origin that was refused, the variable that was unset.
+     * This card printed code, message and exit and dropped all of it, so a GATE_CHECKSUM_MISMATCH
+     * read as "something does not match" when the answer was two values sitting in the payload.
+     * Rendered generically, because the next refusal will carry different keys. */
+    for (const [k, v] of Object.entries(result.context || {})) {
+      if (v === null || v === undefined || v === "") continue;
+      if (typeof v === "object") continue;
+      pairs.push([k === "milestone" ? "arrives in" : k, String(v)]);
     }
     kv(c, pairs);
     if (result.code === "NOT_IMPLEMENTED") {
@@ -952,7 +961,14 @@
 
   function renderProposal(r) {
     setStep("approve");
-    state.proposalChecksum = (r.proposalChecksum || "").replace(/^sha256:/, "");
+    /* Kept in the CLI's own spelling, `sha256:<hex>`, and never stripped.
+     *
+     * It used to be stored bare, because the allowlist accepted only 64 hex characters. That made
+     * every approval fail: `approve` compares the flag against `checksumOfBytes`, which is
+     * prefixed, so the two never matched and the refusal read as a tampered proposal rather than
+     * as two spellings of one hash. An artifact sha IS bare — that is a different value, addressed
+     * differently on disk — which is exactly why this one is left alone. */
+    state.proposalChecksum = r.proposalChecksum || "";
     const c = card("Gate 1 — experiment selection");
     kv(c, [
       ["gate", "experiment_selection"],
@@ -1044,10 +1060,7 @@
       }
     }
 
-    const checksum = String(scaffold.proposalChecksum || state.proposalChecksum || "").replace(
-      /^sha256:/,
-      ""
-    );
+    const checksum = String(scaffold.proposalChecksum || state.proposalChecksum || "");
     const from = toWorkspaceRelative(path);
 
     const approved = resultOf(

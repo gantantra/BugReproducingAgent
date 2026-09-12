@@ -72,9 +72,29 @@ describe("parameters that must never reach argv", () => {
 
   it("refuses a malformed checksum", () => {
     const base = { investigation: "INV-001", gate: "target_failure", from: "a.yaml" };
-    for (const bad of ["", "sha256:" + "a".repeat(64), "a".repeat(63), "z".repeat(64)]) {
+    for (const bad of [
+      "",
+      "a".repeat(64), // bare hex: the CLI compares the prefixed form, so this can never match
+      "sha256:" + "a".repeat(63),
+      "sha256:" + "z".repeat(64),
+      "sha512:" + "a".repeat(64),
+    ]) {
       expect(() => build("approve", { ...base, checksum: bad }), bad).toThrow(ParamError);
     }
+  });
+
+  it("accepts the checksum in the exact form the CLI prints", () => {
+    // This assertion previously ran the other way — it required `sha256:<hex>` to be REJECTED,
+    // which is the bug it was meant to guard against. `checksumOfBytes` returns the prefixed
+    // form and `approve` compares against it, so stripping the prefix to satisfy the allowlist
+    // made every one-click approval fail with GATE_CHECKSUM_MISMATCH.
+    const argv = build("approve", {
+      investigation: "INV-001",
+      gate: "target_failure",
+      from: "a.yaml",
+      checksum: `sha256:${"a".repeat(64)}`,
+    });
+    expect(argv).toContain(`sha256:${"a".repeat(64)}`);
   });
 });
 
@@ -83,7 +103,7 @@ describe("argv the builders produce", () => {
     const argv = build("approve", {
       investigation: "INV-001",
       gate: "experiment_selection",
-      checksum: "a".repeat(64),
+      checksum: `sha256:${"a".repeat(64)}`,
       from: "approvals/gate-1.yaml",
     });
     expect(argv[0]).toBe("approve");

@@ -57,7 +57,18 @@ function flag(params: Params, name: string): boolean {
 // Narrow, deliberately boring patterns. Anything richer belongs in a file the CLI reads, not argv.
 const ID = /^[A-Z]+-\d{1,6}$/;
 const GATE = /^(experiment_selection|target_failure|final_reproduction)$/;
+/** Bare hex, as an artifact is addressed on disk: `<kind>/<first two hex>/<sha>.<ext>`. */
 const SHA256 = /^[0-9a-f]{64}$/;
+/**
+ * A proposal checksum, which the CLI prints and compares in its PREFIXED form.
+ *
+ * These two are not interchangeable and treating them as one thing broke approval outright.
+ * `checksumOfBytes` returns `sha256:<hex>`, so `approve` compares the flag against that; the
+ * allowlist accepted only bare hex, so the page stripped the prefix to get through, and the CLI
+ * then compared bare hex against a prefixed string. Every one-click approval failed with
+ * GATE_CHECKSUM_MISMATCH, and the mismatch was between two spellings of the same hash.
+ */
+const PROPOSAL_CHECKSUM = /^sha256:[0-9a-f]{64}$/;
 /** A workspace-relative path with no traversal, no absolute root, no drive letter. */
 const REL_PATH = /^(?!\/|[A-Za-z]:)(?!.*\.\.)[A-Za-z0-9._\-/]{1,200}$/;
 const NAME = /^[A-Za-z0-9 ._\-()]{1,120}$/;
@@ -151,7 +162,7 @@ export const ACTIONS: readonly ActionDef[] = [
     str(p, "gate", GATE, "a known gate"),
     ...inv(p),
     "--checksum",
-    str(p, "checksum", SHA256, "a 64-character sha256"),
+    str(p, "checksum", PROPOSAL_CHECKSUM, "a checksum of the form sha256:<64 hex>"),
     "--from",
     ctx.inWorkspace(str(p, "from", REL_PATH, "a workspace-relative approval file")),
   ]),

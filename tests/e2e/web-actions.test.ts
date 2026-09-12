@@ -3,7 +3,7 @@ import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 
 import { ACTIONS, type BuildContext } from "../../apps/web/src/actions.js";
 
@@ -30,7 +30,7 @@ const PARSER_REJECTION =
 const PARAMS: Record<string, unknown> = {
   investigation: "INV-001",
   gate: "experiment_selection",
-  checksum: "a".repeat(64),
+  checksum: `sha256:${"a".repeat(64)}`,
   from: "reports/report.md",
   out: "suite",
   repeat: 1,
@@ -122,4 +122,90 @@ describe("the UI cannot walk past a gate", () => {
       expect(output, `${id} should report NOT_IMPLEMENTED`).toContain("NOT_IMPLEMENTED");
     }
   );
+});
+
+/**
+ * The whole approval path, driven the way the page drives it, asserting SUCCESS.
+ *
+ * The suite above deliberately does not assert success: most actions fail on a precondition and
+ * that is the right answer. But `approve` was passed a dummy checksum, so it failed on the
+ * checksum and that looked like an acceptable domain error — which is exactly how a real defect
+ * hid here. The allowlist accepted only bare hex while `checksumOfBytes` returns `sha256:<hex>`,
+ * so the page stripped the prefix and every one-click approval died with GATE_CHECKSUM_MISMATCH.
+ * Shape was verified; the VALUE never was.
+ *
+ * So this one runs plan, reads the checksum the CLI itself printed, feeds it back through the
+ * allowlist exactly as the page does, and requires exit 0.
+ */
+describe("the page can actually approve a gate", () => {
+  const ctx: BuildContext = { inWorkspace: (rel) => resolve(dir, rel) };
+  const build = (id: string, params: Record<string, unknown>): string[] => {
+    const action = ACTIONS.find((a) => a.id === id);
+    if (!action) throw new Error(`no action ${id}`);
+    return action.build(params, ctx);
+  };
+
+  it("plans, scaffolds and approves, using the checksum the CLI printed", async () => {
+    const intake = join(process.cwd(), "docs", "examples", "intake", "blank-results.md");
+    const proposal = join(process.cwd(), "docs", "examples", "proposals", "gate-1.input.json");
+
+    const intaken = await invoke(["intake", "--from", intake]);
+    expect(intaken.status, intaken.output).toBe(0);
+    const investigation = (JSON.parse(intaken.output) as { investigationId: string })
+      .investigationId;
+
+    const planned = await invoke([
+      "plan",
+      "--investigation",
+      investigation,
+      "--from",
+      proposal,
+      "--gate",
+      "experiment_selection",
+    ]);
+    expect(planned.status, planned.output).toBe(0);
+    const checksum = (JSON.parse(planned.output) as { proposalChecksum: string }).proposalChecksum;
+
+    // The form the CLI prints. If this stops being prefixed, the allowlist pattern must change
+    // with it — which is the coupling that broke.
+    expect(checksum).toMatch(/^sha256:[0-9a-f]{64}$/);
+
+    const scaffolded = await invoke(
+      build("approve-scaffold", {
+        investigation,
+        gate: "experiment_selection",
+        approver: "web-ui operator",
+      })
+    );
+    expect(scaffolded.status, scaffolded.output).toBe(0);
+    const scaffoldPath = (JSON.parse(scaffolded.output) as { path: string }).path;
+
+    // Straight through the allowlist, unmodified, exactly as approveThenRun does it.
+    const approved = await invoke(
+      build("approve", {
+        investigation,
+        gate: "experiment_selection",
+        checksum,
+        from: relative(dir, scaffoldPath).split(sep).join("/"),
+      })
+    );
+    expect(approved.status, approved.output).toBe(0);
+    expect(JSON.parse(approved.output)).toMatchObject({ ok: true });
+  }, 120_000);
+
+  it("still refuses a checksum that does not match the proposal", async () => {
+    // The binding is the point of the gate: widening the pattern must not have widened what the
+    // CLI accepts.
+    const wrong = `sha256:${"a".repeat(64)}`;
+    const refused = await invoke(
+      build("approve", {
+        investigation: "INV-001",
+        gate: "experiment_selection",
+        checksum: wrong,
+        from: "approvals/nope.yaml",
+      })
+    );
+    expect(refused.status).not.toBe(0);
+    expect(refused.output).not.toMatch(PARSER_REJECTION);
+  }, 60_000);
 });
