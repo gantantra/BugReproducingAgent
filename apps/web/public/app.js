@@ -75,6 +75,32 @@
     return body;
   }
 
+  let authLossShown = false;
+
+  /** A token from before a restart. Say so plainly, and never more than once. */
+  function isAuthLoss(body) {
+    return body && body.ok === false && body.code === "FORBIDDEN";
+  }
+
+  function renderAuthLoss(pendingText) {
+    if (authLossShown) return;
+    authLossShown = true;
+    setBusy(false);
+    const c = card("The agent restarted", true);
+    c.appendChild(
+      node(
+        "p",
+        null,
+        "This page is still holding the token it was given before the restart, so the server refused the request. Refresh to pick up the current one — the conversation is stored against your session and comes back with it."
+      )
+    );
+    if (pendingText) {
+      el.input.value = pendingText;
+      c.appendChild(node("p", null, "Your message is back in the box, so nothing is lost."));
+    }
+    buttons(c, [{ label: "Refresh", kind: "primary", onClick: () => window.location.reload() }]);
+  }
+
   function act(action, params = {}) {
     return api("/api/action", { method: "POST", body: JSON.stringify({ action, params }) });
   }
@@ -410,6 +436,7 @@
 
   /** Unwrap the server envelope into the CLI's own JSON. */
   function resultOf(response) {
+    if (isAuthLoss(response)) renderAuthLoss(null);
     if (!response || response.ok === false)
       return response || { ok: false, message: "no response" };
     return response.result || response;
@@ -453,6 +480,10 @@
       body: JSON.stringify({ text, name: "report.md" }),
     });
     if (wrote.ok !== true) {
+      if (isAuthLoss(wrote)) {
+        renderAuthLoss(text);
+        return;
+      }
       showFailure(wrote, "Could not store the report");
       setBusy(false);
       return;

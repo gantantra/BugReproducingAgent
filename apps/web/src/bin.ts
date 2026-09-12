@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 import { createInvestigatorServer, mintToken } from "./server.js";
+import { readOrCreateToken } from "./storage.js";
 
 /**
  * Entry point for the local chat UI.
@@ -67,7 +68,8 @@ function main(): void {
     process.exit(1);
   }
 
-  const token = mintToken();
+  // Stable across restarts, so a supervised restart does not invalidate an open page.
+  const token = readOrCreateToken(workspace, mintToken);
   const server = createInvestigatorServer({
     workspace,
     cliBin,

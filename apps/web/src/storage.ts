@@ -92,6 +92,30 @@ export class FileSessionPersistence implements SessionPersistence {
   }
 }
 
+/**
+ * The API token, kept with the workspace so it survives a restart.
+ *
+ * Minting a fresh one per start meant every supervised restart silently invalidated whatever page
+ * the operator had open: the next thing they did came back `FORBIDDEN: bad or missing token`, in
+ * the middle of typing a report. Restarts are routine by design here — that is what the supervisor
+ * is for — so a token that cannot survive one is the wrong default.
+ *
+ * The trade, stated plainly: the token now rests on disk instead of only in memory. It sits inside
+ * the workspace, which is gitignored, guarding a loopback-only service on the operator's own
+ * machine. Anyone who can read that file is already able to run the CLI directly. Delete the file
+ * to rotate it; the next start writes a new one.
+ */
+export function readOrCreateToken(workspace: string, mint: () => string): string {
+  const path = join(workspace, ".web", "token");
+  const existing = readJson<{ token?: string }>(path, {});
+  if (typeof existing.token === "string" && /^[0-9a-f]{32,}$/.test(existing.token)) {
+    return existing.token;
+  }
+  const token = mint();
+  writeJsonAtomic(path, { token });
+  return token;
+}
+
 /** Used where persistence is not wanted, so the store's own logic stays independent of disk. */
 export const noPersistence: SessionPersistence = {
   loadUsers: () => [],

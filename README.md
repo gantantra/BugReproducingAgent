@@ -437,7 +437,7 @@ Because it starts processes on your machine, it is treated as a privileged local
 | Control              | What it does                                                                       |
 | -------------------- | ---------------------------------------------------------------------------------- |
 | Loopback bind        | Listens on `127.0.0.1` only; never reachable from the network                      |
-| Token                | Minted per start, injected into the page, required on every API call               |
+| Token                | Stored with the workspace, injected into the page, required on every call          |
 | Origin check         | A request from another origin is refused                                           |
 | Action allowlist     | The browser sends an action id and typed parameters, never a command line          |
 | Parameter validators | Ids, gates, checksums and paths must match narrow patterns or the call is refused  |
@@ -491,10 +491,22 @@ itself — without that, closing a tab would lock you out of your own agent unti
 server. `apps/web/src/sessions.spec.ts` asserts both directions: a live holder is never evicted,
 and an abandoned one always expires.
 
-Sessions live in memory. Restarting the server clears them, which is consistent with the token
-being minted per start — the page has to be reloaded anyway. Nothing is lost that matters: the
-investigation itself is durable in the workspace database, and only the chat transcript is
-ephemeral.
+Users and sessions are written to the host's own disk, two files under `<workspace>/.web/`, so a
+session survives restarting the server and not just refreshing the page. They sit outside
+`.investigator/`, which is the schema-governed evidence tree — chat state is not evidence and must
+not look like it to anything walking that directory. Writes are atomic, because a half-written
+transcript read back at startup would be presented as a real one.
+
+The API token lives beside them, for the same reason. Minting a fresh one per start meant every
+supervised restart silently invalidated whatever page was open: the next action came back
+`FORBIDDEN: bad or missing token`, in the middle of typing a report. Restarts are routine by
+design here, so a token that cannot survive one is the wrong default. The trade, stated plainly:
+the token rests on disk rather than only in memory, inside a gitignored workspace, guarding a
+loopback-only service on the operator's own machine — anyone who can read that file can already
+run the CLI directly. Delete `<workspace>/.web/token` to rotate it.
+
+If a page does end up holding a stale token it says so and puts the unsent message back in the
+box, rather than showing a raw `FORBIDDEN` where an answer should be.
 
 Commands that are registered but unimplemented (M4–M8) are exposed on purpose — the UI shows
 the typed `NOT_IMPLEMENTED` answer and the milestone that brings each one, rather than hiding a
