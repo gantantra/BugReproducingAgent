@@ -29,6 +29,31 @@ export interface ValidationResult<T> {
   errors: ValidationFailure[];
 }
 
+/**
+ * The one fact a schema failure is useless without: WHICH property or value was rejected.
+ *
+ * Ajv carries it in `params`, and dropping it turns "must NOT have additional properties" into an
+ * error nobody can act on without re-running the call. Only schema-side identifiers are surfaced —
+ * a property name or the schema's own allowed values — never an instance value, which could hold
+ * evidence that has not been through redaction.
+ */
+export function failureDetail(e: ValidationFailure): string {
+  const added = e.params["additionalProperty"];
+  if (typeof added === "string") return ` [offending property: ${added}]`;
+
+  const missing = e.params["missingProperty"];
+  if (typeof missing === "string") return ` [missing property: ${missing}]`;
+
+  const allowed = e.params["allowedValues"];
+  if (Array.isArray(allowed)) {
+    const shown = allowed.slice(0, 8).map(String);
+    const more = allowed.length > shown.length ? `, +${allowed.length - shown.length} more` : "";
+    return ` [allowed: ${shown.join(", ")}${more}]`;
+  }
+
+  return "";
+}
+
 function toFailures(errors: ErrorObject[] | null | undefined): ValidationFailure[] {
   if (!errors) return [];
   return errors.map((e) => ({
@@ -152,12 +177,16 @@ export class SchemaRegistry {
     if (!result.ok) {
       const first = result.errors[0];
       throw new InvestigatorError("INPUT_INVALID", `Invalid ${what} against ${name}`, {
-        subReason: first ? `${first.instancePath || "/"} ${first.message}` : undefined,
+        subReason: first
+          ? `${first.instancePath || "/"} ${first.message}${failureDetail(first)}`
+          : undefined,
         context: {
           schema: name,
           errorCount: result.errors.length,
           firstPath: first?.instancePath ?? null,
-          firstMessage: first?.message ?? null,
+          // Carries the offending property name, so callers that surface only `firstMessage`
+          // (packages/ai-gateway validateAgainstSchema) still say WHICH field was rejected.
+          firstMessage: first ? `${first.message}${failureDetail(first)}` : null,
         },
       });
     }
@@ -168,7 +197,7 @@ export class SchemaRegistry {
   static formatErrors(errors: ValidationFailure[], limit = 20): string {
     return errors
       .slice(0, limit)
-      .map((e) => `${e.instancePath || "/"}: ${e.message} (${e.keyword})`)
+      .map((e) => `${e.instancePath || "/"}: ${e.message}${failureDetail(e)} (${e.keyword})`)
       .join("; ");
   }
 }

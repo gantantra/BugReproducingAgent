@@ -2,6 +2,11 @@
 .investigator/
 demo-ws/
 *.investigator-ws/
+# .investigator/ covers a workspace's evidence and database, but NOT files sitting at the
+# workspace ROOT - a report.md there holds the reporter's own words, which is where test-account
+# credentials turn up. Ignore the whole workspace directory, not just its internals.
+*-workspace/
+*.log
 
 # Build output
 dist/
