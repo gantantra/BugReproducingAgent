@@ -113,6 +113,77 @@ function requiredShape(schemaName: string, depth = 0, seen = new Set<string>()):
       lines.push(...requiredShape(target, depth + 1, seen));
     }
   }
+
+  lines.push(...conditionalShape(doc, pad));
+  return lines;
+}
+
+/** Resolve an in-document pointer such as `#/$defs/assertion`. */
+function localRef(doc: Record<string, unknown>, ref: string): Record<string, unknown> | null {
+  if (!ref.startsWith("#/")) return null;
+  let node: unknown = doc;
+  for (const part of ref.slice(2).split("/")) {
+    node = (node as Record<string, unknown> | undefined)?.[part];
+    if (node === undefined) return null;
+  }
+  return (node ?? null) as Record<string, unknown> | null;
+}
+
+/** `["string","null"]` is the schema's way of saying a value may be explicitly absent. */
+function nullableNote(prop: Record<string, unknown>): string {
+  const t = prop["type"];
+  return Array.isArray(t) && t.includes("null") ? " (may be null)" : "";
+}
+
+/**
+ * Describe `allOf`/`if`/`then` branches and in-document `$defs`.
+ *
+ * Without this the outline said only "action requires actionId, type" and stopped, so the model
+ * never learned that a `goto` also requires `url`, or that an `assert` requires an `assertion`
+ * OBJECT. Three separate live failures came from exactly that gap — a dropped `url` key, an
+ * `assertion` sent as a string, and an extra field on a nested object — each of which looked like
+ * a different bug and was the same missing sentence.
+ */
+function conditionalShape(doc: Record<string, unknown>, pad: string): string[] {
+  const branches = doc["allOf"];
+  if (!Array.isArray(branches)) return [];
+
+  const lines: string[] = [];
+  for (const raw of branches) {
+    const branch = raw as Record<string, unknown>;
+    const cond = branch["if"] as Record<string, unknown> | undefined;
+    const then = branch["then"] as Record<string, unknown> | undefined;
+    if (!cond || !then) continue;
+
+    const condProps = (cond["properties"] as Record<string, Record<string, unknown>>) ?? {};
+    const label = Object.entries(condProps)
+      .map(([key, value]) => {
+        const options = value["enum"];
+        return `${key}=${Array.isArray(options) ? options.join("|") : "?"}`;
+      })
+      .join(" and ");
+
+    const required = (then["required"] as string[] | undefined) ?? [];
+    const thenProps = (then["properties"] as Record<string, Record<string, unknown>>) ?? {};
+    if (!label || required.length === 0) continue;
+
+    const detail = required.map((key) => {
+      const prop = thenProps[key];
+      if (!prop) return key;
+      const ref = typeof prop["$ref"] === "string" ? (prop["$ref"] as string) : null;
+      const resolved = ref ? localRef(doc, ref) : null;
+      if (resolved) {
+        const inner = (resolved["required"] as string[] | undefined) ?? [];
+        if (inner.length) return `${key} (an object requiring: ${inner.join(", ")})`;
+        // A $def with no declared shape adds nothing but noise: name the field and stop.
+        const kind = resolved["type"];
+        return typeof kind === "string" ? `${key} (a ${kind})` : key;
+      }
+      return `${key}${nullableNote(prop)}`;
+    });
+
+    lines.push(`${pad}  when ${label}: also requires ${detail.join("; ")}`);
+  }
   return lines;
 }
 

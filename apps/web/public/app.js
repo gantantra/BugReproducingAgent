@@ -463,7 +463,15 @@
 
     setStep("interpret");
     const r = resultOf(
-      await act("intake", { from: wrote.path, title: firstLine(text), ai: state.aiReady })
+      await act("intake", {
+        from: wrote.path,
+        title: firstLine(text),
+        ai: state.aiReady,
+        // A target is bound to an investigation AT INTAKE. Recording one in config is not enough:
+        // without this the investigation reads `target (none)` and the constraints tool has
+        // nothing to answer with, which is the NOT_FOUND that stops planning.
+        ...(state.targetName ? { env: state.targetName } : {}),
+      })
     );
     setBusy(false);
 
@@ -645,6 +653,10 @@
    * difference between the agent conducting the investigation and handing the operator a config
    * file to go and edit. */
   async function askForTarget() {
+    if (state.targetName) {
+      offerPropose();
+      return;
+    }
     const existing = await api("/api/targets");
     const targets = (existing && existing.targets) || [];
     if (targets.length > 0) {
@@ -703,7 +715,10 @@
         ["allowed origins", written.target.allowedOrigins.join(", ")],
         ["destructive actions", "blocked"],
       ]);
-      offerPropose();
+      // Re-open the investigation against the target. The binding happens at intake, so an
+      // investigation opened before the target existed would still plan against nothing.
+      say("Re-opening the investigation against this target…");
+      await submitReport(state.reportText);
     };
 
     buttons(c, [

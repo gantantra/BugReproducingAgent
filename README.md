@@ -113,8 +113,24 @@ experiments** — without one, `get_application_constraints` returns `NOT_FOUND`
 correctly refuses to propose anything, which the output schema reports as a partial result. That is
 the agent working as designed, not a defect. See [Pointing it at a real site](#8-pointing-it-at-a-real-site).
 
-`plan --ai` has therefore not yet been observed producing a complete, validated gate-1 proposal
-end to end; the chain up to that point is verified against live DeepSeek.
+A fourth cause was then found and fixed: the outline of the required output shape sent to the
+model (`requiredShape` in `packages/ai-flows/src/runner.ts`) followed only `$ref`s ending in
+`.json` and never looked at `allOf`/`if`/`then`. So the model was told _"action requires actionId,
+type"_ and nothing about the conditional shapes — that a `goto` also requires `url`, that an
+`assert` requires an `assertion` **object**. Three separate live failures came from that one gap.
+It now emits lines like `when type=goto: also requires url (may be null)`.
+
+**Still failing.** `plan --ai` reaches its final turn and returns content that is not parseable
+JSON, so validation rejects it: `response is not parseable JSON, and no single JSON object could
+be extracted`. The likeliest cause, not yet confirmed, is the thinking-mode interaction — DeepSeek
+returns reasoning in `reasoning_content` and the answer in `content`, and a probe response was
+observed spending its entire completion budget on `reasoning_tokens` with `content` empty. The
+next diagnostic is to capture the final turn's raw `content` and see whether it is empty or merely
+wrapped in prose. Until then, render gate-1 proposals from a file with `plan --from <proposal.json>`.
+
+A target is bound to an investigation **at intake**, not by existing in `config.yaml`. An
+investigation opened before its target was recorded reads `target (none)` and the constraints tool
+has nothing to answer with, so the chat UI re-opens the investigation after recording one.
 
 Note also that `deriveRequestId` is content-addressed, so re-running a flow that failed _after_ the
 ledger row was written collides on `ai_calls.request_id`. A retry needs a fresh investigation until
