@@ -198,12 +198,6 @@ logging:
   };
 }
 
-export function fixtureOf(h: Harness, kind: FixtureKind): FixtureHandle {
-  const f = h.fixtures.find((x) => x.kind === kind);
-  if (!f) throw new Error(`fixture ${kind} not started in this harness`);
-  return f;
-}
-
 export function makeWorker(h: Harness, overrides: Partial<ResolvedConfig> = {}): Worker {
   return new Worker({
     config: { ...h.config, ...overrides },

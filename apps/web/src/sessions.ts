@@ -51,9 +51,14 @@ export interface SessionPersistence {
   saveSessions(sessions: Session[]): void;
 }
 
-export type AcquireResult =
-  | { status: "active"; session: Session }
-  | { status: "busy"; heldSince: number; lastSeenAt: number; expiresInMs: number };
+/**
+ * Always `active`. The union is gone with the lock it existed for.
+ *
+ * Keeping a `busy` variant "in case" left an unreachable branch in the server that could only be
+ * read as a state the system can enter. A type that describes states nothing produces is a
+ * question every later reader has to answer again.
+ */
+export type AcquireResult = { status: "active"; session: Session };
 
 /**
  * `::1`, `::ffff:127.0.0.1` and `127.0.0.1` are the same machine reaching the same loopback
@@ -147,14 +152,6 @@ export class SessionStore {
       }
     }
     if (dropped) this.flushSessions();
-  }
-
-  /** The live session for an address, if any. */
-  private holderFor(ip: string, now: number): Session | undefined {
-    for (const session of this.byId.values()) {
-      if (session.ip === ip && this.live(session, now)) return session;
-    }
-    return undefined;
   }
 
   /**

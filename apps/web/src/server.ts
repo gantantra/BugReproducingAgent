@@ -351,14 +351,6 @@ export function createInvestigatorServer(opts: ServerOptions) {
          */
         if (path === "/api/session" && req.method === "GET") {
           const result = sessions.acquire(clientIp, sessionId, userId);
-          if (result.status !== "active") {
-            sendJson(res, 500, {
-              ok: false,
-              code: "SESSION_UNAVAILABLE",
-              message: "could not start a session",
-            });
-            return;
-          }
           // HttpOnly: the page never needs to read either, and script cannot leak them. The user
           // cookie outlives the session so a returning browser is recognised as the same person;
           // it identifies a browser, not a person who logged in, and carries no credential.

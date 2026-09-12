@@ -366,6 +366,21 @@ export class ActionInterpreter {
 
     for (const action of actions) {
       const canonical = action.selector ? canonicalSelector(action.selector) : null;
+
+      // A click that came from the reporter's prose is recorded as a declared factor.
+      //
+      // This is the condition on which the `described` refusal was removed: the resolution is
+      // visible in the evidence rather than silent, so a human reading a manifest can see that
+      // the element was found by role and accessible name from a phrase, and which phrase. It is
+      // declared BEFORE the action runs, so it is present even when the action then fails.
+      if (action.selector?.strategy === "described") {
+        this.declaredFactors.push({
+          kind: "describedSelectorResolved",
+          value: describedResolutionFactor(action.selector.value ?? ""),
+          actionId: action.actionId,
+        });
+      }
+
       this.opts.collector.actionStart(action.actionId, action.type, canonical);
       try {
         await this.execute(action);
