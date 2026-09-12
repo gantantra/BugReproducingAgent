@@ -362,6 +362,30 @@ Because it starts processes on your machine, it is treated as a privileged local
 The allowlist in `apps/web/src/actions.ts` is the boundary: without it, a page open in your
 browser would be a shell. `apps/web/src/actions.spec.ts` covers what must not get through.
 
+### Sessions
+
+Refreshing the page does not lose your place. The transcript and where you got to are held server
+side against a session cookie, so a reload resumes the conversation. Restored messages are history
+and their buttons are not live — a resume card offers the action that is actually next instead.
+
+**One session runs at a time per client address.** A second browser on the same machine is told
+another session is already running and asked to close it first, rather than being allowed to start
+a rival transcript: two tabs would issue commands into the same workspace database and the same
+investigation, and each transcript would be missing half of what happened. Because the server is
+loopback-only, every connection resolves to one address, so in practice this is one session per
+machine. It is a concurrency guard, not a security control.
+
+The page heartbeats while it is open and releases the lock as it unloads. A session that stops
+heartbeating expires after 60 seconds, so a crashed browser or a closed laptop frees the lock by
+itself — without that, closing a tab would lock you out of your own agent until you restarted the
+server. `apps/web/src/sessions.spec.ts` asserts both directions: a live holder is never evicted,
+and an abandoned one always expires.
+
+Sessions live in memory. Restarting the server clears them, which is consistent with the token
+being minted per start — the page has to be reloaded anyway. Nothing is lost that matters: the
+investigation itself is durable in the workspace database, and only the chat transcript is
+ephemeral.
+
 Commands that are registered but unimplemented (M4–M8) are exposed on purpose — the UI shows
 the typed `NOT_IMPLEMENTED` answer and the milestone that brings each one, rather than hiding a
 step and implying the pipeline is shorter than it is.
@@ -786,7 +810,7 @@ On Windows, one command runs the same sequence:
 pwsh -File scripts/verify.ps1 -Gate
 ```
 
-Current counts: **351** unit and docs tests, **64** e2e, **48** reliability. The 100-run gate
+Current counts: **366** unit and docs tests, **64** e2e, **48** reliability. The 100-run gate
 completes 100/100 `VALID_COMPLETED` with zero retries and zero infrastructure failures in roughly
 130 seconds.
 

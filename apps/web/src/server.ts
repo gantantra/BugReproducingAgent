@@ -12,6 +12,7 @@ import {
   type BuildContext,
   type Params,
 } from "./actions.js";
+import { SessionStore, normalizeIp, readCookie } from "./sessions.js";
 
 /**
  * A local chat front end for the investigator.
@@ -36,6 +37,8 @@ export interface ServerOptions {
   token: string;
   /** Where the CLI is spawned from: the operator's launch directory, so `.env` resolves as usual. */
   launchDir: string;
+  /** How long a chat session survives without a heartbeat. Default 60s. */
+  sessionTtlMs?: number;
 }
 
 interface Job {
@@ -90,6 +93,8 @@ export function createInvestigatorServer(opts: ServerOptions) {
   const jobs = new Map<string, Job>();
   const origin = `http://127.0.0.1:${opts.port}`;
   const workspaceRoot = resolve(opts.workspace);
+  const sessions = new SessionStore(() => randomUUID(), undefined, opts.sessionTtlMs ?? 60_000);
+  const SESSION_COOKIE = "investigator_session";
 
   /**
    * Turn a validated workspace-relative path into an absolute one, refusing anything that lands
@@ -262,7 +267,82 @@ export function createInvestigatorServer(opts: ServerOptions) {
         return;
       }
 
+      const sessionId = readCookie(req.headers.cookie, SESSION_COOKIE);
+      const clientIp = normalizeIp(req.socket.remoteAddress);
+
       try {
+        /**
+         * Claim or resume the session for this address. The cookie is what survives a refresh;
+         * the address is what makes a second browser on the same machine wait rather than
+         * silently start a rival transcript against the same workspace.
+         */
+        if (path === "/api/session" && req.method === "GET") {
+          const result = sessions.acquire(clientIp, sessionId);
+          if (result.status === "busy") {
+            sendJson(res, 409, {
+              ok: false,
+              code: "SESSION_IN_USE",
+              message:
+                "Another session is already running on your machine. Close that tab or window " +
+                "first, then refresh here to use the agent.",
+              heldSince: result.heldSince,
+              lastSeenAt: result.lastSeenAt,
+              expiresInMs: result.expiresInMs,
+              ttlMs: sessions.ttlMs,
+            });
+            return;
+          }
+          // HttpOnly: the page never needs to read it, and script cannot leak it.
+          res.setHeader(
+            "set-cookie",
+            `${SESSION_COOKIE}=${encodeURIComponent(result.session.id)}; Path=/; HttpOnly; SameSite=Strict`
+          );
+          sendJson(res, 200, {
+            ok: true,
+            status: "active",
+            resumed: result.session.state !== null,
+            createdAt: result.session.createdAt,
+            ttlMs: sessions.ttlMs,
+            state: result.session.state,
+          });
+          return;
+        }
+
+        if (path === "/api/session/state" && req.method === "POST") {
+          const body = (await readBody(req, 4_000_000)) as { state?: unknown };
+          const stored = sessions.setState(sessionId, body.state ?? null);
+          if (!stored) {
+            sendJson(res, 409, {
+              ok: false,
+              code: "SESSION_EXPIRED",
+              message: "This session is no longer active. Refresh to start a new one.",
+            });
+            return;
+          }
+          sendJson(res, 200, { ok: true });
+          return;
+        }
+
+        if (path === "/api/session/heartbeat" && req.method === "POST") {
+          const alive = sessions.touch(sessionId);
+          sendJson(res, alive ? 200 : 409, {
+            ok: alive,
+            code: alive ? undefined : "SESSION_EXPIRED",
+          });
+          return;
+        }
+
+        // Sent by the page as it unloads, so the next tab does not wait out the whole TTL.
+        if (path === "/api/session/release" && req.method === "POST") {
+          sessions.release(sessionId);
+          res.setHeader(
+            "set-cookie",
+            `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`
+          );
+          sendJson(res, 200, { ok: true });
+          return;
+        }
+
         if (path === "/api/actions" && req.method === "GET") {
           sendJson(res, 200, {
             ok: true,
@@ -298,6 +378,8 @@ export function createInvestigatorServer(opts: ServerOptions) {
         }
 
         if (path === "/api/action" && req.method === "POST") {
+          // Driving the agent is activity: a long batch must not let the session lapse.
+          sessions.touch(sessionId);
           const body = (await readBody(req)) as { action?: unknown; params?: Params };
           const action = findAction(body.action);
           if (!action) {

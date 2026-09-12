@@ -173,6 +173,10 @@ export default tseslint.config(
         fetch: "readonly",
         TextDecoder: "readonly",
         console: "readonly",
+        setTimeout: "readonly",
+        clearTimeout: "readonly",
+        setInterval: "readonly",
+        clearInterval: "readonly",
       },
     },
   }

@@ -44,7 +44,16 @@
     aiReady: false,
     busy: false,
     awaiting: null, // a pending question handler for the next user message
+    // The transcript, as semantics rather than DOM, so a refresh can rebuild it.
+    log: [],
   };
+
+  // Set while rebuilding a restored transcript, so replaying does not re-record it.
+  let replaying = false;
+  // The card currently being filled, so kv() can attach its rows to the right log entry.
+  let openEntry = null;
+  let persistTimer = null;
+  let heartbeat = null;
 
   // ---------------------------------------------------------------------------------------- api
 
@@ -64,6 +73,174 @@
 
   function act(action, params = {}) {
     return api("/api/action", { method: "POST", body: JSON.stringify({ action, params }) });
+  }
+
+  // ------------------------------------------------------------------------------------ session
+
+  /* The transcript lives on the server, keyed by a session cookie, so a refresh resumes where the
+   * operator left off. Writes are debounced: typing a report should not be a request per keystroke,
+   * and nothing here is the source of truth anyway — the investigation itself is already durable in
+   * the workspace database. */
+  function schedulePersist() {
+    if (replaying) return;
+    if (persistTimer) clearTimeout(persistTimer);
+    persistTimer = setTimeout(() => {
+      persistTimer = null;
+      void api("/api/session/state", {
+        method: "POST",
+        body: JSON.stringify({
+          state: {
+            log: state.log,
+            investigation: state.investigation,
+            reportText: state.reportText,
+            reportPath: state.reportPath,
+            proposalChecksum: state.proposalChecksum,
+            step: state.step,
+            done: [...state.done],
+            aiReady: state.aiReady,
+          },
+        }),
+      });
+    }, 400);
+  }
+
+  function record(entry) {
+    if (replaying) return entry;
+    state.log.push(entry);
+    schedulePersist();
+    return entry;
+  }
+
+  /** Rebuild one recorded entry. Read-only: live controls come from the resume bar instead. */
+  function renderEntry(entry) {
+    if (entry.t === "say") {
+      say(entry.text, entry.who);
+      return;
+    }
+    if (entry.t === "card") {
+      const c = card(entry.title, entry.bad);
+      if (entry.pairs && entry.pairs.length) kv(c, entry.pairs);
+    }
+  }
+
+  function restore(saved) {
+    state.investigation = saved.investigation ?? null;
+    state.reportText = saved.reportText ?? "";
+    state.reportPath = saved.reportPath ?? null;
+    state.proposalChecksum = saved.proposalChecksum ?? null;
+    state.aiReady = saved.aiReady === true;
+    state.done = new Set(saved.done || []);
+    state.step = saved.step || "describe";
+    state.log = saved.log || [];
+
+    replaying = true;
+    try {
+      for (const entry of state.log) renderEntry(entry);
+    } finally {
+      replaying = false;
+    }
+
+    renderRail();
+    if (state.investigation) {
+      el.inv.textContent = state.investigation;
+      el.inv.className = "pill ok";
+    }
+    el.provider.textContent = state.aiReady ? "deepseek · ai ready" : "ai missing";
+    el.provider.className = `pill ${state.aiReady ? "ok" : "bad"}`;
+    renderResume();
+  }
+
+  /* A restored transcript is history: its buttons belonged to a page that no longer exists. Rather
+   * than re-attach handlers to every replayed card, offer the one action that is actually next. */
+  function renderResume() {
+    const c = card("Session resumed");
+    kv(c, [
+      ["investigation", state.investigation || "not opened yet"],
+      ["at step", state.step],
+      ["messages restored", state.log.length],
+    ]);
+    c.appendChild(
+      node(
+        "p",
+        null,
+        "The transcript above is restored history, so its buttons are not live. Continue from here."
+      )
+    );
+
+    const choices = [];
+    if (state.investigation) {
+      choices.push({
+        label: "Propose experiments",
+        kind: "primary",
+        onClick: () => offerPropose(),
+      });
+      choices.push({
+        label: "Analyse what ran",
+        onClick: () => analyse(state.aiReady),
+      });
+    }
+    choices.push({
+      label: "Start over",
+      kind: "danger",
+      onClick: async () => {
+        await api("/api/session/release", { method: "POST" });
+        window.location.reload();
+      },
+    });
+    buttons(c, choices);
+  }
+
+  /** Another tab on this machine holds the session. Say so, and offer nothing that would race it. */
+  function renderBusy(info) {
+    el.transcript.replaceChildren();
+    setBusy(true);
+    el.provider.textContent = "session in use";
+    el.provider.className = "pill bad";
+
+    const c = card("Another session is already running", true);
+    c.appendChild(
+      node(
+        "p",
+        null,
+        info.message ||
+          "Another session is already running on your machine. Close that tab or window first, then refresh here to use the agent."
+      )
+    );
+    kv(c, [
+      ["held since", info.heldSince ? new Date(info.heldSince).toLocaleTimeString() : "—"],
+      ["last seen", info.lastSeenAt ? new Date(info.lastSeenAt).toLocaleTimeString() : "—"],
+      [
+        "frees itself in",
+        info.expiresInMs != null
+          ? `${Math.ceil(info.expiresInMs / 1000)}s if that tab is gone`
+          : "—",
+      ],
+    ]);
+    c.appendChild(
+      node(
+        "p",
+        null,
+        "Only one session runs at a time because two would issue commands into the same workspace database and the same investigation, and each transcript would be missing half of what happened."
+      )
+    );
+    buttons(c, [{ label: "Retry", kind: "primary", onClick: () => window.location.reload() }]);
+  }
+
+  function startHeartbeat(ttlMs) {
+    const every = Math.max(5000, Math.floor((ttlMs || 60000) / 3));
+    if (heartbeat) clearInterval(heartbeat);
+    heartbeat = setInterval(async () => {
+      const r = await api("/api/session/heartbeat", { method: "POST" });
+      if (r.ok === false && r.code === "SESSION_EXPIRED") {
+        clearInterval(heartbeat);
+        heartbeat = null;
+        const c = card("Session expired", true);
+        c.appendChild(node("p", null, "This session lapsed. Refresh to start a new one."));
+        buttons(c, [
+          { label: "Refresh", kind: "primary", onClick: () => window.location.reload() },
+        ]);
+      }
+    }, every);
   }
 
   /* SSE over fetch. EventSource cannot send an Authorization-style header, and putting the token
@@ -129,6 +306,7 @@
       body.appendChild(p);
     }
     scroll();
+    record({ t: "say", who, text: String(text) });
     return body;
   }
 
@@ -140,6 +318,7 @@
     c.appendChild(inner);
     body.appendChild(c);
     scroll();
+    openEntry = record({ t: "card", title, bad: !!bad, pairs: [] });
     return inner;
   }
 
@@ -151,6 +330,15 @@
       dl.appendChild(node("dd", null, String(v)));
     }
     parent.appendChild(dl);
+    // Attach the rows to the card that opened them, so a replay shows the substance and not an
+    // empty heading. Values are stringified here because that is what a replay will render.
+    if (openEntry && !replaying) {
+      for (const [k, v] of pairs) {
+        if (v === undefined || v === null || v === "") continue;
+        openEntry.pairs.push([k, String(v)]);
+      }
+      schedulePersist();
+    }
     return dl;
   }
 
@@ -745,10 +933,45 @@ ${answer}
 
   // ------------------------------------------------------------------------------------- boot
 
-  el.ws.textContent = WORKSPACE;
-  renderRail();
-  say(
-    "I investigate intermittent Chrome issues by reproducing them many times and contrasting the runs that fail against the runs that pass.\n\nDescribe the bug below — the URL, the steps, what you expected, what actually happens, and roughly how often. I will turn it into a structured flow, show you exactly where I think it breaks, and ask before anything runs."
-  );
-  void checkProvider();
+  // Tell the server as the page goes away, so the next tab does not wait out the whole TTL.
+  // `keepalive` rather than sendBeacon: a beacon cannot carry the auth header.
+  window.addEventListener("pagehide", () => {
+    void fetch("/api/session/release", {
+      method: "POST",
+      keepalive: true,
+      headers: { "x-investigator-token": TOKEN },
+    });
+  });
+
+  async function boot() {
+    el.ws.textContent = WORKSPACE;
+    renderRail();
+
+    let body;
+    try {
+      const res = await fetch("/api/session", { headers: { "x-investigator-token": TOKEN } });
+      body = await res.json();
+      if (res.status === 409 || body.code === "SESSION_IN_USE") {
+        renderBusy(body);
+        return;
+      }
+    } catch {
+      say("Could not reach the agent server. Is it still running?");
+      return;
+    }
+
+    startHeartbeat(body.ttlMs);
+
+    if (body.state && Array.isArray(body.state.log) && body.state.log.length > 0) {
+      restore(body.state);
+      return;
+    }
+
+    say(
+      "I investigate intermittent Chrome issues by reproducing them many times and contrasting the runs that fail against the runs that pass.\n\nDescribe the bug below — the URL, the steps, what you expected, what actually happens, and roughly how often. I will turn it into a structured flow, show you exactly where I think it breaks, and ask before anything runs."
+    );
+    void checkProvider();
+  }
+
+  void boot();
 })();
