@@ -290,7 +290,22 @@
 
   // ------------------------------------------------------------------------------------ render
 
+  /* node(tag, className, text) — and the className slot is where sentences go to die.
+   *
+   * Calling this with two arguments puts the text into className. Nothing throws, nothing logs,
+   * and the element renders with no content and an absurd CSS class. Seven paragraphs in the
+   * authoring flow were written that way and every one of them was invisible — including the
+   * question the operator was being asked to answer, which made the card unanswerable.
+   *
+   * A real class list is short. Prose is not. Refusing the obviously-wrong case turns a silent
+   * blank into an error the moment anyone renders it. */
   function node(tag, className, text) {
+    if (typeof className === "string" && className.length > 40 && /\s/.test(className)) {
+      throw new Error(
+        `node("${tag}", …) was given prose where the className goes — pass null as the second ` +
+          `argument and the text as the third. Got: ${className.slice(0, 60)}…`
+      );
+    }
     const n = document.createElement(tag);
     if (className) n.className = className;
     if (text !== undefined) n.textContent = text;
@@ -630,12 +645,33 @@
         rest = rest.replace(m[0], " ");
       }
     }
-    // A password has no shape to match. If the question was clearly about one, take the whole
-    // answer rather than sending it in the clear.
-    if (found.length === 0 && /password|passcode|\bpin\b|token|secret/i.test(question || "")) {
-      found.push({ name: "ACCOUNT_PASSWORD", value: answer.trim() });
+    /* A password has no shape to match, so look for one by its label first -- "password Hunter2",
+     * "pwd: x" -- which is how people actually write them. */
+    const labelled = /\b(?:password|passcode|pwd|pass|pin|token|secret)\b\s*[:=]?\s*(\S+)/i.exec(
+      rest
+    );
+    if (labelled) {
+      found.push({ name: "ACCOUNT_PASSWORD", value: labelled[1] });
+      rest = rest.replace(labelled[1], " ");
     }
-    if (found.length === 0) return answer;
+
+    /* And if the QUESTION was about credentials but nothing in the answer matched a shape, the
+     * whole answer is the credential. Erring the other way sends it onward in the clear, which is
+     * what happened: asked "what test account credentials should I use?", the reply's email was
+     * captured and its password travelled as text. In a credential context, unmatched means
+     * unrecognised, not harmless. */
+    if (found.length === 0) {
+      // Named after what was asked for, so the session referencing it can tell what it is.
+      const q = question || "";
+      const name = /password|passcode|pwd/i.test(q)
+        ? "ACCOUNT_PASSWORD"
+        : /otp|one.?time/i.test(q)
+          ? "ACCOUNT_OTP"
+          : /username|user name|login/i.test(q)
+            ? "ACCOUNT_USERNAME"
+            : "ACCOUNT_SECRET";
+      found.push({ name, value: answer.trim() });
+    }
 
     const stored = [];
     for (const c of found) {
@@ -1138,6 +1174,7 @@
     c.appendChild(
       node(
         "p",
+        null,
         `I will open ${state.targetName ? `the ${state.targetName} target` : "the target"} in a real browser and work through what you described. If I hit something only you know — which control you meant, an account to sign in with, whether what I am looking at is the bug — I will stop and ask right here.`
       )
     );
@@ -1199,10 +1236,11 @@
     }
     if (r.outcome === "stuck") {
       const c = card("It could not get there", true);
-      c.appendChild(node("p", r.reason || r.message || "The session stopped."));
+      c.appendChild(node("p", null, r.reason || r.message || "The session stopped."));
       c.appendChild(
         node(
           "p",
+          null,
           "No script was written. A partial reproduction looks complete, and whoever runs it next believes it — so nothing is better than half."
         )
       );
@@ -1229,6 +1267,7 @@
     c.appendChild(
       node(
         "p",
+        null,
         asked ||
           "It stopped to ask something but the question did not come through. Tell it what you think it needs, or say “I don't know” and it will explain."
       )
@@ -1236,6 +1275,7 @@
     c.appendChild(
       node(
         "p",
+        null,
         "Type your answer below and press Enter. It keeps the browser open and picks up exactly where it stopped — nothing is repeated."
       )
     );
@@ -1250,10 +1290,13 @@
     el.input.placeholder = "Your answer…";
     el.input.focus();
     const question = r.question || "";
-    state.awaiting = async (answer) => {
+    const handler = async (answer) => {
       state.awaiting = null;
       await resumeAuthoring(await credentialsToNames(question, answer));
     };
+    // resumeAuthoring says the transformed text, so onSend must not say the raw text first.
+    handler.echoesItself = true;
+    state.awaiting = handler;
   }
 
   async function resumeAuthoring(answer) {
@@ -1321,12 +1364,14 @@
     c.appendChild(
       node(
         "p",
+        null,
         "Every line in it is a call that actually ran, with the selectors Playwright itself generated — so this is the run that worked, not a rewrite of it."
       )
     );
     c.appendChild(
       node(
         "p",
+        null,
         "Run it many times to find out how often it fails. One pass proves nothing about a bug that only shows up sometimes."
       )
     );
@@ -1345,12 +1390,18 @@
     const text = el.input.value.trim();
     if (!text || state.busy) return;
     el.input.value = "";
-    say(text, "user");
 
+    /* A pending handler may be about to turn this into a credential reference, and echoing the
+     * raw text first would put the secret in the transcript -- which is persisted, and which the
+     * whole credential store exists to keep it out of. So a handler that echoes for itself is
+     * trusted to do so. Observed: a typed password reached sessions.json this way. */
     if (state.awaiting) {
-      await state.awaiting(text);
+      const handler = state.awaiting;
+      if (!handler.echoesItself) say(text, "user");
+      await handler(text);
       return;
     }
+    say(text, "user");
     if (!state.investigation) {
       await submitReport(text);
       return;
