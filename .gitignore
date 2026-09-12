@@ -41,3 +41,6 @@ desktop.ini
 .env
 .env.*
 !.env.example
+
+# Supervisor logs from scripts/serve.mjs
+.logs/

@@ -390,7 +390,18 @@ is never miscounted as a defect in your application.
 
 ```bash
 npm run build
-npm run web -- --workspace ./my-workspace        # then open http://127.0.0.1:4599/
+npm run serve                                    # supervised, port 3000, restarts itself
+```
+
+Then open **http://127.0.0.1:3000/**. `npm run serve` supervises the server: if it exits, it comes
+back on the same port, so a link you have open keeps working. It backs off on repeated failures
+rather than spinning, logs to `.logs/web-<port>.log`, and takes `--port` and `--workspace`.
+
+`npm run web` is the same server in the foreground, unsupervised, for when you want to watch it
+die:
+
+```bash
+npm run web -- --workspace ./my-workspace --port 4599
 ```
 
 A local page that walks the same pipeline as a conversation: describe the bug, see the flow it

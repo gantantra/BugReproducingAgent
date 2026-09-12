@@ -100,6 +100,11 @@ export default tseslint.config(
         console: "readonly",
         Buffer: "readonly",
         __dirname: "readonly",
+        // Node timers. Used by the supervisor's restart backoff.
+        setTimeout: "readonly",
+        clearTimeout: "readonly",
+        setInterval: "readonly",
+        clearInterval: "readonly",
       },
     },
     rules: {
