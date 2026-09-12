@@ -944,8 +944,26 @@
     ]);
   }
 
+  /** The scaffold path comes back absolute; the allowlist takes workspace-relative paths. */
+  function toWorkspaceRelative(absolute) {
+    if (!absolute) return null;
+    const ws = (WORKSPACE || "").replace(/[\\/]+$/, "");
+    let rel = absolute;
+    if (ws && rel.startsWith(ws)) rel = rel.slice(ws.length);
+    return rel.replace(/\\/g, "/").replace(/^\/+/, "");
+  }
+
+  /**
+   * Record the approval from the page, in one click.
+   *
+   * This is not an auto-approval. You read the proposal card, you pressed the button, and what is
+   * recorded is bound to the checksum of the exact bytes you read — the CLI recomputes it and
+   * refuses on any mismatch. What has gone is being sent to a file in the workspace to type the
+   * word "approve" into a document the scaffold already filled in for you.
+   */
   async function approveThenRun(repetitions) {
-    setBusy(true);
+    setBusy(true, "Recording your approval…");
+
     const scaffold = resultOf(
       await act("approve-scaffold", {
         investigation: state.investigation,
@@ -953,38 +971,57 @@
         approver: "web-ui operator",
       })
     );
+
+    // A scaffold already on disk is not an error here: it is the file we are about to approve.
+    let path = scaffold.path;
     if (scaffold.ok !== true) {
-      setBusy(false);
-      showFailure(scaffold, "Could not write the approval file");
+      path = scaffold.context && scaffold.context.path;
+      if (!path) {
+        setBusy(false);
+        showFailure(scaffold, "Could not prepare the approval");
+        return;
+      }
+    }
+
+    const checksum = String(scaffold.proposalChecksum || state.proposalChecksum || "").replace(
+      /^sha256:/,
+      ""
+    );
+    const from = toWorkspaceRelative(path);
+
+    const approved = resultOf(
+      await act("approve", {
+        investigation: state.investigation,
+        gate: state.gate,
+        checksum,
+        from,
+      })
+    );
+    setBusy(false);
+
+    if (approved.ok !== true) {
+      showFailure(approved, "The approval was refused");
       return;
     }
-    const c = card("Approval recorded");
+
+    const c = card("Approved");
     kv(c, [
-      ["file", scaffold.path || scaffold.approvalPath],
-      ["checksum", state.proposalChecksum],
+      ["gate", state.gate],
+      ["checksum", checksum],
+      ["recorded in", from],
+      ["approver", "web-ui operator"],
     ]);
     c.appendChild(
       node(
         "p",
         null,
-        "The scaffold is written pre-filled but approves nothing until a decision is recorded against the checksum. Edit it in the workspace if you want to change which items are approved, then run the printed command."
-      )
-    );
-    c.appendChild(
-      node(
-        "p",
-        null,
-        "Because the approval file is a human artefact, this UI does not silently rewrite its decision field. Complete the approval in the workspace file, then press Run."
+        "Bound to the checksum of the proposal you just read. Re-rendering a changed proposal produces a new checksum and invalidates this, by design."
       )
     );
     buttons(c, [
-      {
-        label: `Run ${repetitions}×`,
-        kind: "primary",
-        onClick: () => runBatch(repetitions),
-      },
+      { label: `Run ${repetitions}×`, kind: "primary", onClick: () => runBatch(repetitions) },
+      { label: "Not yet", onClick: () => say("Nothing has run. Press Run when you are ready.") },
     ]);
-    setBusy(false);
   }
 
   async function runBatch(repetitions) {

@@ -483,6 +483,17 @@ makes are asked, never defaulted:
 — including `video: "on"`, which is quoted because bare `on` is boolean `true` under YAML 1.1.
 `apps/web/src/target.spec.ts` asserts all of that.
 
+### Approving from the page
+
+The page records the approval itself, in one click. That is not an auto-approval: you read the
+proposal card, you pressed the button, and what is recorded is bound to the SHA-256 of the exact
+bytes you read — the CLI recomputes it and refuses on any mismatch. There is no path in the
+allowlist that approves without a checksum, and `apps/web/src/actions.spec.ts` asserts it.
+
+What has gone is the round trip. The page previously scaffolded a file and told you to open the
+workspace and type the word "approve" into a document the scaffold had already filled in, which
+was friction rather than a decision.
+
 ### Sessions
 
 Refreshing the page does not lose your place. The transcript and where you got to are held server

@@ -19,8 +19,9 @@ import { ParamError } from "./actions.js";
  *    operator asserting they are authorised to act on it, so it is asked, never defaulted.
  *  - **Allowed origins.** A navigation outside the list aborts the run. The baseUrl's origin is
  *    added because the schema requires every target origin to appear, and nothing else is.
- *  - **Destructive actions** stay blocked. Nothing here relaxes `blockDestructiveActions`; that
- *    needs a per-action justification in the approval file, which is a separate human decision.
+ *  - **Destructive actions** are not decided here at all. `blockDestructiveActions` is a workspace
+ *    policy, not a property of a target, and writing it while recording one would override the
+ *    operator's setting behind their back.
  */
 
 export const CLASSIFICATIONS = ["fixture", "test", "staging"] as const;
@@ -125,11 +126,9 @@ export function writeTarget(workspace: string, req: TargetRequest): TargetWritte
   blockStyle(originsNode);
   doc.setIn(["safety", "allowedOrigins"], originsNode);
 
-  // Destructive actions stay blocked. A delete-account flow is exactly the case this guards, and
-  // unblocking it is a separate, per-action decision recorded in the approval file.
-  if (doc.getIn(["safety", "blockDestructiveActions"]) === undefined) {
-    doc.setIn(["safety", "blockDestructiveActions"], true);
-  }
+  // Nothing is written for blockDestructiveActions. Recording a target is not the place to decide
+  // it, and writing the old default here silently re-armed the guard on every workspace configured
+  // through this page, overriding the loaded default. An absent key means "take the default".
 
   writeFileSync(configPath, doc.toString(), "utf8");
 
