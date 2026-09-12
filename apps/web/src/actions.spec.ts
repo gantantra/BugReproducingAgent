@@ -198,12 +198,24 @@ describe("the authoring action", () => {
     );
   });
 
-  it("refuses an answer carrying a control character", () => {
-    // The one free-text value that reaches argv. A newline in it would let a typed answer look
-    // like a second argument, so the pattern excludes the whole control range rather than
-    // listing characters — an earlier version was mangled into matching almost nothing, which a
-    // regex this permissive-looking makes easy to miss.
-    for (const bad of ["line one\nline two", "tab\there", "bell\u0007"]) {
+  it("accepts an answer that spans lines, because the composer invites one", () => {
+    // The page says "Shift+Enter for a new line" and then refused the result with "answer must be
+    // the answer you typed". The original reason — a newline making an answer look like a second
+    // argument — is not true here: the CLI is spawned with an argv array and no shell.
+    for (const good of [
+      "use this url:\nhttps://shop.example/cart",
+      "first\nsecond\nthird",
+      "url:\thttps://shop.example",
+    ]) {
+      expect(
+        () => build({ investigation: "INV-001", resume: "abc12345", answer: good }),
+        JSON.stringify(good)
+      ).not.toThrow();
+    }
+  });
+
+  it("still refuses the control characters that are never typed on purpose", () => {
+    for (const bad of ["bell\u0007", "nul\u0000here", "esc\u001b[31m"]) {
       expect(
         () => build({ investigation: "INV-001", resume: "abc12345", answer: bad }),
         JSON.stringify(bad)

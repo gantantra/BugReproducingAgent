@@ -82,10 +82,19 @@ const SESSION_ID = /^[0-9a-fA-F-]{8,64}$/;
  *
  * This is the one genuinely free-text value in the allowlist, and it is bounded rather than
  * patterned because that is what it is: a person answering "which Delete did you mean?" in their
- * own words. Control characters are excluded so it cannot smuggle a newline into an argument
- * list; length is capped so it cannot become an unbounded command line.
+ * own words, at whatever length the answer needs.
+ *
+ * **Newlines, tabs and carriage returns are allowed**, and excluding them was a bug that made the
+ * page contradict itself: the composer says "Shift+Enter for a new line", and a multi-line answer
+ * was then refused with "answer must be the answer you typed". The original reason -- that a
+ * newline could make an answer look like a second argument -- is not true here: the CLI is spawned
+ * with an argv array and no shell, so an argument containing a newline is one argument containing
+ * a newline.
+ *
+ * The rest of the control range stays out, NUL above all, and the length is capped so an answer
+ * cannot become an unbounded command line.
  */
-const FREE_TEXT = /^[^\p{Cc}]{1,2000}$/u;
+const FREE_TEXT = /^(?:[^\p{Cc}]|[\n\r\t]){1,4000}$/u;
 
 /**
  * Supplied by the server. Paths the browser sends are workspace-relative by contract, but the CLI

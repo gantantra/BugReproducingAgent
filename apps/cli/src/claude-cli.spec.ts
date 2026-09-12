@@ -144,10 +144,15 @@ describe("the Playwright MCP server config", () => {
     expect(args.join(" ")).not.toMatch(/=.*[0-9]{6}/);
   });
 
-  it("joins allowed origins with a semicolon, as the server expects", () => {
+  it("does not restrict origins in the browser, because that broke real sites", () => {
+    // Passed the one origin an operator named, a session reached www.<site> and then every
+    // request to static.<site> — the whole JS and CSS bundle — failed with ERR_BLOCKED_BY_CLIENT.
+    // The server's own help says the flag "does not serve as a security boundary" and "does not
+    // affect redirects", so it was blocking the target's own stylesheet and protecting nothing.
     const args = cfg({ allowedOrigins: ["https://a.example", "https://b.example"] }).mcpServers
       .playwright.args;
-    expect(args[args.indexOf("--allowed-origins") + 1]).toBe("https://a.example;https://b.example");
+    expect(args).not.toContain("--allowed-origins");
+    expect(args.join(" ")).not.toContain("b.example");
   });
 
   it("runs headless by default and shows the browser only when asked", () => {

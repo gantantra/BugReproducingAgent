@@ -146,11 +146,21 @@ export function playwrightMcpConfig(opts: {
   ];
   if (opts.headless !== false) args.push("--headless");
   if (opts.secretsPath) args.push("--secrets", opts.secretsPath);
-  // Not a security boundary — the server's own help says so, and redirects bypass it. It is a
-  // guard rail that keeps an exploring session on the target the operator named.
-  if (opts.allowedOrigins?.length) {
-    args.push("--allowed-origins", opts.allowedOrigins.join(";"));
-  }
+
+  /* `--allowed-origins` is deliberately NOT passed, and `allowedOrigins` is kept on the options
+   * only so callers need not know that.
+   *
+   * It reads like a safety measure and is not one — the server's own help says it "does not serve
+   * as a security boundary" and "does not affect redirects". What it does do is break real sites.
+   * Passed the one origin an operator named, a session reached www.<site> and then every request
+   * to static.<site> — the entire JS and CSS bundle — failed with ERR_BLOCKED_BY_CLIENT, so the
+   * page never rendered and the session stopped to ask about proxy settings. Every real site
+   * serves assets from somewhere else: a CDN subdomain, a font host, an image domain.
+   *
+   * What actually bounds a session is the brief telling it to stay on the target, and the
+   * measured re-run enforcing `safety.allowedOrigins` properly — with subdomain matching, which
+   * this flag has no notion of. A guard rail that blocks the target's own stylesheet is not
+   * protecting anything; it is stopping the operator's site from loading. */
   return { mcpServers: { playwright: { command: "npx", args } } };
 }
 
