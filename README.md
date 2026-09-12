@@ -121,11 +121,26 @@ type"_ and nothing about the conditional shapes — that a `goto` also requires 
 It now emits lines like `when type=goto: also requires url (may be null)`.
 
 A fifth cause, confirmed by capturing the raw turns: **reasoning tokens are billed against the
-same completion budget as the answer.** `REASONING_MODEL` runs in thinking mode, and on a live run
-the repair turn spent all 6000 of its `max_tokens` on `reasoning_tokens` and returned an empty
-`content`, which surfaced as "response is not parseable JSON" — a message that says nothing about
-the cause. `propose_experiments` is now 1.2.0 with `maxOutputTokens: 16000`, sized to leave the
-answer room after the model has finished thinking.
+same completion budget as the answer**, and `inferenceMode` was never sent to the provider. An
+alias could declare `non-thinking` while the model reasoned anyway, because nothing put that on
+the wire. A live `intake_to_flow` run spent all 7000 of its `max_tokens` on `reasoning_tokens` and
+returned an empty `content`, which surfaced as "response is not parseable JSON" — a message that
+says nothing about the cause.
+
+`inferenceMode: non-thinking` now sends `thinking: {"type": "disabled"}`, verified against the
+provider to remove reasoning entirely (`enable_thinking: false` was also tried and does nothing;
+`unspecified` sends nothing and leaves the provider's default). The effect on the same report that
+had been failing:
+
+|                     | before              | after        |
+| ------------------- | ------------------- | ------------ |
+| `completion_tokens` | 7000                | 845          |
+| `reasoning_tokens`  | 7000                | 0            |
+| `content`           | empty               | 3571 chars   |
+| result              | failed after repair | a valid flow |
+
+`REASONING_MODEL` still thinks, which is the point of it, so `propose_experiments` is 1.2.0 with
+`maxOutputTokens: 16000` — sized to leave the answer room after the model has finished thinking.
 
 **The remaining blocker is a schema gap, not a bug in the model.** With the budget raised, the
 flow completes and returns valid JSON explaining itself:

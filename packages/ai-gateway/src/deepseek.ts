@@ -145,6 +145,23 @@ export class DeepSeekProvider implements LlmProvider {
       stream: false,
     };
 
+    /*
+     * Make `inferenceMode` mean something on the wire.
+     *
+     * It was config-only: the alias declared `non-thinking` and nothing was ever sent, so the model
+     * reasoned anyway. That matters because reasoning tokens are billed against `max_tokens`
+     * alongside the answer -- a live intake_to_flow run spent all 7000 of its budget on
+     * reasoning_tokens and returned an EMPTY content field, which surfaced as "response is not
+     * parseable JSON" and said nothing about the cause.
+     *
+     * `thinking: {type: "disabled"}` was verified against the provider to remove reasoning_tokens
+     * entirely. `enable_thinking: false` was also tried and does nothing. `unspecified` sends
+     * nothing and leaves the provider's own default in place, which is what it means.
+     */
+    if (inferenceMode === "non-thinking") {
+      body["thinking"] = { type: "disabled" };
+    }
+
     // Structured output is requested only where the capability is actually supported. Where it is
     // not, the prompt contract carries the requirement and the response is extracted strictly --
     // the agent never pretends a capability exists (the degradation matrix).
