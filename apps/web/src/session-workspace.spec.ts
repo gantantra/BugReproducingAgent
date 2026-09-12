@@ -28,6 +28,12 @@ afterEach(() => {
 
 const AT = Date.parse("2026-09-12T10:14:33.000Z");
 
+/** Write a parent workspace config for the session to seed from. */
+function seedParent(yaml: string): void {
+  mkdirSync(join(root, ".investigator"), { recursive: true });
+  writeFileSync(join(root, ".investigator", "config.yaml"), yaml);
+}
+
 describe("naming", () => {
   it("leads with the timestamp, so folders sort chronologically by name", () => {
     const earlier = sessionFolderName(AT, "aaaaaaaa-1111");
@@ -68,18 +74,50 @@ describe("creating the folder", () => {
     expect(a.dir).not.toBe(b.dir);
   });
 
-  it("inherits the parent config, so configured targets carry over", () => {
-    mkdirSync(join(root, ".investigator"), { recursive: true });
-    writeFileSync(join(root, ".investigator", "config.yaml"), "safety:\n  productionGuard: true\n");
+  it("inherits how the machine talks to the world", () => {
+    // Provider, storage, policy, budgets: identical for every session, tedious to restate, and
+    // carrying no trace of what anyone investigated.
+    seedParent("llm:\n  provider: deepseek\nsafety:\n  productionGuard: true\n");
     const ws = ensureSessionWorkspace(root, AT, "abc123");
-    expect(readFileSync(join(ws.dir, ".investigator", "config.yaml"), "utf8")).toContain(
-      "productionGuard"
-    );
+    const seeded = readFileSync(join(ws.dir, ".investigator", "config.yaml"), "utf8");
+    expect(seeded).toContain("productionGuard");
+    expect(seeded).toContain("deepseek");
   });
 
-  it("does not re-copy the parent config over a session's own edits", () => {
-    mkdirSync(join(root, ".investigator"), { recursive: true });
-    writeFileSync(join(root, ".investigator", "config.yaml"), "original: true\n");
+  it("does NOT inherit what anyone was investigating", () => {
+    // The isolation that matters. A target one operator added must not arrive pre-configured for
+    // the next person to open the page, and no session should announce "using the configured
+    // target X" for an X nobody in that session named.
+    seedParent(
+      [
+        "execution:",
+        "  targets:",
+        "    someone-elses:",
+        "      baseUrl: https://not-yours.example",
+        "      classification: test",
+        "safety:",
+        "  allowedOrigins:",
+        "    - https://not-yours.example",
+        "",
+      ].join("\n")
+    );
+    const ws = ensureSessionWorkspace(root, AT, "abc123");
+    const seeded = readFileSync(join(ws.dir, ".investigator", "config.yaml"), "utf8");
+    expect(seeded).not.toContain("not-yours.example");
+    expect(seeded).not.toContain("someone-elses");
+  });
+
+  it("keeps the operator's comments and quoting in what it does inherit", () => {
+    // `video: "on"` has to stay quoted: bare `on` is boolean true under YAML 1.1.
+    seedParent('# how this machine runs\nexecution:\n  video: "on"\n  workers: 1\n');
+    const ws = ensureSessionWorkspace(root, AT, "abc123");
+    const seeded = readFileSync(join(ws.dir, ".investigator", "config.yaml"), "utf8");
+    expect(seeded).toContain("# how this machine runs");
+    expect(seeded).toContain('video: "on"');
+  });
+
+  it("does not re-seed over a session's own edits", () => {
+    seedParent("original: true\n");
     const ws = ensureSessionWorkspace(root, AT, "abc123");
     writeFileSync(join(ws.dir, ".investigator", "config.yaml"), "edited: true\n");
     ensureSessionWorkspace(root, AT, "abc123");

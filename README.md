@@ -1097,7 +1097,7 @@ folder, and that folder **is** a workspace:
 ```
 <workspace>/sessions/2026-09-12T17-06-07Z-586218/
   .investigator/
-    config.yaml                      Copied from the parent on creation, so targets carry over
+    config.yaml                      Machine settings from the parent; targets deliberately NOT
     investigator.db                  This session's investigations, jobs, runs, lineage
     .credentials.json                Test-account values the operator supplied, this session only
     investigations/INV-001/          Manifests, approvals, artifacts, normalized evidence, video
@@ -1110,6 +1110,23 @@ Every `investigate` command the page runs is given `--workspace <that folder>`, 
 lands there because the CLI was told to put it there — nothing is moved or copied afterwards,
 which is what makes "everything this session produced is in one folder" true rather than
 maintained. The folder name leads with the timestamp, so `sessions/` sorts chronologically.
+
+**Nothing about what is being investigated crosses a session.** A session inherits how this
+machine talks to the world — the provider, model aliases, storage, the redaction policy, budgets,
+logging. Those are identical for everyone, tedious to restate, and carry no trace of anyone's work.
+
+It inherits no target. `execution.targets` and `safety.allowedOrigins` are stripped from the
+seeded config, so every session starts with none and asks. Without that, a target one person added
+would arrive pre-configured for the next person to open the page, and their session would begin by
+announcing "using the configured target X" for an X nobody in that session named.
+
+The stripping uses `parseDocument`, so the operator's comments, ordering and quoting survive into
+the copy — including `video: "on"`, which must stay quoted because bare `on` is boolean `true`
+under YAML 1.1.
+
+Verified against the running agent in both directions: a fresh session reports `targets: []` while
+the parent workspace has one configured, and a target plus a credential recorded in one session are
+invisible to another started seconds later.
 
 Two consequences, stated because they are trade-offs and not free:
 

@@ -1,4 +1,5 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { parseDocument } from "yaml";
 import { join, resolve } from "node:path";
 
 /**
@@ -16,7 +17,7 @@ import { join, resolve } from "node:path";
  * ```
  * sessions/2026-09-12T10-14-33Z-3f9a1c/
  *   .investigator/
- *     config.yaml           seeded from the parent, so targets carry over
+ *     config.yaml           machine settings from the parent; targets deliberately NOT carried
  *     investigator.db       this session's investigations, runs, jobs, lineage
  *     investigations/       manifests, normalized evidence, artifacts, videos, approvals
  *     .credentials.json     the test account the operator supplied, for this session only
@@ -89,12 +90,25 @@ export function ensureSessionWorkspace(
 }
 
 /**
- * Give the new session the parent workspace's configuration.
+ * Give the new session the machine's configuration, and nothing about anyone else's work.
  *
- * Without this every session would start with no targets and no allowed origins, and the operator
- * would be asked to re-describe their environment each time — which is exactly the terminal
- * round-trip the page exists to remove. The parent's `config.yaml` is the operator's standing
- * setup; a session inherits it and may then diverge without affecting the next one.
+ * Two kinds of setting live in one `config.yaml`, and only one of them may cross a session
+ * boundary:
+ *
+ *  - **How this machine talks to the world** — the provider, model aliases, storage, the redaction
+ *    policy, budgets, logging. Identical for every session, tedious to restate, and carrying no
+ *    trace of what anyone investigated. Inherited.
+ *  - **What is being investigated** — `execution.targets` and `safety.allowedOrigins`. These name
+ *    a site somebody chose to point the agent at. Inherited, they would mean a target one operator
+ *    added shows up already configured for the next person to open the page, and a session would
+ *    begin by announcing "using the configured target X" for an X nobody in that session named.
+ *
+ * So the second kind is stripped. Every session starts with no target and asks for one, which is
+ * both the isolation and the reason it can never act on somewhere it was not sent.
+ *
+ * Stripped with `parseDocument` rather than by rewriting the file, so the operator's comments,
+ * ordering and quoting survive into the copy — `video: "on"` has to stay quoted, because bare
+ * `on` is boolean `true` under YAML 1.1.
  */
 function seedConfig(rootWorkspace: string, investigatorDir: string): void {
   const target = join(investigatorDir, "config.yaml");
@@ -104,14 +118,17 @@ function seedConfig(rootWorkspace: string, investigatorDir: string): void {
     join(rootWorkspace, ".investigator", "config.yaml"),
     join(rootWorkspace, "config.yaml"),
   ];
-  for (const source of candidates) {
-    if (existsSync(source)) {
-      copyFileSync(source, target);
-      return;
-    }
+  const source = candidates.find((c) => existsSync(c));
+  if (!source) {
+    // No parent config to inherit. `investigate init` writes a default one on first use; leaving
+    // the file absent is better than fabricating a config that claims targets nobody configured.
+    return;
   }
-  // No parent config to inherit. `investigate init` writes a default one on first use; leaving
-  // the file absent is better than fabricating a config that claims targets nobody configured.
+
+  const doc = parseDocument(readFileSync(source, "utf8"));
+  doc.setIn(["execution", "targets"], doc.createNode({}));
+  doc.setIn(["safety", "allowedOrigins"], doc.createNode([]));
+  writeFileSync(target, doc.toString(), "utf8");
 }
 
 /** Every session folder, newest first. The names sort lexically because the timestamp leads. */
