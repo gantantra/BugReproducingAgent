@@ -166,10 +166,42 @@ export async function planCommand(
     items: draft.items ?? [],
   };
 
+  /*
+   * An empty proposal is an ANSWER, not a malformed document.
+   *
+   * The flow reaches it honestly: given a report it cannot ground -- no selector, no URL, an origin
+   * that is not a configured target -- the correct output is "nothing can be proposed, and here is
+   * why", which is exactly what the model writes into `summary`. Rejecting that as invalid made the
+   * flow spend its one repair attempt re-deriving the same answer, and the extra turn then blew the
+   * wall-clock budget, so a correct result surfaced as a timeout.
+   *
+   * No proposal triple is written and no checksum is minted: there is nothing to approve, and a
+   * checksum over an empty bundle would let someone approve nothing at all.
+   */
   if (bundle.items.length === 0) {
-    fail("INPUT_INVALID", "A proposal must contain at least one item", {
-      context: { path: opts.from ?? "" },
-    });
+    const reason = bundle.summary?.trim();
+    return {
+      json: {
+        ok: true,
+        investigationId,
+        gate,
+        proposalRendered: false,
+        items: [] as string[],
+        reason: reason ?? null,
+        generatedBy,
+        nextCommand: `investigate intake --investigation ${investigationId} --from <report.md> --ai`,
+      },
+      human: () =>
+        [
+          `No experiments could be proposed for ${investigationId}.`,
+          "",
+          reason ?? "The flow returned no reason.",
+          "",
+          "This is an answer, not a failure: nothing was invented to fill the gaps. Supply what is",
+          "missing -- a target whose origin matches the report, a real selector, the path -- and",
+          "render the proposal again.",
+        ].join("\n"),
+    };
   }
   const ids = new Set<string>();
   for (const item of bundle.items) {

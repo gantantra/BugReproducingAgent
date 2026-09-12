@@ -142,24 +142,26 @@ had been failing:
 `REASONING_MODEL` still thinks, which is the point of it, so `propose_experiments` is 1.2.0 with
 `maxOutputTokens: 16000` — sized to leave the answer room after the model has finished thinking.
 
-**The remaining blocker is a schema gap, not a bug in the model.** With the budget raised, the
-flow completes and returns valid JSON explaining itself:
+**Fixed.** With the budget raised, the flow completes and returns valid JSON explaining itself:
 
 > "No experiments can be proposed. The flow targets the 99acres site, but the only allowed origin
 > is http://127.0.0.1:8099. … none of these unknowns can be filled without inventing values, so
 > there is no runnable experiment."
 
-That is the correct answer, and `propose-experiments.output.v1.json` cannot express it:
-`items` carries `minItems: 1`, so an empty list fails validation even though the schema has a
-`summary` field the model used properly. The honest answer is rejected as invalid, the flow spends
-its one repair attempt re-deriving it, and that extra turn is what exceeds the 120s wall clock.
-Raising the wall clock would treat the symptom.
+That is the correct answer, and the schema could not express it: `items` carried `minItems: 1`, so
+an empty list failed validation, the flow spent its one repair attempt re-deriving the same answer,
+and the extra turn exceeded the 120s wall clock — a correct result surfacing as a timeout. Raising
+the wall clock would have treated the symptom.
 
-Two things follow. Allowing `minItems: 0` would let the flow say "nothing can be proposed, and
-here is why", which is a useful answer a human can act on — but it is an output-contract change
-and has not been made. And a proposal can only be grounded against a target whose origin matches
-the report: pointing an investigation of a live site at a local fixture correctly produces no
-experiments.
+`items` is now `minItems: 0`, and an empty list **must** carry a `summary` saying why (a schema
+conditional, so the model is told: `when items is empty: also requires summary`). An empty list
+with no reason is not an answer at all. `plan` reports it as `proposalRendered: false` with the
+reason rather than failing, and writes no proposal triple — there is nothing to approve, and a
+checksum over an empty bundle would let someone approve nothing.
+
+A proposal can still only be grounded against a target whose origin matches the report: pointing
+an investigation of a live site at a local fixture correctly produces no experiments, and now says
+so.
 
 A target is bound to an investigation **at intake**, not by existing in `config.yaml`. An
 investigation opened before its target was recorded reads `target (none)` and the constraints tool

@@ -848,6 +848,32 @@
           setBusy(true);
           const r = resultOf(await act("plan", { investigation: state.investigation, ai: true }));
           setBusy(false);
+          // An empty proposal is an answer, not a failure: the flow would have had to invent a
+          // selector or an origin to fill it, and refusing to is the behaviour that makes the rest
+          // of the pipeline worth trusting. Show the reason and what would unblock it.
+          if (r.ok === true && r.proposalRendered === false) {
+            const c = card("No experiments could be proposed");
+            c.appendChild(node("p", null, r.reason || "The flow gave no reason."));
+            c.appendChild(
+              node(
+                "p",
+                null,
+                "Nothing was invented to fill the gaps. Supply what is missing — a target whose origin matches the report, a real selector, the path — and propose again."
+              )
+            );
+            buttons(c, [
+              { label: "Answer the unknowns", kind: "primary", onClick: () => askNextUnknown() },
+              {
+                label: "Change the target",
+                onClick: () => {
+                  state.targetName = null;
+                  void askForTarget();
+                },
+              },
+              { label: "Propose again", onClick: () => offerPropose() },
+            ]);
+            return;
+          }
           if (r.ok !== true) {
             showFailure(r, "Could not render a proposal");
             say(

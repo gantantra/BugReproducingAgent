@@ -15,11 +15,12 @@
     },
     "summary": {
       "type": "string",
-      "maxLength": 2000
+      "maxLength": 2000,
+      "description": "Why these experiments, in the reporter's terms. REQUIRED when items is empty: an empty list is a legitimate answer -- nothing could be grounded without inventing a value -- but an empty list with no reason is not an answer at all."
     },
     "items": {
       "type": "array",
-      "minItems": 1,
+      "minItems": 0,
       "description": "One decidable unit each. A human approves a SUBSET by listing itemIds, which is what makes partial approval a scope rather than a separate state.",
       "items": {
         "type": "object",
@@ -179,5 +180,33 @@
         "additionalProperties": false
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "then": {
+        "type": "object",
+        "required": [
+          "summary"
+        ],
+        "properties": {
+          "summary": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  ]
 }
