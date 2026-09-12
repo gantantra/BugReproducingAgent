@@ -16,13 +16,14 @@ import { fileURLToPath } from "node:url";
  * the reason in a scrolling log. It retries, slower each time, up to a ceiling, and never gives up:
  * the point of this script is that the agent stays reachable.
  *
- *   node scripts/serve.mjs [--port 3000] [--workspace ./repro-workspace]
+ *   node scripts/serve.mjs [--port 9999] [--workspace ./repro-workspace]
  */
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
 
-const DEFAULT_PORT = 3000;
+/** One port, so a bookmark keeps working across restarts and across sessions. */
+const DEFAULT_PORT = 9999;
 const MIN_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 30_000;
 /** A process that survives this long is treated as healthy, and the backoff resets. */

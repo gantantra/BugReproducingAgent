@@ -62,7 +62,8 @@ function main(): void {
   }
 
   const portRaw = flagValue(argv, "--port");
-  const port = portRaw ? Number.parseInt(portRaw, 10) : 4599;
+  // Same default as `npm run serve`, so the two entry points do not disagree about the address.
+  const port = portRaw ? Number.parseInt(portRaw, 10) : 9999;
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     process.stderr.write(`--port must be a valid port number, got ${String(portRaw)}\n`);
     process.exit(1);
