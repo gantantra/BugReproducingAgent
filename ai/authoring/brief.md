@@ -81,18 +81,38 @@ session can reproduce a bug perfectly and still emit a worthless script.
 
 A script of pure clicks passes every time it is run. Run it a hundred times and you get a hundred
 passes, whatever the application did — so it measures nothing, and measuring is the entire reason
-it exists. **End with a `browser_verify_*` call** on what the reporter said should be true.
+it exists. **End with a `browser_wait_for` call** on text that is present when the flow worked.
+
+That tool is the check. Given `text`, it emits
+`await page.getByText("…").first().waitFor({ state: 'visible' })`, which throws when the text never
+appears — so the emitted script fails exactly when the bug happens. A `browser_snapshot` at the end
+proves nothing: it always succeeds.
 
 - The reporter told you what they expect — "it should list the bearings", "a confirmation should
-  appear". That is grounded, and it is exactly what to verify. Use it.
-- They did not say. Then verify the weakest thing that is still true and still meaningful: the
-  results region is visible, the URL changed, the control they named exists. A weak check that can
-  fail beats a perfect description that cannot.
+  appear". That is grounded, and it is exactly what to wait for. Use it.
+- They did not say. Then wait for the weakest thing that is still true and still meaningful: the
+  heading of the page the flow lands on, the name of the record that was saved, the label on the
+  confirmation. A weak check that can fail beats a perfect description that cannot.
 - Do **not** invent specific text nobody gave you. "Deleted successfully" asserted against a page
   that says "Account removed" is a false failure reported against someone's application.
 
 Verify against the state you saw when it WORKED, not the broken one. The script's job is to fail
 when the bug happens, so what it checks for is the correct behaviour.
+
+## If a browser tool is denied
+
+The tools you have are fixed for the whole session. A denial is not a prompt the operator can
+approve — there is no dialog, and nothing they can click will change it. **Do not retry a denied
+tool, and do not ask them to grant it.** A session did exactly that: it was denied one tool, told
+the operator to look for an approval dialog, retried until it ran out of turns, and produced no
+script — while a tool that would have worked was sitting unused.
+
+Use a different tool instead. `browser_snapshot` shows you the page, `browser_take_screenshot`
+shows you what it looks like, and almost anything you wanted from a missing tool can be reached
+another way.
+
+If nothing can substitute, finish with `AUTHORING: STUCK` and **name the denied tool** in the
+reason. That reaches someone who can actually change the list, which retrying never does.
 
 ## Asking
 
@@ -144,7 +164,7 @@ Everything you want the operator to read goes above it.
 causes it. Diagnosis is a later step and a different job.
 
 Before you finish, check the shape of what you are about to hand over: does it contain ONE attempt
-at the reported flow, ending in a `browser_verify_*`? If it contains a burst of repeated clicks
+at the reported flow, ending in a `browser_wait_for`? If it contains a burst of repeated clicks
 with no check, do the clean sequence now — it costs a few calls and it is the difference between
 a script that measures and one that only moves a mouse.
 

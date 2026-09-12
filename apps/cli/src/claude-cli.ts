@@ -197,26 +197,33 @@ export function findClaudeCli(env: NodeJS.ProcessEnv = process.env): string | nu
 /**
  * The browser tools an authoring session may use, and — more importantly — the ones it may not.
  *
- * Playwright MCP exposes 66 tools. Handing over all of them would not just be loose, it would
- * defeat the deliverable, because several of them let a session make the bug *appear* rather than
- * reproduce it. The emitted script is re-run unattended to measure how often a real application
- * really fails; a script that fakes the failure measures nothing.
+ * At the pinned `@playwright/mcp` version this list is EXHAUSTIVE minus two. The server exposes
+ * exactly 24 tools by default, and this is all of them except `browser_evaluate` and
+ * `browser_run_code_unsafe`. Both run arbitrary JavaScript, and a session holding either can
+ * satisfy any assertion without the application doing anything — the emitted script would be
+ * `page.evaluate(...)` rather than a user's actions, and the whole point is measuring how often a
+ * real application really fails. A script that fakes the failure measures nothing.
  *
- * Refused, each for a specific reason rather than caution:
+ * Nothing else is withheld. Everything a person can do with a keyboard, a mouse and their eyes is
+ * allowed, and a session that cannot reach the bug because a harmless tool was missing produces
+ * nothing at all — which is a far more likely failure here than a session faking a reproduction.
  *
- *  - `browser_evaluate`, `browser_run_code_unsafe` — arbitrary JavaScript in the page. A session
- *    with these can satisfy any assertion without the application doing anything, and the emitted
- *    script would be `page.evaluate(...)` rather than a user's actions.
- *  - `browser_route`, `browser_unroute`, `browser_network_state_set` — network interception. This
- *    is the dangerous one for this product: a session could stub the failing response and
- *    "reproduce" a bug the server never produced.
- *  - `browser_cookie_set`, `browser_localstorage_set`, `browser_sessionstorage_set`,
- *    `browser_set_storage_state` — injecting state skips the flow that reaches it, and the flow is
- *    what the reporter described.
- *  - `browser_mouse_*_xy` — raw coordinates. They work once and break on a different window size,
- *    which is exactly what a script re-run weeks later will meet.
+ * **This list must be checked against the running server, not written from memory.** Every name
+ * here was previously guessed, and the guesses were wrong in both directions at once: it named
+ * eight tools that do not exist at any capability level (`browser_generate_locator`, the four
+ * `browser_verify_*`, and the three `browser_*_video*`, which need `--caps devtools`), and it
+ * omitted `browser_find`, which a real session reached for and was denied — ending the run with
+ * "it could not get there" and no script. The refusals it documented (`browser_route`,
+ * `browser_cookie_set`, the storage setters) were of tools the server has never had.
+ * `tests/e2e/playwright-mcp-tools.test.ts` boots the real server and fails if this drifts again.
  *
- * Everything a person can do with a keyboard, a mouse and their eyes is allowed.
+ * Two notes on tools that look surprising in an allowlist:
+ *
+ *  - `browser_wait_for` is the one that makes a script able to fail. Given `text`, it generates
+ *    `await page.getByText("…").first().waitFor({ state: 'visible' })`, which throws on timeout.
+ *    It is the check the brief asks every reproduction to end with.
+ *  - `browser_network_request` and `browser_network_requests` are reads of traffic that already
+ *    happened. Neither can intercept or stub a response; the server has no tool that can.
  */
 export const ALLOWED_PLAYWRIGHT_TOOLS: readonly string[] = [
   // Going places
@@ -224,12 +231,14 @@ export const ALLOWED_PLAYWRIGHT_TOOLS: readonly string[] = [
   "browser_navigate_back",
   "browser_tabs",
   "browser_resize",
+  "browser_close",
   // Looking
   "browser_snapshot",
+  "browser_find",
   "browser_take_screenshot",
   "browser_console_messages",
   "browser_network_requests",
-  "browser_generate_locator",
+  "browser_network_request",
   // Acting, as a person would
   "browser_click",
   "browser_type",
@@ -241,14 +250,15 @@ export const ALLOWED_PLAYWRIGHT_TOOLS: readonly string[] = [
   "browser_drop",
   "browser_file_upload",
   "browser_handle_dialog",
+  // Checking what happened, in a way that can fail
   "browser_wait_for",
-  // Checking what happened
-  "browser_verify_element_visible",
-  "browser_verify_text_visible",
-  "browser_verify_value",
-  "browser_verify_list_visible",
-  // Recording the run the operator approves by watching
-  "browser_start_video",
-  "browser_stop_video",
-  "browser_video_chapter",
 ].map((t) => `mcp__playwright__${t}`);
+
+/**
+ * The two tools deliberately withheld, named so a test can assert the allowlist is the server's
+ * full surface minus exactly these — rather than re-listing 22 names in two places.
+ */
+export const REFUSED_PLAYWRIGHT_TOOLS: readonly string[] = [
+  "browser_evaluate",
+  "browser_run_code_unsafe",
+];
