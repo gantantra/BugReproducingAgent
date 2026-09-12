@@ -1,0 +1,14 @@
+{
+  "name": "@investigator/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Local chat UI that drives the investigate CLI",
+  "bin": {
+    "investigate-web": "./dist/bin.js"
+  },
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
+  },
+  "dependencies": {}
+}

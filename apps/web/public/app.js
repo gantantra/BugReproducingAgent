@@ -1,0 +1,754 @@
+/* Investigator chat UI.
+ *
+ * This file renders and sequences. It decides nothing about the investigation: every step calls an
+ * allowlisted action, the server spawns the real `investigate` command, and what comes back is
+ * displayed as-is. Where the CLI refuses -- an unapproved gate, an unimplemented milestone, an
+ * invalid AI output -- the refusal is shown, never worked around.
+ */
+(() => {
+  "use strict";
+
+  const TOKEN = document.body.dataset.token;
+  const WORKSPACE = document.body.dataset.workspace;
+
+  const el = {
+    transcript: document.getElementById("transcript"),
+    input: document.getElementById("input"),
+    send: document.getElementById("send"),
+    rail: document.getElementById("rail"),
+    ws: document.getElementById("ws"),
+    provider: document.getElementById("provider"),
+    inv: document.getElementById("inv"),
+  };
+
+  const STEPS = [
+    ["describe", "1 · Describe"],
+    ["interpret", "2 · Interpret"],
+    ["clarify", "3 · Clarify"],
+    ["propose", "4 · Propose"],
+    ["approve", "5 · Approve"],
+    ["record", "6 · Record & review"],
+    ["repeat", "7 · Repeat N"],
+    ["rca", "8 · Analyse"],
+  ];
+
+  const state = {
+    step: "describe",
+    done: new Set(),
+    investigation: null,
+    reportPath: null,
+    reportText: "",
+    flow: null,
+    proposalChecksum: null,
+    gate: "experiment_selection",
+    aiReady: false,
+    busy: false,
+    awaiting: null, // a pending question handler for the next user message
+  };
+
+  // ---------------------------------------------------------------------------------------- api
+
+  async function api(path, options = {}) {
+    const res = await fetch(path, {
+      ...options,
+      headers: {
+        "content-type": "application/json",
+        "x-investigator-token": TOKEN,
+        ...(options.headers || {}),
+      },
+    });
+    const body = await res.json().catch(() => ({ ok: false, message: "unreadable response" }));
+    if (!res.ok && body.ok !== true) body.ok = false;
+    return body;
+  }
+
+  function act(action, params = {}) {
+    return api("/api/action", { method: "POST", body: JSON.stringify({ action, params }) });
+  }
+
+  /* SSE over fetch. EventSource cannot send an Authorization-style header, and putting the token
+   * in the URL would leak it into history; streaming the body by hand keeps it in a header. */
+  async function streamJob(jobId, onLog, onDone) {
+    const res = await fetch(`/api/job/${jobId}/events`, {
+      headers: { "x-investigator-token": TOKEN },
+    });
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const frames = buffer.split("\n\n");
+      buffer = frames.pop() || "";
+      for (const frame of frames) {
+        const evMatch = frame.match(/^event: (.+)$/m);
+        const dataMatch = frame.match(/^data: (.+)$/m);
+        if (!evMatch || !dataMatch) continue;
+        let payload;
+        try {
+          payload = JSON.parse(dataMatch[1]);
+        } catch {
+          continue;
+        }
+        if (evMatch[1] === "log") onLog(payload.line);
+        else if (evMatch[1] === "done") onDone(payload);
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------------------------ render
+
+  function node(tag, className, text) {
+    const n = document.createElement(tag);
+    if (className) n.className = className;
+    if (text !== undefined) n.textContent = text;
+    return n;
+  }
+
+  function scroll() {
+    const main = document.querySelector("main");
+    main.scrollTop = main.scrollHeight;
+  }
+
+  function message(who, label) {
+    const wrap = node("div", `msg ${who}`);
+    wrap.appendChild(node("div", "who", label || who));
+    const body = node("div", "body");
+    wrap.appendChild(body);
+    el.transcript.appendChild(wrap);
+    scroll();
+    return body;
+  }
+
+  function say(text, who = "agent") {
+    const body = message(who, who === "agent" ? "agent" : "you");
+    for (const para of String(text).split("\n\n")) {
+      const p = node("p", null, para);
+      p.style.margin = "0 0 8px";
+      body.appendChild(p);
+    }
+    scroll();
+    return body;
+  }
+
+  function card(title, bad) {
+    const body = message("agent", "agent");
+    const c = node("div", `card${bad ? " bad" : ""}`);
+    c.appendChild(node("h3", null, title));
+    const inner = node("div", "inner");
+    c.appendChild(inner);
+    body.appendChild(c);
+    scroll();
+    return inner;
+  }
+
+  function kv(parent, pairs) {
+    const dl = node("dl", "kv");
+    for (const [k, v] of pairs) {
+      if (v === undefined || v === null || v === "") continue;
+      dl.appendChild(node("dt", null, k));
+      dl.appendChild(node("dd", null, String(v)));
+    }
+    parent.appendChild(dl);
+    return dl;
+  }
+
+  function buttons(parent, defs) {
+    const row = node("div", "row");
+    for (const d of defs) {
+      const b = node("button", d.kind || "", d.label);
+      b.addEventListener("click", async () => {
+        [...row.querySelectorAll("button")].forEach((x) => (x.disabled = true));
+        await d.onClick(row);
+      });
+      row.appendChild(b);
+    }
+    parent.appendChild(row);
+    return row;
+  }
+
+  function renderRail() {
+    el.rail.replaceChildren();
+    for (const [id, label] of STEPS) {
+      const cls = state.done.has(id) ? "step done" : state.step === id ? "step active" : "step";
+      el.rail.appendChild(node("div", cls, label));
+    }
+  }
+
+  function setStep(id) {
+    const order = STEPS.map((s) => s[0]);
+    for (const s of order) {
+      if (s === id) break;
+      state.done.add(s);
+    }
+    state.step = id;
+    renderRail();
+  }
+
+  function setBusy(on) {
+    state.busy = on;
+    el.send.disabled = on;
+    el.input.disabled = on;
+  }
+
+  /** Render a CLI failure exactly as the CLI reported it. */
+  function showFailure(result, contextLabel) {
+    const c = card(contextLabel || "Refused", true);
+    const pairs = [
+      ["code", result.code],
+      ["message", result.message],
+      ["exit", result.exitCode],
+    ];
+    if (result.context && result.context.milestone) {
+      pairs.push(["arrives in", result.context.milestone]);
+    }
+    kv(c, pairs);
+    if (result.code === "NOT_IMPLEMENTED") {
+      c.appendChild(
+        node(
+          "p",
+          null,
+          "This step is part of the frozen command contract but is not built yet. It is shown rather than hidden so the pipeline's real extent is visible."
+        )
+      );
+    }
+    return c;
+  }
+
+  /** Unwrap the server envelope into the CLI's own JSON. */
+  function resultOf(response) {
+    if (!response || response.ok === false)
+      return response || { ok: false, message: "no response" };
+    return response.result || response;
+  }
+
+  // ------------------------------------------------------------------------------------- steps
+
+  async function checkProvider() {
+    const r = resultOf(await act("doctor"));
+    if (r.ok !== true) {
+      el.provider.textContent = "cli error";
+      el.provider.className = "pill bad";
+      showFailure(r, "doctor failed");
+      return;
+    }
+    const cfg = r.config || {};
+    state.aiReady = cfg.aiConfig === "configured" && cfg.apiKeyConfigured === true;
+    el.provider.textContent = `${cfg.provider || "?"} · ${state.aiReady ? "ai ready" : "ai missing"}`;
+    el.provider.className = `pill ${state.aiReady ? "ok" : "bad"}`;
+    if (!state.aiReady) {
+      const c = card("DeepSeek is not configured", true);
+      kv(c, [
+        ["key variable", cfg.apiKeyEnv],
+        ["key present", String(cfg.apiKeyConfigured)],
+        ["missing", (cfg.aiConfigMissing || []).join(", ") || "—"],
+      ]);
+      c.appendChild(
+        node(
+          "p",
+          null,
+          "Interpretation and analysis need this. Everything deterministic still works without it."
+        )
+      );
+    }
+  }
+
+  async function submitReport(text) {
+    setBusy(true);
+    const wrote = await api("/api/report", {
+      method: "POST",
+      body: JSON.stringify({ text, name: "report.md" }),
+    });
+    if (wrote.ok !== true) {
+      showFailure(wrote, "Could not store the report");
+      setBusy(false);
+      return;
+    }
+    state.reportPath = wrote.path;
+    state.reportText = text;
+    say(`Stored your report (${wrote.bytes} bytes). Interpreting it into a structured Flow…`);
+
+    setStep("interpret");
+    const r = resultOf(
+      await act("intake", { from: wrote.path, title: firstLine(text), ai: state.aiReady })
+    );
+    setBusy(false);
+
+    if (r.ok !== true) {
+      showFailure(r, "Intake failed");
+      return;
+    }
+    state.investigation = r.investigationId || r.investigation || null;
+    el.inv.textContent = state.investigation || "no investigation";
+    el.inv.className = "pill ok";
+    await renderFlow(r);
+  }
+
+  function firstLine(text) {
+    const line = text.split("\n").find((l) => l.trim());
+    return (line || "Reported issue")
+      .replace(/[^A-Za-z0-9 ._\-()]/g, " ")
+      .slice(0, 110)
+      .trim();
+  }
+
+  /* `intake --json` returns counts for steps and unknowns, the failure point in full, and the
+   * content hash of the stored flow artifact. The detail lives in that artifact, so fetch it
+   * rather than inventing a shape the CLI does not emit. */
+  async function fetchFlowArtifact(sha) {
+    if (!sha) return null;
+    const clean = String(sha).replace(/^sha256:/, "");
+    try {
+      const res = await fetch(
+        `/api/artifact?investigation=${encodeURIComponent(state.investigation)}&kind=flow&sha=${encodeURIComponent(clean)}`,
+        { headers: { "x-investigator-token": TOKEN } }
+      );
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  async function renderFlow(r) {
+    const summary = r.flow || null;
+
+    const c = card("Interpreted flow");
+    kv(c, [
+      ["investigation", state.investigation],
+      ["report", r.reportArtifactId],
+      ["bytes", r.bytes],
+      ["redacted", r.redacted === true ? "yes" : "no"],
+      ["flow", summary && summary.flowId],
+      ["steps", summary && summary.steps],
+      ["unknowns", summary && summary.unknowns],
+      ["interpreted by", summary ? "intake_to_flow" : "not interpreted"],
+    ]);
+
+    if (!summary) {
+      c.appendChild(
+        node(
+          "p",
+          null,
+          "The report was stored but not interpreted, so there is no flow to review. Configure DeepSeek to enable this step."
+        )
+      );
+      offerPropose();
+      return;
+    }
+
+    const fp = summary.suspectedFailurePoint;
+    if (fp) {
+      const h = node("h4", null, "Where it thinks this breaks");
+      h.style.margin = "12px 0 4px";
+      c.appendChild(h);
+      kv(c, [
+        ["what", fp.what],
+        ["why", fp.why],
+        ["at", `${fp.stepId || "?"} / ${fp.actionId || "?"}`],
+        ["confidence", fp.confidence],
+      ]);
+      if (fp.sourceQuote) c.appendChild(node("div", "quote", `“${fp.sourceQuote}”`));
+    }
+
+    const full = await fetchFlowArtifact(summary.sha256);
+    state.flow = full || summary;
+
+    if (full && full.steps && full.steps.length) {
+      const h = node("h4", null, "Proposed steps");
+      h.style.margin = "12px 0 4px";
+      c.appendChild(h);
+      const ol = node("ol", "steps");
+      for (const st of full.steps) {
+        const li = node("li");
+        li.appendChild(node("span", null, st.description || st.stepId));
+        const actions = (st.actions || [])
+          .map(
+            (a) =>
+              a.type + (a.url ? ` ${a.url}` : "") + (a.description ? ` “${a.description}”` : "")
+          )
+          .join(" → ");
+        if (actions) {
+          const sub = node("div", "mono", actions);
+          sub.style.color = "var(--muted)";
+          li.appendChild(sub);
+        }
+        ol.appendChild(li);
+      }
+      c.appendChild(ol);
+    }
+
+    const unknowns = (full && full.unknowns) || [];
+    if (unknowns.length) {
+      setStep("clarify");
+      const q = card(`${unknowns.length} things it could not infer`);
+      const ul = node("ul", "plain");
+      for (const u of unknowns) ul.appendChild(node("li", null, `${u.field} — ${u.why}`));
+      q.appendChild(ul);
+      q.appendChild(
+        node(
+          "p",
+          null,
+          "It refuses to invent a selector or a URL. Answer any of these below and it will re-interpret, or continue and settle them at the approval gate."
+        )
+      );
+      buttons(q, [{ label: "Continue without answering", onClick: () => offerPropose() }]);
+      state.awaiting = async (answer) => {
+        state.awaiting = null;
+        await submitReport(`${state.reportText}
+
+## Clarifications
+
+${answer}
+`);
+      };
+    } else if (summary.unknowns > 0) {
+      setStep("clarify");
+      const q = card(`${summary.unknowns} things it could not infer`);
+      q.appendChild(
+        node(
+          "p",
+          null,
+          "The flow artifact could not be read back, so the individual unknowns cannot be listed here. They are recorded in the stored flow."
+        )
+      );
+      buttons(q, [{ label: "Continue", onClick: () => offerPropose() }]);
+    } else {
+      offerPropose();
+    }
+  }
+
+  function offerPropose() {
+    setStep("propose");
+    const c = card("Next: propose experiments");
+    c.appendChild(
+      node(
+        "p",
+        null,
+        "This renders a gate-1 proposal: what it wants to run, how many repetitions, and what evidence it will capture. Nothing executes until you approve it."
+      )
+    );
+    buttons(c, [
+      {
+        label: "Propose experiments",
+        kind: "primary",
+        onClick: async () => {
+          setBusy(true);
+          const r = resultOf(await act("plan", { investigation: state.investigation, ai: true }));
+          setBusy(false);
+          if (r.ok !== true) {
+            showFailure(r, "Could not render a proposal");
+            say(
+              "You can still supply a proposal file by hand and load it with the CLI: `investigate plan --investigation " +
+                state.investigation +
+                " --from <file.json>`."
+            );
+            return;
+          }
+          renderProposal(r);
+        },
+      },
+    ]);
+  }
+
+  function renderProposal(r) {
+    setStep("approve");
+    state.proposalChecksum = (r.proposalChecksum || "").replace(/^sha256:/, "");
+    const c = card("Gate 1 — experiment selection");
+    kv(c, [
+      ["gate", "experiment_selection"],
+      ["checksum", state.proposalChecksum],
+      ["items", (r.items && r.items.length) || r.itemCount],
+      ["proposal", r.proposalPath],
+    ]);
+    c.appendChild(
+      node(
+        "p",
+        null,
+        "Approval is bound to this checksum. Re-rendering the proposal changes it and invalidates any approval of the old one, by design."
+      )
+    );
+
+    const repsWrap = node("div", "row");
+    const label = node("span", "mono", "repetitions ");
+    label.style.alignSelf = "center";
+    const reps = document.createElement("input");
+    reps.type = "number";
+    reps.min = "1";
+    reps.max = "500";
+    reps.value = "10";
+    reps.style.width = "90px";
+    repsWrap.appendChild(label);
+    repsWrap.appendChild(reps);
+    c.appendChild(repsWrap);
+
+    buttons(c, [
+      {
+        label: "Approve and run",
+        kind: "primary",
+        onClick: async () => {
+          await approveThenRun(Number.parseInt(reps.value, 10) || 10);
+        },
+      },
+      {
+        label: "Reject",
+        kind: "danger",
+        onClick: () => {
+          say(
+            "Rejected. Nothing was executed. Describe what should change and I will re-interpret."
+          );
+          state.awaiting = async (answer) => {
+            state.awaiting = null;
+            await submitReport(`${state.reportText}\n\n## Requested changes\n\n${answer}\n`);
+          };
+        },
+      },
+    ]);
+  }
+
+  async function approveThenRun(repetitions) {
+    setBusy(true);
+    const scaffold = resultOf(
+      await act("approve-scaffold", {
+        investigation: state.investigation,
+        gate: state.gate,
+        approver: "web-ui operator",
+      })
+    );
+    if (scaffold.ok !== true) {
+      setBusy(false);
+      showFailure(scaffold, "Could not write the approval file");
+      return;
+    }
+    const c = card("Approval recorded");
+    kv(c, [
+      ["file", scaffold.path || scaffold.approvalPath],
+      ["checksum", state.proposalChecksum],
+    ]);
+    c.appendChild(
+      node(
+        "p",
+        null,
+        "The scaffold is written pre-filled but approves nothing until a decision is recorded against the checksum. Edit it in the workspace if you want to change which items are approved, then run the printed command."
+      )
+    );
+    c.appendChild(
+      node(
+        "p",
+        null,
+        "Because the approval file is a human artefact, this UI does not silently rewrite its decision field. Complete the approval in the workspace file, then press Run."
+      )
+    );
+    buttons(c, [
+      {
+        label: `Run ${repetitions}×`,
+        kind: "primary",
+        onClick: () => runBatch(repetitions),
+      },
+    ]);
+    setBusy(false);
+  }
+
+  async function runBatch(repetitions) {
+    setStep("record");
+    setBusy(true);
+    const started = await act("run", { investigation: state.investigation, repeat: repetitions });
+    if (started.ok !== true || !started.jobId) {
+      setBusy(false);
+      showFailure(resultOf(started), "Could not start the batch");
+      return;
+    }
+    const c = card(`Running ${repetitions} repetition(s)`);
+    const spinner = node("p");
+    spinner.innerHTML = '<span class="spin"></span> executing in Chromium…';
+    c.appendChild(spinner);
+    const log = node("div", "log");
+    c.appendChild(log);
+
+    await streamJob(
+      started.jobId,
+      (line) => {
+        log.appendChild(document.createTextNode(line + "\n"));
+        log.scrollTop = log.scrollHeight;
+      },
+      (payload) => {
+        spinner.remove();
+        setBusy(false);
+        const r = payload.result || {};
+        if (r.ok !== true) {
+          showFailure(r, "The batch failed");
+          return;
+        }
+        renderRunOutcome(r);
+      }
+    );
+  }
+
+  function renderRunOutcome(r) {
+    const c = card("Batch complete");
+    const counts = r.outcomes || r.byOutcome || {};
+    kv(c, [
+      ["runs", r.runCount ?? r.total],
+      ["completed", r.completed],
+      ...Object.entries(counts).map(([k, v]) => [k, v]),
+    ]);
+
+    const runs = r.runs || [];
+    if (runs.length) {
+      const t = node("table", "runs");
+      const head = node("tr");
+      for (const h of ["run", "outcome", "capture"]) head.appendChild(node("th", null, h));
+      t.appendChild(head);
+      for (const run of runs.slice(0, 40)) {
+        const tr = node("tr");
+        tr.appendChild(node("td", null, run.runId || "—"));
+        tr.appendChild(node("td", null, run.outcome || "—"));
+        tr.appendChild(node("td", null, run.captureStatus || "—"));
+        t.appendChild(tr);
+      }
+      c.appendChild(t);
+    }
+
+    // A recorded video is the artefact your step-5 gate reviews, so play it inline when present.
+    const video = findVideo(r);
+    if (video) {
+      c.appendChild(node("h4", null, "Recording")).style.margin = "12px 0 0";
+      const v = document.createElement("video");
+      v.controls = true;
+      v.src = `/api/artifact?investigation=${encodeURIComponent(state.investigation)}&kind=video&sha=${encodeURIComponent(video)}`;
+      c.appendChild(v);
+      say(
+        "Review the recording above. If the steps are wrong, say what to change and I will re-interpret before running more."
+      );
+    }
+
+    setStep("rca");
+    const next = card("Next: analyse");
+    next.appendChild(
+      node(
+        "p",
+        null,
+        "Contrast runs deterministically first — what separates the failing runs from the passing ones — then optionally add a DeepSeek reading on top."
+      )
+    );
+    buttons(next, [
+      {
+        label: "Analyse",
+        kind: "primary",
+        onClick: () => analyse(true),
+      },
+      { label: "Deterministic only", onClick: () => analyse(false) },
+    ]);
+  }
+
+  function findVideo(r) {
+    const candidates = [];
+    for (const run of r.runs || []) {
+      for (const a of run.artifacts || []) {
+        if (a.kind === "video" && a.sha256) candidates.push(a.sha256.replace(/^sha256:/, ""));
+      }
+    }
+    return candidates[0] || null;
+  }
+
+  async function analyse(withAi) {
+    setBusy(true);
+    const started = await act("analyze", { investigation: state.investigation, ai: withAi });
+    if (started.ok !== true || !started.jobId) {
+      setBusy(false);
+      showFailure(resultOf(started), "Could not start the analysis");
+      return;
+    }
+    const c = card("Analysing");
+    const log = node("div", "log");
+    c.appendChild(log);
+    await streamJob(
+      started.jobId,
+      (line) => {
+        log.appendChild(document.createTextNode(line + "\n"));
+        log.scrollTop = log.scrollHeight;
+      },
+      (payload) => {
+        setBusy(false);
+        const r = payload.result || {};
+        if (r.ok !== true) {
+          showFailure(r, "Analysis failed");
+          return;
+        }
+        renderAnalysis(r);
+      }
+    );
+  }
+
+  function renderAnalysis(r) {
+    const c = card("What separates failing from passing");
+    const disc = (r.comparison && r.comparison.perfectDiscriminators) || r.perfectDiscriminators;
+    if (disc && disc.length) {
+      const ul = node("ul", "plain");
+      for (const d of disc) ul.appendChild(node("li", null, typeof d === "string" ? d : d.name));
+      c.appendChild(ul);
+    } else {
+      c.appendChild(node("p", null, "No signal separated the two groups cleanly."));
+    }
+    for (const caveat of (r.comparison && r.comparison.caveats) || r.caveats || []) {
+      const p = node("p", null, `Caveat: ${typeof caveat === "string" ? caveat : caveat.message}`);
+      p.style.color = "var(--warn)";
+      c.appendChild(p);
+    }
+    if (r.findings && r.findings.length) {
+      const f = card("Findings");
+      for (const finding of r.findings) {
+        kv(f, [
+          ["claim", finding.claim || finding.title],
+          ["level", finding.level],
+          ["evidence", (finding.evidence || []).length + " reference(s)"],
+        ]);
+      }
+    }
+    state.done.add("rca");
+    renderRail();
+  }
+
+  // -------------------------------------------------------------------------------- composer
+
+  async function onSend() {
+    const text = el.input.value.trim();
+    if (!text || state.busy) return;
+    el.input.value = "";
+    say(text, "user");
+
+    if (state.awaiting) {
+      await state.awaiting(text);
+      return;
+    }
+    if (!state.investigation) {
+      await submitReport(text);
+      return;
+    }
+    say(
+      "This investigation is already open. Use the buttons above to move through the gates, or describe a change and I will re-interpret the report."
+    );
+    state.awaiting = async (answer) => {
+      state.awaiting = null;
+      await submitReport(`${state.reportText}\n\n## Clarifications\n\n${answer}\n`);
+    };
+  }
+
+  el.send.addEventListener("click", onSend);
+  el.input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      void onSend();
+    }
+  });
+
+  // ------------------------------------------------------------------------------------- boot
+
+  el.ws.textContent = WORKSPACE;
+  renderRail();
+  say(
+    "I investigate intermittent Chrome issues by reproducing them many times and contrasting the runs that fail against the runs that pass.\n\nDescribe the bug below — the URL, the steps, what you expected, what actually happens, and roughly how often. I will turn it into a structured flow, show you exactly where I think it breaks, and ask before anything runs."
+  );
+  void checkProvider();
+})();

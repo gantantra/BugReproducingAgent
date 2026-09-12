@@ -101,5 +101,9 @@
     "external": [
       "commander"
     ]
+  },
+  "apps/web": {
+    "deps": [],
+    "external": []
   }
 }

@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Investigator</title>
+    <style>
+      :root {
+        --bg: #0f1115;
+        --panel: #161922;
+        --panel-2: #1c2029;
+        --line: #272c38;
+        --text: #e6e8ee;
+        --muted: #9099ad;
+        --accent: #6ea8fe;
+        --ok: #5cc98c;
+        --warn: #e0b252;
+        --bad: #e57373;
+        --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font:
+          14px/1.55 ui-sans-serif,
+          system-ui,
+          "Segoe UI",
+          sans-serif;
+        display: flex;
+        flex-direction: column;
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 10px 16px;
+        background: var(--panel);
+        border-bottom: 1px solid var(--line);
+        flex: 0 0 auto;
+      }
+      header h1 {
+        font-size: 14px;
+        margin: 0;
+        font-weight: 650;
+        letter-spacing: 0.02em;
+      }
+      header .ws {
+        font: 11px/1.4 var(--mono);
+        color: var(--muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 46vw;
+      }
+      header .spacer {
+        flex: 1;
+      }
+      .pill {
+        font: 11px/1 var(--mono);
+        padding: 5px 9px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .pill.ok {
+        color: var(--ok);
+        border-color: #2f6b4c;
+      }
+      .pill.bad {
+        color: var(--bad);
+        border-color: #6b3232;
+      }
+
+      /* Pipeline rail */
+      .rail {
+        display: flex;
+        gap: 6px;
+        padding: 9px 16px;
+        background: var(--panel-2);
+        border-bottom: 1px solid var(--line);
+        overflow-x: auto;
+        flex: 0 0 auto;
+      }
+      .rail .step {
+        font: 11px/1 var(--mono);
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--line);
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .rail .step.active {
+        color: var(--accent);
+        border-color: #2f4f7a;
+        background: #16203010;
+      }
+      .rail .step.done {
+        color: var(--ok);
+        border-color: #2f6b4c;
+      }
+
+      main {
+        flex: 1 1 auto;
+        overflow-y: auto;
+        padding: 20px 16px 8px;
+      }
+      .wrap {
+        max-width: 860px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+
+      .msg {
+        display: flex;
+        gap: 10px;
+      }
+      .msg .who {
+        font: 10px/1.8 var(--mono);
+        color: var(--muted);
+        width: 54px;
+        flex: 0 0 54px;
+        text-align: right;
+        text-transform: uppercase;
+      }
+      .msg .body {
+        flex: 1;
+        min-width: 0;
+      }
+      .msg.user .body {
+        background: var(--panel-2);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px 12px;
+        white-space: pre-wrap;
+      }
+      .msg.agent .body > p:first-child {
+        margin-top: 0;
+      }
+      .msg .body > p:last-child {
+        margin-bottom: 0;
+      }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+      .card h3 {
+        margin: 0;
+        padding: 10px 13px;
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--muted);
+        border-bottom: 1px solid var(--line);
+        background: var(--panel-2);
+      }
+      .card .inner {
+        padding: 12px 13px;
+      }
+      .card.bad {
+        border-color: #6b3232;
+      }
+      .card.bad h3 {
+        color: var(--bad);
+      }
+
+      dl.kv {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: 4px 14px;
+        margin: 0;
+      }
+      dl.kv dt {
+        color: var(--muted);
+        font: 11px/1.7 var(--mono);
+      }
+      dl.kv dd {
+        margin: 0;
+        font: 12px/1.7 var(--mono);
+        word-break: break-word;
+      }
+
+      ol.steps,
+      ul.plain {
+        margin: 6px 0 0;
+        padding-left: 20px;
+      }
+      ol.steps li,
+      ul.plain li {
+        margin: 4px 0;
+      }
+      code,
+      .mono {
+        font-family: var(--mono);
+        font-size: 12px;
+      }
+      .quote {
+        border-left: 2px solid var(--line);
+        padding-left: 10px;
+        color: var(--muted);
+        margin: 6px 0;
+      }
+
+      .log {
+        font: 11.5px/1.55 var(--mono);
+        background: #0b0d11;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 9px 11px;
+        max-height: 260px;
+        overflow: auto;
+        white-space: pre-wrap;
+        color: #c3cad8;
+      }
+
+      .row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 11px;
+      }
+      button {
+        font: 12px/1 inherit;
+        font-family: inherit;
+        padding: 8px 13px;
+        border-radius: 7px;
+        border: 1px solid var(--line);
+        background: var(--panel-2);
+        color: var(--text);
+        cursor: pointer;
+      }
+      button:hover:not(:disabled) {
+        border-color: #3c4256;
+        background: #222736;
+      }
+      button.primary {
+        background: #1d3357;
+        border-color: #2f4f7a;
+        color: #cfe0ff;
+      }
+      button.danger {
+        background: #3a2020;
+        border-color: #6b3232;
+        color: #ffd9d9;
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      input[type="number"],
+      input[type="text"] {
+        font: 12px var(--mono);
+        background: #0b0d11;
+        border: 1px solid var(--line);
+        color: var(--text);
+        border-radius: 6px;
+        padding: 7px 9px;
+      }
+
+      video {
+        width: 100%;
+        border-radius: 8px;
+        background: #000;
+        margin-top: 8px;
+      }
+
+      table.runs {
+        width: 100%;
+        border-collapse: collapse;
+        font: 12px var(--mono);
+        margin-top: 6px;
+      }
+      table.runs th,
+      table.runs td {
+        text-align: left;
+        padding: 5px 8px;
+        border-bottom: 1px solid var(--line);
+      }
+      table.runs th {
+        color: var(--muted);
+        font-weight: 500;
+      }
+
+      footer {
+        flex: 0 0 auto;
+        border-top: 1px solid var(--line);
+        background: var(--panel);
+        padding: 10px 16px 14px;
+      }
+      .composer {
+        max-width: 860px;
+        margin: 0 auto;
+        display: flex;
+        gap: 9px;
+        align-items: flex-end;
+      }
+      textarea {
+        flex: 1;
+        resize: vertical;
+        min-height: 46px;
+        max-height: 220px;
+        font: 13px/1.5 inherit;
+        background: #0b0d11;
+        color: var(--text);
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        padding: 11px 12px;
+      }
+      textarea:focus,
+      input:focus {
+        outline: 1px solid #2f4f7a;
+      }
+      .hint {
+        max-width: 860px;
+        margin: 7px auto 0;
+        font: 11px var(--mono);
+        color: var(--muted);
+      }
+      .spin {
+        display: inline-block;
+        width: 9px;
+        height: 9px;
+        border: 2px solid var(--line);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: s 0.8s linear infinite;
+        vertical-align: -1px;
+      }
+      @keyframes s {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+  <body data-token="__TOKEN__" data-workspace="__WORKSPACE__">
+    <header>
+      <h1>Investigator</h1>
+      <span class="ws" id="ws"></span>
+      <span class="spacer"></span>
+      <span class="pill" id="provider">checking…</span>
+      <span class="pill" id="inv">no investigation</span>
+    </header>
+
+    <div class="rail" id="rail"></div>
+
+    <main><div class="wrap" id="transcript"></div></main>
+
+    <footer>
+      <div class="composer">
+        <textarea
+          id="input"
+          placeholder="Describe the bug — the URL, the steps, what you expected, what happens instead, and how often."
+        ></textarea>
+        <button class="primary" id="send">Send</button>
+      </div>
+      <div class="hint">Enter to send · Shift+Enter for a new line</div>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>

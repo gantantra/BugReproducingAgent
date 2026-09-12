@@ -161,5 +161,19 @@ export default tseslint.config(
     rules: {
       "@typescript-eslint/no-require-imports": "off",
     },
+  },
+  {
+    // The web UI's client script runs in a browser, not in Node.
+    files: ["apps/web/public/**/*.js"],
+    languageOptions: {
+      sourceType: "script",
+      globals: {
+        document: "readonly",
+        window: "readonly",
+        fetch: "readonly",
+        TextDecoder: "readonly",
+        console: "readonly",
+      },
+    },
   }
 );

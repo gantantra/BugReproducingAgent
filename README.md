@@ -71,6 +71,7 @@ prompt bytes produced each interpretation.
 | M1 — deterministic execution and evidence core             | Implemented; 100/100 runs, zero retries                   |
 | M2 — lineage, the three approval gates, CLI workflow       | Implemented                                               |
 | M3 — AI gateway, flows, read-only tools, eval harness      | Implemented; `intake --ai` verified against live DeepSeek |
+| Chat UI (`apps/web`)                                       | Implemented; drives the CLI, holds no pipeline logic      |
 | M4–M8 — classification, frequency, minimization, reporting | **Not implemented**                                       |
 
 **What you can do today:** run a full investigation end to end against a local fixture or a real
@@ -85,6 +86,15 @@ rather than silently doing nothing:
 ```bash
 node apps/cli/dist/bin.js classify      # -> NOT_IMPLEMENTED, "Arrives in M4"
 ```
+
+**A known defect:** `plan --ai` does not work against DeepSeek. It stops with
+`AI_CAPABILITY_MISSING: tool calling is unsupported`, because `propose_experiments` is a
+tool-using flow and the gateway observes the model's tool-calling capability as unknown. The
+provider does support it — a direct `tools` request to `api.deepseek.com/chat/completions`
+returns a well-formed `tool_calls` — so the fault is in how capability is observed, not in the
+provider. Config cannot paper over it: `llm.capabilities` may only _narrow_ an observed
+capability, never widen it. Until it is fixed, render gate-1 proposals from a file with
+`plan --from <proposal.json>`. `intake --ai` and `analyze --ai` are unaffected.
 
 ## Setup and first run
 
@@ -140,6 +150,9 @@ the failures.
 
 Choose **option 1 (a local fixture)** the first time. It touches nothing real and takes two
 minutes, and you will then recognise every prompt when you point it at something that matters.
+
+If you would rather click than type, `npm run web` gives the same workflow as a chat page —
+see [The chat UI](#the-chat-ui).
 
 ### 5. The manual path, command by command
 
@@ -314,6 +327,44 @@ is never miscounted as a defect in your application.
 | `EXEC_ORIGIN_NOT_ALLOWED`                      | The target origin is not in `safety.allowedOrigins`                                                         |
 | `No runs with normalized evidence`             | `analyze` before anything ran. Do step 7 first                                                              |
 | Reliability suite fails on **wall clock only** | Machine contention. Run it on an otherwise idle machine                                                     |
+
+## The chat UI
+
+```bash
+npm run build
+npm run web -- --workspace ./my-workspace        # then open http://127.0.0.1:4599/
+```
+
+A local page that walks the same pipeline as a conversation: describe the bug, see the flow it
+inferred and where it thinks the break is, answer what it could not infer, approve a proposal,
+watch the batch run, play the recording, and read the contrast. The recording is why this is a
+browser page rather than a terminal UI — a video is the artefact the second gate asks you to
+judge, and a terminal cannot show one.
+
+**It contains no part of the pipeline.** Every action spawns the same `investigate` command you
+would type, with `--json`, and renders the answer. That is a safety property rather than a
+shortcut: the approval gates, the redaction boundary and the API key all live inside that child
+process, so a bug in the web layer cannot approve a gate the CLI would refuse, write an
+unredacted byte, or read the key. `tests/e2e/web-actions.test.ts` asserts an unapproved batch is
+still refused when driven from the UI.
+
+Because it starts processes on your machine, it is treated as a privileged local surface:
+
+| Control              | What it does                                                                       |
+| -------------------- | ---------------------------------------------------------------------------------- |
+| Loopback bind        | Listens on `127.0.0.1` only; never reachable from the network                      |
+| Token                | Minted per start, injected into the page, required on every API call               |
+| Origin check         | A request from another origin is refused                                           |
+| Action allowlist     | The browser sends an action id and typed parameters, never a command line          |
+| Parameter validators | Ids, gates, checksums and paths must match narrow patterns or the call is refused  |
+| Path containment     | Workspace-relative paths are resolved and re-checked; anything escaping is refused |
+
+The allowlist in `apps/web/src/actions.ts` is the boundary: without it, a page open in your
+browser would be a shell. `apps/web/src/actions.spec.ts` covers what must not get through.
+
+Commands that are registered but unimplemented (M4–M8) are exposed on purpose — the UI shows
+the typed `NOT_IMPLEMENTED` answer and the milestone that brings each one, rather than hiding a
+step and implying the pipeline is shorter than it is.
 
 ## How it works
 
@@ -566,6 +617,7 @@ There is deliberately no `--yes`, `--force-approve`, or `--auto`.
 
 ```
 apps/cli/               The `investigate` binary. Parses, dispatches, formats. No business logic
+apps/web/               Local chat UI. Spawns the CLI; imports no workspace package
 packages/               One package per responsibility — see the layering table above
 ai/flows/<flow-id>/     Versioned prompt artifacts: flow.yaml, system.md, examples.jsonl
 schemas/                28 versioned JSON schemas. The wire contract for every document
@@ -734,7 +786,7 @@ On Windows, one command runs the same sequence:
 pwsh -File scripts/verify.ps1 -Gate
 ```
 
-Current counts: **329** unit and docs tests, **40** e2e, **48** reliability. The 100-run gate
+Current counts: **351** unit and docs tests, **64** e2e, **48** reliability. The 100-run gate
 completes 100/100 `VALID_COMPLETED` with zero retries and zero infrastructure failures in roughly
 130 seconds.
 
@@ -754,25 +806,26 @@ server-side and is not visible while CI/CD is disabled; deleting it requires pro
 
 ## Key guarantees, and where to check them
 
-| Guarantee                                                                        | Enforced by                                                                                                                      |
-| -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| DeepSeek is never reachable from execution, evidence, or fixtures                | `tests/docs/import-boundary.spec.ts` walks the resolved module graph                                                             |
-| Nothing reaches a browser without a recorded human decision                      | `tests/e2e/m2-gates.test.ts`; `run` exits 2 and enqueues zero jobs                                                               |
-| Sensitive evidence is redacted before it is persisted                            | `tests/reliability/redaction_before_persistence.spec.ts`; a store call without a `RedactionStamp` raises `REDACTION_NOT_APPLIED` |
-| Normalization is a pure function; a session rebuilds byte-identically offline    | `tests/reliability/offline_session_reconstruction.spec.ts`, with network and browser unavailable                                 |
-| A product failure is never hidden by a retry                                     | `tests/reliability/no_retry_hides_product_failure.spec.ts`                                                                       |
-| A broken script is never reported as a product defect                            | Rule 3 before rule 4 in `packages/evidence/src/outcome.ts`; `tests/e2e/described-selector.test.ts`                               |
-| Queue state and run outcome are separate concepts                                | `JobState` / `JobTerminalReason` / `RunOutcome` in `packages/core/src/types.ts`, plus SQLite CHECK constraints                   |
-| The 100-run fixture completes with zero retries and zero infrastructure failures | `tests/reliability/same_test_100_runs.spec.ts`                                                                                   |
-| Every artifact is content-hashed and verifiable                                  | `tests/reliability/artifact_integrity_hashes.spec.ts`                                                                            |
-| Mobile runs are Chromium **emulation**, recorded as read back from the browser   | `tests/reliability/mobile_emulation.spec.ts`                                                                                     |
-| The API key never reaches a log, artifact, or error                              | `packages/core/src/secret.spec.ts`, plus a canary assertion in the CLI e2e suite                                                 |
-| An AI finding cannot cite evidence it was never shown                            | `apps/cli/src/commands/analyze.ts` validates every reference against only the runs the tools returned                            |
-| What differs between failing and passing runs is computed, not inferred          | `contrastRuns` is pure; `packages/tools/src/analysis-tools.spec.ts` covers what it refuses to claim as well as what it finds     |
-| A persisted video is never presented as redacted                                 | stamped `video-raw-unredactable`; `packages/evidence/src/capture-status.spec.ts` asserts the wording a reader actually sees      |
-| A value the reporter never gave cannot be silently guessed at run time           | `EXEC_VALUE_UNRESOLVED`, at both execution and export                                                                            |
-| Each investigation keeps its own provenance chain                                | `packages/lineage/src/lineage.spec.ts`; the lineage primary key is scoped per investigation                                      |
-| A flow's few-shot examples satisfy the schema its output is validated against    | `tests/docs/flow-examples.spec.ts`, over every shipped flow                                                                      |
+| Guarantee                                                                        | Enforced by                                                                                                                       |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| DeepSeek is never reachable from execution, evidence, or fixtures                | `tests/docs/import-boundary.spec.ts` walks the resolved module graph                                                              |
+| Nothing reaches a browser without a recorded human decision                      | `tests/e2e/m2-gates.test.ts`; `run` exits 2 and enqueues zero jobs                                                                |
+| The chat UI cannot bypass a gate or run an arbitrary command                     | `tests/e2e/web-actions.test.ts` drives every action against the built binary; `apps/web/src/actions.spec.ts` covers the allowlist |
+| Sensitive evidence is redacted before it is persisted                            | `tests/reliability/redaction_before_persistence.spec.ts`; a store call without a `RedactionStamp` raises `REDACTION_NOT_APPLIED`  |
+| Normalization is a pure function; a session rebuilds byte-identically offline    | `tests/reliability/offline_session_reconstruction.spec.ts`, with network and browser unavailable                                  |
+| A product failure is never hidden by a retry                                     | `tests/reliability/no_retry_hides_product_failure.spec.ts`                                                                        |
+| A broken script is never reported as a product defect                            | Rule 3 before rule 4 in `packages/evidence/src/outcome.ts`; `tests/e2e/described-selector.test.ts`                                |
+| Queue state and run outcome are separate concepts                                | `JobState` / `JobTerminalReason` / `RunOutcome` in `packages/core/src/types.ts`, plus SQLite CHECK constraints                    |
+| The 100-run fixture completes with zero retries and zero infrastructure failures | `tests/reliability/same_test_100_runs.spec.ts`                                                                                    |
+| Every artifact is content-hashed and verifiable                                  | `tests/reliability/artifact_integrity_hashes.spec.ts`                                                                             |
+| Mobile runs are Chromium **emulation**, recorded as read back from the browser   | `tests/reliability/mobile_emulation.spec.ts`                                                                                      |
+| The API key never reaches a log, artifact, or error                              | `packages/core/src/secret.spec.ts`, plus a canary assertion in the CLI e2e suite                                                  |
+| An AI finding cannot cite evidence it was never shown                            | `apps/cli/src/commands/analyze.ts` validates every reference against only the runs the tools returned                             |
+| What differs between failing and passing runs is computed, not inferred          | `contrastRuns` is pure; `packages/tools/src/analysis-tools.spec.ts` covers what it refuses to claim as well as what it finds      |
+| A persisted video is never presented as redacted                                 | stamped `video-raw-unredactable`; `packages/evidence/src/capture-status.spec.ts` asserts the wording a reader actually sees       |
+| A value the reporter never gave cannot be silently guessed at run time           | `EXEC_VALUE_UNRESOLVED`, at both execution and export                                                                             |
+| Each investigation keeps its own provenance chain                                | `packages/lineage/src/lineage.spec.ts`; the lineage primary key is scoped per investigation                                       |
+| A flow's few-shot examples satisfy the schema its output is validated against    | `tests/docs/flow-examples.spec.ts`, over every shipped flow                                                                       |
 
 ## Exit codes
 
@@ -842,6 +895,13 @@ heap-snapshot paths. OS-level paging is documented as residual risk in
 
 Approvals are file-based and SHA-256-bound to the exact proposal bytes. There is no `--yes`, no
 `--force-approve`, and no `--auto` flag — a test asserts their absence.
+
+The chat UI (`apps/web`) is a privileged local surface, because it starts processes. It binds
+loopback only, mints a token per start and requires it on every API call, refuses cross-origin
+requests, and accepts an action id with typed parameters rather than a command line. It never
+reads the API key: the CLI child process reads it from its own environment, exactly as it does
+at a terminal. Bug reports it writes go under the workspace, which is gitignored, because a
+report routinely carries test-account credentials.
 
 **One artifact is deliberately not redacted: video.** A recording is raw pixels, and no text rule
 can mask a credential that was visible on screen. It is written only when `execution.video` is
