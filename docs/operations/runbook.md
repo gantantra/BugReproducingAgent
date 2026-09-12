@@ -86,7 +86,9 @@ pwsh -File scripts/verify.ps1 -Gate
 pwsh -File scripts/verify.ps1 -SkipBrowser   # fast, no Chromium needed
 ```
 
-The authoritative pipeline is `.gitlab-ci.yml`. A green GitHub Actions run satisfies nothing.
+No CI pipeline is configured in this repository; `.gitlab-ci.yml` and the non-authoritative GitHub
+Actions mirror have both been removed. `scripts/verify.ps1` above is the authoritative local
+verification sequence.
 
 ## 4. Troubleshooting
 

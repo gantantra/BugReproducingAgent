@@ -741,9 +741,11 @@ completes 100/100 `VALID_COMPLETED` with zero retries and zero infrastructure fa
 Run the reliability project on an otherwise idle machine. It asserts a wall-clock budget, and
 running other suites alongside it fails that assertion on contention rather than on correctness.
 
-CI is **GitLab** (`.gitlab-ci.yml`). The GitHub Actions file is a non-authoritative mirror and is
-labelled as such in its own header. The GitLab pipeline is gated on a Windows runner that is not
-yet registered, so CI has not executed; every number above was produced locally.
+No CI pipeline is configured in this repository. `.gitlab-ci.yml` and the non-authoritative
+`.github/workflows/gate.yml` mirror have been removed; every number above was produced locally via
+`scripts/verify.ps1` and the `npm run` scripts it wraps. `docs/operations/windows-runner.md`
+documents the Windows-runner setup that pipeline once required, kept as reference should a CI
+pipeline be reintroduced.
 
 ## Key guarantees, and where to check them
 
@@ -809,7 +811,7 @@ developers, or observability tooling.
 | `docs/milestones/`                  | Authoritative scope per milestone                                                                                                        |
 | `docs/security/`                    | The security model and the redaction policy                                                                                              |
 | `docs/operations/runbook.md`        | Operating, troubleshooting and incident procedures                                                                                       |
-| `docs/operations/windows-runner.md` | Provisioning the Windows GitLab runner                                                                                                   |
+| `docs/operations/windows-runner.md` | Provisioning a Windows GitLab runner (reference only; no pipeline is currently configured)                                               |
 | `ai/flows/`                         | Versioned prompt artifacts, hashed into every AI call's `flowHash`                                                                       |
 | `eval/`                             | Replay datasets and the scorer that gates model behaviour in CI                                                                          |
 | `schemas/`                          | 28 versioned JSON schemas                                                                                                                |

@@ -3,8 +3,8 @@
   Local verification for ReproAgent on Windows / PowerShell.
 
 .DESCRIPTION
-  The same sequence the authoritative GitLab pipeline runs (.gitlab-ci.yml), in one command, so a
-  Windows operator can reproduce CI locally without reading the YAML.
+  No CI pipeline is configured in this repository. This script is the authoritative verification
+  sequence, run locally in one command; it previously mirrored the removed .gitlab-ci.yml pipeline.
 
   Every stage here is deterministic: no DeepSeek variable is read, and the script actively CLEARS
   them for the browser stages so that an accidental dependency on AI configuration surfaces as a

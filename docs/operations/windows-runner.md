@@ -1,8 +1,13 @@
 # Provisioning the Windows GitLab runner
 
+**No CI pipeline is currently configured in this repository** — `.gitlab-ci.yml` has been removed,
+so there is no `windows-gate` job to register a runner for today. This document is retained as
+reference for provisioning a Windows runner if a GitLab pipeline is reintroduced; the reasoning
+below (why Windows verification matters) still holds regardless.
+
 Windows verification is required (`docs/m0-decisions.md`, decision 5). The job definition
-(`windows-gate` in `.gitlab-ci.yml`) is written and maintained; it runs as soon as a runner
-carrying the configured tag is registered.
+(`windows-gate` in `.gitlab-ci.yml`) was written and maintained; it would run as soon as a runner
+carrying the configured tag is registered, once the pipeline exists again.
 
 ## Why Windows is not optional
 
