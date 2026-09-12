@@ -747,6 +747,11 @@ No CI pipeline is configured in this repository. `.gitlab-ci.yml` and the non-au
 documents the Windows-runner setup that pipeline once required, kept as reference should a CI
 pipeline be reintroduced.
 
+CI/CD is also disabled at the GitLab project level (`builds_access_level: disabled`, with Auto
+DevOps off), so restoring a `.gitlab-ci.yml` alone will not make pipelines run — that project
+setting has to be turned back on as well. Pipeline history from before the retirement is retained
+server-side and is not visible while CI/CD is disabled; deleting it requires project Owner rights.
+
 ## Key guarantees, and where to check them
 
 | Guarantee                                                                        | Enforced by                                                                                                                      |
