@@ -158,6 +158,15 @@ export async function runCommand(
     }
   }
 
+  // Credentials the operator supplied, made usable and made safe, in that order.
+  //
+  // `maskValues` FIRST, then `resolveSecret`: the redactor has to already know a value before the
+  // browser is capable of putting it on a page, or the first artifact of the first run is written
+  // with the credential in clear. Without the second line a flow's `secretRef` could never
+  // resolve at all -- the interpreter has always supported it, and nothing ever supplied the
+  // resolver, so every credential reference failed with "Referenced secret is not available".
+  rt.redactor.maskValues(rt.credentials.allValues());
+
   const worker = new Worker({
     config: rt.config,
     metadata: rt.metadata,
@@ -167,6 +176,7 @@ export async function runCommand(
     clock: systemClock,
     workerId: rt.workerId,
     loadExperiment: (payloadJson) => JSON.parse(payloadJson) as ExperimentSpec,
+    resolveSecret: (name) => rt.credentials.revealSync(name),
   });
 
   let results;

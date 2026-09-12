@@ -203,6 +203,30 @@ export const ACTION_TYPES = [
 ] as const;
 export type ActionType = (typeof ACTION_TYPES)[number];
 
+/**
+ * The closed set of assertion kinds, mirroring `action.v1.json#/$defs/assertion`.
+ *
+ * Stated here so a flow can be TOLD the vocabulary rather than discovering it by being refused:
+ * a model that invented an assertion kind had its entire interpretation discarded, and nothing in
+ * the prompt had ever listed the alternatives.
+ */
+export const ASSERTION_KINDS = [
+  "elementCountAtLeast",
+  "elementCountEquals",
+  "elementVisible",
+  "elementHidden",
+  "textContains",
+  "textEquals",
+  "attributeEquals",
+  "urlMatches",
+  "noConsoleErrors",
+  "noUncaughtExceptions",
+  "responseStatusIn",
+  "storageKeyPresent",
+  "storageKeyAbsent",
+] as const;
+export type AssertionKind = (typeof ASSERTION_KINDS)[number];
+
 export const SIDE_EFFECT_CLASSES = ["read", "local-write", "remote-write", "destructive"] as const;
 export type SideEffectClass = (typeof SIDE_EFFECT_CLASSES)[number];
 

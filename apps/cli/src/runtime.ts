@@ -14,6 +14,7 @@ import {
   type ResolvedConfig,
 } from "@investigator/core";
 import {
+  CredentialStore,
   EnvSecretStore,
   LocalArtifactStore,
   SqliteMetadataStore,
@@ -44,6 +45,8 @@ export interface Runtime {
   artifacts: LocalArtifactStore;
   queue: SqliteWorkQueue;
   secrets: EnvSecretStore;
+  /** Test-account credentials the operator supplied, for flows that must sign in. */
+  credentials: CredentialStore;
   redactor: Redactor;
   logger: Logger;
   workerId: string;
@@ -109,6 +112,7 @@ export async function openRuntime(opts: GlobalOptions): Promise<Runtime> {
   });
   const queue = new SqliteWorkQueue({ store: metadata, clock: systemClock });
   const secrets = new EnvSecretStore(process.env, [config.llm.apiKeyEnv]);
+  const credentials = new CredentialStore(ws.root, process.env);
   const redactor = Redactor.fromFile(resolvePolicyPath(ws, config.storage.redactionPolicy));
 
   const rng = new SeededRng(config.execution.seed);
@@ -121,6 +125,7 @@ export async function openRuntime(opts: GlobalOptions): Promise<Runtime> {
     artifacts,
     queue,
     secrets,
+    credentials,
     redactor,
     logger,
     workerId: wid,

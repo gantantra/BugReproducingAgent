@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import {
+  ACTION_TYPES,
+  ASSERTION_KINDS,
   canonicalJson,
   fail,
   investigationId as makeInvestigationId,
@@ -171,7 +173,9 @@ export async function intakeCommand(
         input: { report: storedText },
         userContent: JSON.stringify({
           report: storedText,
-          targets: Object.keys(rt.config.execution.targets),
+          constraints: intakeConstraints(rt, opts.env),
+          actionVocabulary: ACTION_TYPES.map((type) => ({ type })),
+          assertionVocabulary: ASSERTION_KINDS.map((kind) => ({ kind })),
         }),
       },
       {
@@ -280,6 +284,42 @@ export async function intakeCommand(
         "",
         "Interpretation is advisory. A human still approves what runs, at gate 1.",
       ].join("\n"),
+  };
+}
+
+/**
+ * The resolved constraints `intake.input.v1.json` has always declared, actually populated.
+ *
+ * This used to send `targets: Object.keys(...)` -- the target NAMES and nothing else. A reporter
+ * who gave a perfectly good URL on a perfectly allowed origin got back "an origin that is not
+ * among the configured targets, so no URL is emitted", and the whole interpretation stalled on a
+ * gap that did not exist. It was right to say so: from where it was sitting the configured
+ * targets were the strings `target-test` and `staging`, which match no origin ever written. The
+ * model was not being cautious, it was being starved.
+ *
+ * So: the base URL and the allowed origins, by value, so a reporter's URL can be RECOGNISED
+ * rather than guessed at. The action vocabulary, so a step outside it is refused knowingly. And
+ * the credential NAMES the operator declared -- names only, never values, which is the whole
+ * point of the secretRef indirection.
+ */
+function intakeConstraints(rt: Runtime, targetName?: string): unknown {
+  const names = Object.keys(rt.config.execution.targets);
+  const name = targetName ?? names[0];
+  const target = name ? rt.config.execution.targets[name] : undefined;
+  return {
+    targetName: name ?? null,
+    baseUrl: target?.baseUrl ?? null,
+    classification: target?.classification ?? null,
+    allowedOrigins: [...rt.config.safety.allowedOrigins],
+    otherConfiguredTargets: names
+      .filter((n) => n !== name)
+      .map((n) => ({ targetName: n, baseUrl: rt.config.execution.targets[n]?.baseUrl ?? null })),
+    permittedActionTypes: [...ACTION_TYPES],
+    destructivePolicy: { blocked: rt.config.safety.blockDestructiveActions },
+    resetStrategy: target?.resetStrategy ?? null,
+    emulationProfiles: Object.keys(rt.config.execution.emulation.profiles),
+    defaultEmulationProfile: rt.config.execution.emulation.defaultProfile ?? null,
+    declaredCredentialEnvVarNames: rt.credentials.names(),
   };
 }
 

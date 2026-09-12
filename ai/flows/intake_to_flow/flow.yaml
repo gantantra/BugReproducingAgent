@@ -3,10 +3,23 @@
 # Single-shot and tool-free by design. The report is the only input, and inventing anything the
 # reporter did not say is the failure mode this flow exists to avoid.
 id: intake_to_flow
+# 1.2.0 also separates a control the reporter QUOTED the label of ("click Delete Account") from
+# one they merely described ("the Verified filter"). Both were becoming `described`, which the
+# executor refuses, so a run could not start from a report that named its buttons plainly -- the
+# label was data the reporter supplied and it was being discarded on the way in.
+#
+# 1.2.0: the flow is now GIVEN the resolved constraints its input schema always declared -- the
+# target's baseUrl, the allowed origins, the action vocabulary, the declared credential names --
+# instead of a bare list of target names. It was reporting a reporter's valid URL as "an origin
+# that is not among the configured targets" because the only targets it could see were the
+# strings `target-test` and `staging`, which match no origin ever written. The prompt now states
+# how to recognise a supplied origin, how to reference a declared credential by name, and how to
+# keep going when the reporter was asked and genuinely does not know.
+#
 # 1.1.0: the prompt now states how to express a URL the reporter never gave (`url: null` plus an
 # `unknownRef`). A real report omitted the path, the model dropped the key rather than emitting
 # null, and every interpretation of that report failed validation.
-version: 1.1.0
+version: 1.2.0
 modelAlias: FAST_MODEL
 temperature: 0
 tools: []
@@ -18,8 +31,10 @@ budget:
   maxEvidenceBytes: 0
   # Sized WITH the few-shot examples in the prompt. They are ~3.5KB of JSON and teach the exact
   # output envelope, which is the difference between this flow working and every call failing
-  # validation. 6000 was set when they were loaded but never sent.
-  maxInputTokens: 22000
+  # validation. 6000 was set when they were loaded but never sent. Raised again at 1.2.0: the
+  # resolved constraints add roughly 400 tokens of user content, and a long bug report plus an
+  # interview transcript is the normal case, not the worst one.
+  maxInputTokens: 32000
   maxOutputTokens: 7000
   maxCostUsd: 0.05
   maxWallClockMs: 60000

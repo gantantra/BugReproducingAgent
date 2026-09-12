@@ -15,6 +15,12 @@ import {
 import { SessionStore, normalizeIp, readCookie } from "./sessions.js";
 import { FileSessionPersistence } from "./storage.js";
 import { readTargets, validateTargetRequest, writeTarget } from "./target.js";
+import {
+  ensureSessionWorkspace,
+  listSessionFolders,
+  recordSessionEvent,
+} from "./session-workspace.js";
+import { CredentialStore } from "@investigator/storage";
 
 /**
  * A local chat front end for the investigator.
@@ -108,27 +114,75 @@ export function createInvestigatorServer(opts: ServerOptions) {
   const USER_COOKIE = "investigator_user";
 
   /**
-   * Turn a validated workspace-relative path into an absolute one, refusing anything that lands
-   * outside the workspace. The regex already bans traversal; this is the second, positive check,
-   * because a path that escapes here would be handed straight to a process.
+   * The folder this session owns, created on first use.
+   *
+   * Everything the session produces lands under it, because every command is given it as
+   * `--workspace`. Falls back to the root workspace only for a request arriving without a known
+   * session -- which cannot drive the CLI anyway, since those routes all require one.
    */
-  const buildContext: BuildContext = {
-    inWorkspace(rel: string): string {
-      const full = resolve(workspaceRoot, rel);
-      if (full !== workspaceRoot && !full.startsWith(workspaceRoot + sep)) {
-        throw new ParamError("path", `path escapes the workspace: ${rel}`);
-      }
-      return full;
-    },
-  };
+  function sessionDirFor(sessionId: string | null): string | null {
+    if (!sessionId) return null;
+    const session = sessions.get(sessionId);
+    if (!session) return null;
+    return ensureSessionWorkspace(workspaceRoot, session.createdAt, session.id).dir;
+  }
+
+  /**
+   * Resolve the session's folder or refuse the request. There is no third option.
+   *
+   * An earlier version fell back to the shared root workspace when the session had lapsed, which
+   * quietly undid the entire point: a report written after a 60-second gap landed in the root,
+   * and the investigation it opened was created there too, mixed in with every other session's.
+   * Nothing failed and nothing said so. Refusing is the honest answer -- the page already knows
+   * how to re-acquire a session and resend, and a caller with no session has nowhere to write.
+   */
+  function requireSessionDir(res: ServerResponse, sessionId: string | null): string | null {
+    const dir = sessionDirFor(sessionId);
+    if (dir) return dir;
+    sendJson(res, 409, {
+      ok: false,
+      code: "SESSION_EXPIRED",
+      message: "your session has expired — refresh the page to start a new one",
+    });
+    return null;
+  }
+
+  /** This session's credentials. Rooted in the session folder, so they die with it. */
+  function credentialsFor(sessionDir: string): CredentialStore {
+    return new CredentialStore(join(sessionDir, ".investigator"));
+  }
+
+  /**
+   * Turn a validated workspace-relative path into an absolute one, refusing anything that lands
+   * outside THIS SESSION's workspace. The regex already bans traversal; this is the second,
+   * positive check, because a path that escapes here would be handed straight to a process.
+   *
+   * Bound per request rather than once, so one session cannot name a path into another's folder.
+   */
+  function buildContextFor(sessionDir: string): BuildContext {
+    const root = resolve(sessionDir);
+    return {
+      inWorkspace(rel: string): string {
+        const full = resolve(root, rel);
+        if (full !== root && !full.startsWith(root + sep)) {
+          throw new ParamError("path", `path escapes the workspace: ${rel}`);
+        }
+        return full;
+      },
+    };
+  }
 
   /** Spawn the CLI. stdout carries JSON; stderr carries the human lines we stream to the log. */
   function runCli(
     argv: string[],
+    workspace: string,
     onLine?: (line: string) => void
   ): Promise<{ json: unknown; text: string; exitCode: number | null }> {
     return new Promise((resolvePromise) => {
-      const full = [...argv, "--workspace", opts.workspace, "--json"];
+      // The session's own folder, not the shared root: this is what puts a session's database,
+      // artifacts, videos and approvals inside the session folder rather than beside everyone
+      // else's. The CLI needs no knowledge of sessions to make that true.
+      const full = [...argv, "--workspace", workspace, "--json"];
       const child = spawn(process.execPath, [opts.cliBin, ...full], {
         // The directory the operator launched the UI from, which is where a `.env` sits and where
         // they would have run the command by hand. Paths from the browser are made absolute
@@ -178,7 +232,7 @@ export function createInvestigatorServer(opts: ServerOptions) {
     for (const listener of job.listeners) listener.write(payload);
   }
 
-  function startJob(actionId: string, argv: string[]): Job {
+  function startJob(actionId: string, argv: string[], workspace: string): Job {
     const job: Job = {
       id: randomUUID(),
       action: actionId,
@@ -190,7 +244,7 @@ export function createInvestigatorServer(opts: ServerOptions) {
     };
     jobs.set(job.id, job);
 
-    void runCli(argv, (line) => {
+    void runCli(argv, workspace, (line) => {
       job.lines.push(line);
       pushJobEvent(job, "log", { line });
     }).then(({ json, text, exitCode }) => {
@@ -206,9 +260,14 @@ export function createInvestigatorServer(opts: ServerOptions) {
   }
 
   /** Locate an artifact by content hash. The layout is `<kind>/<first two hex>/<sha>.<ext>`. */
-  function findArtifact(investigation: string, kind: string, sha: string): string | null {
+  function findArtifact(
+    workspace: string,
+    investigation: string,
+    kind: string,
+    sha: string
+  ): string | null {
     const dir = join(
-      opts.workspace,
+      workspace,
       ".investigator",
       "investigations",
       investigation,
@@ -221,7 +280,7 @@ export function createInvestigatorServer(opts: ServerOptions) {
     if (!match) return null;
     const full = resolve(dir, match);
     // Containment: refuse anything that resolved outside the workspace, whatever the inputs did.
-    const root = resolve(opts.workspace) + sep;
+    const root = resolve(workspace) + sep;
     return full.startsWith(root) ? full : null;
   }
 
@@ -312,11 +371,23 @@ export function createInvestigatorServer(opts: ServerOptions) {
             `${USER_COOKIE}=${encodeURIComponent(result.session.userId)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000`,
           ]);
           const owner = sessions.getUser(result.session.userId);
+          // Create the session's folder now, at the moment the session becomes real, and tell the
+          // page where it is. The page renders the root workspace until this arrives, because the
+          // folder does not exist before a session claims it.
+          const ws = ensureSessionWorkspace(
+            workspaceRoot,
+            result.session.createdAt,
+            result.session.id
+          );
+          if (ws.created) recordSessionEvent(ws.dir, { kind: "session-opened", folder: ws.name });
           sendJson(res, 200, {
             ok: true,
             status: "active",
             resumed: result.session.state !== null,
             createdAt: result.session.createdAt,
+            workspace: ws.dir,
+            sessionFolder: ws.name,
+            sessionFolders: listSessionFolders(workspaceRoot).slice(0, 50),
             ttlMs: sessions.ttlMs,
             state: result.session.state,
             user: owner
@@ -365,21 +436,97 @@ export function createInvestigatorServer(opts: ServerOptions) {
          * The agent cannot plan an experiment without one: `get_application_constraints` returns
          * NOT_FOUND and the model correctly declines to propose anything it cannot ground. */
         if (path === "/api/targets" && req.method === "GET") {
-          sendJson(res, 200, { ok: true, targets: readTargets(opts.workspace) });
+          const dir = requireSessionDir(res, sessionId);
+          if (!dir) return;
+          sessions.touch(sessionId);
+          sendJson(res, 200, { ok: true, targets: readTargets(dir) });
           return;
         }
 
         if (path === "/api/targets" && req.method === "POST") {
+          const sessionWs = requireSessionDir(res, sessionId);
+          if (!sessionWs) return;
           sessions.touch(sessionId);
-          const written = writeTarget(opts.workspace, validateTargetRequest(await readBody(req)));
+          const written = writeTarget(sessionWs, validateTargetRequest(await readBody(req)));
+          recordSessionEvent(sessionWs, {
+            kind: "target",
+            name: written.name,
+            baseUrl: written.baseUrl,
+          });
           sendJson(res, 200, { ok: true, target: written });
+          return;
+        }
+
+        /* Test-account credentials, supplied by the operator so a flow that must sign in can.
+         *
+         * Deliberately NOT an allowlist action. Every other capability here spawns `investigate`
+         * with arguments, and a credential on a command line is readable by every process on the
+         * machine and lands in the action log the operator can see. This route writes the value
+         * straight into the workspace credential store instead, so it never becomes argv and
+         * never becomes a log line.
+         *
+         * GET returns NAMES only. There is no route that reads a value back out: the executor
+         * resolves one in its own process, and nothing else needs to. */
+        if (path === "/api/credentials" && req.method === "GET") {
+          const dir = requireSessionDir(res, sessionId);
+          if (!dir) return;
+          sessions.touch(sessionId);
+          sendJson(res, 200, { ok: true, names: credentialsFor(dir).names() });
+          return;
+        }
+
+        if (path === "/api/credentials" && req.method === "POST") {
+          const dir = requireSessionDir(res, sessionId);
+          if (!dir) return;
+          sessions.touch(sessionId);
+          const body = (await readBody(req)) as { name?: unknown; value?: unknown };
+          const name = typeof body.name === "string" ? body.name : "";
+          const value = typeof body.value === "string" ? body.value : "";
+          if (!/^[A-Z][A-Z0-9_]{0,63}$/.test(name)) {
+            sendJson(res, 400, {
+              ok: false,
+              code: "BAD_NAME",
+              message: "a credential name must be UPPER_SNAKE_CASE",
+            });
+            return;
+          }
+          if (value.length === 0 || value.length > 4096) {
+            // Says that the value was unusable. Never says what it was.
+            sendJson(res, 400, {
+              ok: false,
+              code: "BAD_VALUE",
+              message: "a credential value must be between 1 and 4096 characters",
+            });
+            return;
+          }
+          const store = credentialsFor(dir);
+          store.set(name, value);
+          // The NAME is recorded so the session's history shows a credential was supplied. The
+          // value is not, here or anywhere else this process writes.
+          recordSessionEvent(dir, { kind: "credential", name });
+          sendJson(res, 200, { ok: true, name, names: store.names() });
+          return;
+        }
+
+        if (path === "/api/credentials" && req.method === "DELETE") {
+          const dir = requireSessionDir(res, sessionId);
+          if (!dir) return;
+          sessions.touch(sessionId);
+          const name = url.searchParams.get("name") ?? "";
+          if (!/^[A-Z][A-Z0-9_]{0,63}$/.test(name)) {
+            sendJson(res, 400, { ok: false, code: "BAD_NAME", message: "refused" });
+            return;
+          }
+          const store = credentialsFor(dir);
+          const removed = store.delete(name);
+          sendJson(res, 200, { ok: true, removed, names: store.names() });
           return;
         }
 
         if (path === "/api/actions" && req.method === "GET") {
           sendJson(res, 200, {
             ok: true,
-            workspace: opts.workspace,
+            workspace: sessionDirFor(sessionId) ?? workspaceRoot,
             actions: ACTIONS.map((a) => ({ id: a.id, summary: a.summary, streams: a.streams })),
           });
           return;
@@ -398,14 +545,38 @@ export function createInvestigatorServer(opts: ServerOptions) {
             typeof body.name === "string" && /^[A-Za-z0-9._-]{1,60}$/.test(body.name)
               ? body.name
               : "report.md";
-          const dir = resolve(opts.workspace, "reports");
+          const sessionWs = requireSessionDir(res, sessionId);
+          if (!sessionWs) return;
+          sessions.touch(sessionId);
+          const dir = resolve(sessionWs, "reports");
           mkdirSync(dir, { recursive: true });
           const full = resolve(dir, name);
-          if (!full.startsWith(resolve(opts.workspace) + sep)) {
+          if (!full.startsWith(resolve(sessionWs) + sep)) {
             sendJson(res, 400, { ok: false, code: "BAD_PATH", message: "refused" });
             return;
           }
           writeFileSync(full, text, "utf8");
+
+          // Keep every version the operator submitted, not just the last one.
+          //
+          // The interview rewrites the report each time an answer is folded back in, so the file
+          // the CLI reads is overwritten repeatedly. Without this, the reporter's original words
+          // -- the only thing in the whole pipeline that is not derived from something else --
+          // would be destroyed by the first clarification they gave.
+          const stamp = new Date()
+            .toISOString()
+            .replace(/[:.]/g, "-")
+            .replace(/-\d{3}Z$/, "Z");
+          const versions = resolve(dir, "versions");
+          mkdirSync(versions, { recursive: true });
+          writeFileSync(resolve(versions, `${stamp}-${name}`), text, "utf8");
+          recordSessionEvent(sessionWs, {
+            kind: "report",
+            path: `reports/${name}`,
+            version: `reports/versions/${stamp}-${name}`,
+            bytes: Buffer.byteLength(text),
+          });
+
           sendJson(res, 200, { ok: true, path: `reports/${name}`, bytes: Buffer.byteLength(text) });
           return;
         }
@@ -423,15 +594,18 @@ export function createInvestigatorServer(opts: ServerOptions) {
             });
             return;
           }
-          const argv = action.build(body.params ?? {}, buildContext);
+          const sessionWs = requireSessionDir(res, sessionId);
+          if (!sessionWs) return;
+          const argv = action.build(body.params ?? {}, buildContextFor(sessionWs));
+          recordSessionEvent(sessionWs, { kind: "action", action: action.id, argv });
 
           if (action.streams) {
-            const job = startJob(action.id, argv);
+            const job = startJob(action.id, argv, sessionWs);
             sendJson(res, 202, { ok: true, jobId: job.id, argv, summary: action.summary });
             return;
           }
 
-          const { json, text, exitCode } = await runCli(argv);
+          const { json, text, exitCode } = await runCli(argv, sessionWs);
           sendJson(res, 200, {
             ok: true,
             argv,
@@ -485,7 +659,9 @@ export function createInvestigatorServer(opts: ServerOptions) {
 
         if (path === "/api/artifact" && req.method === "GET") {
           const { investigation, kind, sha } = artifactRequest(url.searchParams);
-          const full = findArtifact(investigation, kind, sha);
+          const dir = requireSessionDir(res, sessionId);
+          if (!dir) return;
+          const full = findArtifact(dir, investigation, kind, sha);
           if (!full) {
             sendJson(res, 404, { ok: false, code: "NO_SUCH_ARTIFACT", message: "not found" });
             return;

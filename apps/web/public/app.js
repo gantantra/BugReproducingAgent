@@ -9,7 +9,9 @@
   "use strict";
 
   const TOKEN = document.body.dataset.token;
-  const WORKSPACE = document.body.dataset.workspace;
+  /* The session's own folder, which does not exist until the session is claimed. The page is
+   * served before that, so it starts with the root workspace and is corrected by /api/session. */
+  let WORKSPACE = document.body.dataset.workspace;
 
   const el = {
     transcript: document.getElementById("transcript"),
@@ -95,21 +97,23 @@
 
   let authLossShown = false;
 
-  /** A token from before a restart. Say so plainly, and never more than once. */
+  /** A token from before a restart, or a session that lapsed. Say so plainly, and once. */
   function isAuthLoss(body) {
-    return body && body.ok === false && body.code === "FORBIDDEN";
+    return (
+      body && body.ok === false && (body.code === "FORBIDDEN" || body.code === "SESSION_EXPIRED")
+    );
   }
 
   function renderAuthLoss(pendingText) {
     if (authLossShown) return;
     authLossShown = true;
     setBusy(false);
-    const c = card("The agent restarted", true);
+    const c = card("This page needs a fresh session", true);
     c.appendChild(
       node(
         "p",
         null,
-        "This page is still holding the token it was given before the restart, so the server refused the request. Refresh to pick up the current one — the conversation is stored against your session and comes back with it."
+        "Either the agent restarted and this page is still holding the old token, or the session lapsed while the tab was idle. Either way the server refused rather than writing into the wrong place — a session owns its own folder, and work done without one has nowhere to go. Refresh: the conversation is stored against your session and comes back with it."
       )
     );
     if (pendingText) {
@@ -725,9 +729,86 @@
 
     state.awaiting = async (answer) => {
       state.awaiting = null;
-      state.answers.push({ field: next.field, answer });
+      await recordAnswer(next.field, answer);
       askNextUnknown();
     };
+  }
+
+  /* --- credentials -------------------------------------------------------------------------
+   *
+   * An answer that IS a credential must not go into the report.
+   *
+   * The report is a durable artifact, so the redaction policy masks phone numbers, emails and
+   * id-shaped tokens inside it — correctly, and there is no version of this product where it
+   * should not. But the interview folded every answer straight into the report, which meant that
+   * asking "what account should I use?" and being told destroyed the answer on the way in. The
+   * operator supplied the data and the agent then reported it as missing.
+   *
+   * So a credential takes the other road: the value goes to this session's credential store and
+   * the REPORT records only the name. The model is told the name, emits
+   * `{ kind: "secretRef", envVar: "ACCOUNT_PHONE" }`, and the value is resolved inside the
+   * executor at run time — after every model call, and masked out of every artifact.
+   */
+  const CREDENTIAL_FIELD =
+    /credential|password|passcode|\botp\b|\bpin\b|login|log in|sign.?in|account|phone|mobile|email|username|user.?id|token/i;
+
+  const PATTERNS = [
+    { name: "ACCOUNT_EMAIL", re: /[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,24}/ },
+    { name: "ACCOUNT_PHONE", re: /(?:\+\d{1,3}[- ]?)?[6-9]\d{9}\b/ },
+    { name: "ACCOUNT_OTP", re: /(?<!\d)\d{4,8}(?!\d)/ },
+  ];
+
+  /** Name a credential after what it is, so the model can tell which field it belongs in. */
+  function credentialsIn(field, answer) {
+    const found = [];
+    let rest = answer;
+    for (const p of PATTERNS) {
+      const m = rest.match(p.re);
+      if (m) {
+        found.push({ name: p.name, value: m[0] });
+        rest = rest.replace(m[0], " ");
+      }
+    }
+    if (found.length === 0 && CREDENTIAL_FIELD.test(field)) {
+      // A password has no shape to match, so fall back to the whole answer under a name derived
+      // from the question. Guessing at its shape would be worse than naming it plainly.
+      const slug =
+        field
+          .toUpperCase()
+          .replace(/[^A-Z0-9]+/g, "_")
+          .replace(/^_+|_+$/g, "")
+          .slice(0, 40) || "CREDENTIAL";
+      found.push({ name: /PASSWORD/.test(slug) ? "ACCOUNT_PASSWORD" : slug, value: answer.trim() });
+    }
+    return found;
+  }
+
+  async function recordAnswer(field, answer) {
+    const creds = CREDENTIAL_FIELD.test(field) ? credentialsIn(field, answer) : [];
+    if (creds.length === 0) {
+      state.answers.push({ field, answer });
+      return;
+    }
+
+    const stored = [];
+    for (const c of creds) {
+      const res = await api("/api/credentials", { method: "POST", body: JSON.stringify(c) });
+      if (res && res.ok) stored.push(res.name);
+    }
+    if (stored.length === 0) {
+      // Storing failed, so do not silently drop what the operator typed.
+      state.answers.push({ field, answer });
+      return;
+    }
+
+    state.credentials = Array.from(new Set((state.credentials || []).concat(stored)));
+    state.answers.push({
+      field,
+      answer: `supplied, and held in this session's credential store as ${stored.join(", ")}. Reference by name with a secretRef; the value is resolved at run time and never appears in this report.`,
+    });
+    say(
+      `Stored ${stored.join(", ")} for this session. The value stays on this machine, is referenced by name, and is masked out of every artifact — so the flow can sign in without the credential ever reaching the model or the report.`
+    );
   }
 
   const DEFAULT_PLACEHOLDER =
@@ -1247,6 +1328,16 @@
     }
 
     startHeartbeat(body.ttlMs);
+
+    // Everything this session produces lands in one folder: the report and its versions, the
+    // database, the artifacts and videos, the approvals, and the test account. Show it, because
+    // the operator's first question after a run is where the evidence went.
+    if (body.workspace) {
+      WORKSPACE = body.workspace;
+      state.sessionFolder = body.sessionFolder || null;
+    }
+    el.ws.textContent = body.sessionFolder ? `sessions/${body.sessionFolder}` : WORKSPACE;
+    el.ws.title = WORKSPACE;
 
     if (body.state && Array.isArray(body.state.log) && body.state.log.length > 0) {
       restore(body.state);

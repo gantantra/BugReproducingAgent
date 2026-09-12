@@ -103,7 +103,9 @@
     ]
   },
   "apps/web": {
-    "deps": [],
+    "deps": [
+      "storage"
+    ],
     "external": [
       "yaml"
     ]

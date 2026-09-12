@@ -83,8 +83,8 @@ function budgetLimits(flow: LoadedFlow) {
  * deliberately an OUTLINE rather than the full document -- resolving every $ref would cost more
  * input budget than the evidence being reasoned about.
  */
-function requiredShape(schemaName: string, depth = 0, seen = new Set<string>()): string[] {
-  if (depth > 2 || seen.has(schemaName)) return [];
+export function requiredShape(schemaName: string, depth = 0, seen = new Set<string>()): string[] {
+  if (depth > 3 || seen.has(schemaName)) return [];
   seen.add(schemaName);
 
   const registry = schemaRegistry();
@@ -101,21 +101,68 @@ function requiredShape(schemaName: string, depth = 0, seen = new Set<string>()):
 
   for (const key of required) {
     const prop = props[key];
-    if (!prop) continue;
-    const ref = typeof prop["$ref"] === "string" ? (prop["$ref"] as string) : null;
-    const itemRef =
-      prop["type"] === "array" &&
-      typeof (prop["items"] as Record<string, unknown>)?.["$ref"] === "string"
-        ? ((prop["items"] as Record<string, unknown>)["$ref"] as string)
-        : null;
-    const target = ref ?? itemRef;
-    if (target && target.endsWith(".json")) {
-      lines.push(...requiredShape(target, depth + 1, seen));
-    }
+    if (prop) describeNode(key, prop, doc, depth + 1, seen, lines);
   }
 
   lines.push(...conditionalShape(doc, pad));
   return lines;
+}
+
+/**
+ * Walk one property, through arrays and INLINE objects, until it reaches something worth naming.
+ *
+ * The version this replaces followed a `$ref` only when it sat directly on a required property or
+ * on that property's `items`. Nothing in `flow.v1.json` is shaped that way: `steps.items` is an
+ * inline object, whose `actions.items` is the `$ref` to `action.v1.json`. So the walk stopped two
+ * levels short and the whole outline for `intake_to_flow` was two lines -- the envelope and the
+ * flow -- while the conditional guidance written specifically to stop `goto` losing its `url` sat
+ * in a schema the describer never opened.
+ *
+ * That is worth stating plainly, because it means a fix believed to be live was not: the outline
+ * asserted in shape.spec.ts is the model's actual view, and it is tested rather than assumed.
+ */
+function describeNode(
+  label: string,
+  node: Record<string, unknown>,
+  doc: Record<string, unknown>,
+  depth: number,
+  seen: Set<string>,
+  lines: string[]
+): void {
+  if (depth > 3 || lines.length > 60) return;
+
+  const ref = typeof node["$ref"] === "string" ? (node["$ref"] as string) : null;
+  if (ref) {
+    if (ref.endsWith(".json")) {
+      lines.push(...requiredShape(ref, depth, seen));
+      return;
+    }
+    const local = localRef(doc, ref);
+    if (local) describeNode(label, local, doc, depth, seen, lines);
+    return;
+  }
+
+  // An array is a container, not a shape. Describe what it holds, under the same label.
+  const items = node["items"] as Record<string, unknown> | undefined;
+  if (node["type"] === "array" && items) {
+    describeNode(label, items, doc, depth, seen, lines);
+    return;
+  }
+
+  const required = (node["required"] as string[] | undefined) ?? [];
+  if (required.length === 0) return;
+
+  const pad = "  ".repeat(depth);
+  const props = (node["properties"] as Record<string, Record<string, unknown>>) ?? {};
+  lines.push(
+    `${pad}each ${label} requires: ${required.map((f) => `${f}${enumNote(props[f])}`).join(", ")}`
+  );
+
+  for (const key of required) {
+    const child = props[key];
+    if (child) describeNode(key, child, doc, depth + 1, seen, lines);
+  }
+  lines.push(...conditionalShape(node, pad));
 }
 
 /** Resolve an in-document pointer such as `#/$defs/assertion`. */
@@ -127,6 +174,22 @@ function localRef(doc: Record<string, unknown>, ref: string): Record<string, unk
     if (node === undefined) return null;
   }
   return (node ?? null) as Record<string, unknown> | null;
+}
+
+/**
+ * List a closed enum inline.
+ *
+ * `assertion (an object requiring: assertionId, kind)` told the model that `kind` exists and
+ * nothing about what may go in it, so it invented one and the call was discarded. A closed set is
+ * cheap to state and is the difference between a constraint the model can satisfy and one it can
+ * only guess at. Capped, because a long enum in an outline crowds out the evidence.
+ */
+function enumNote(prop: Record<string, unknown> | undefined): string {
+  const values = prop?.["enum"];
+  if (!Array.isArray(values) || values.length === 0) return "";
+  const shown = values.slice(0, 14).map(String);
+  const more = values.length > shown.length ? `, +${values.length - shown.length} more` : "";
+  return ` (one of: ${shown.join(", ")}${more})`;
 }
 
 /** `["string","null"]` is the schema's way of saying a value may be explicitly absent. */
@@ -173,18 +236,61 @@ function conditionalShape(doc: Record<string, unknown>, pad: string): string[] {
       const ref = typeof prop["$ref"] === "string" ? (prop["$ref"] as string) : null;
       const resolved = ref ? localRef(doc, ref) : null;
       if (resolved) {
+        const union = unionShape(resolved);
+        if (union) return `${key} (${union})`;
         const inner = (resolved["required"] as string[] | undefined) ?? [];
-        if (inner.length) return `${key} (an object requiring: ${inner.join(", ")})`;
+        if (inner.length) {
+          const innerProps =
+            (resolved["properties"] as Record<string, Record<string, unknown>>) ?? {};
+          const described = inner.map((f) => `${f}${enumNote(innerProps[f])}`);
+          return `${key} (an object requiring: ${described.join(", ")})`;
+        }
         // A $def with no declared shape adds nothing but noise: name the field and stop.
         const kind = resolved["type"];
         return typeof kind === "string" ? `${key} (a ${kind})` : key;
       }
-      return `${key}${nullableNote(prop)}`;
+      return `${key}${enumNote(prop)}${nullableNote(prop)}`;
     });
 
     lines.push(`${pad}  when ${label}: also requires ${detail.join("; ")}`);
   }
   return lines;
+}
+
+/**
+ * Describe a `oneOf`/`anyOf` of tagged object shapes, as one line.
+ *
+ * `testDataValue` is four alternatives discriminated by `kind`, and the outline said only
+ * `value`. A live report that described signing in produced
+ * `{"kind":"secretRef","envVar":"ACCOUNT_PHONE"}` and was rejected with "must have required
+ * property 'literal'" -- the FIRST alternative's complaint, about a branch the model never
+ * chose. The model had been told neither which shapes exist nor which one its `kind` selected,
+ * so a repair attempt could only guess, and guessed at the branch the error named.
+ *
+ * This is the same defect `conditionalShape` was written for, one level down: the describer
+ * stopped at a keyword it did not walk, and the gap surfaced as an unrelated-looking error.
+ */
+function unionShape(def: Record<string, unknown>): string | null {
+  const variants = (def["oneOf"] ?? def["anyOf"]) as unknown;
+  if (!Array.isArray(variants) || variants.length === 0) return null;
+
+  const described: string[] = [];
+  for (const raw of variants) {
+    const v = raw as Record<string, unknown>;
+    const props = (v["properties"] as Record<string, Record<string, unknown>>) ?? {};
+    const required = (v["required"] as string[] | undefined) ?? [];
+    if (required.length === 0) continue;
+
+    // The discriminator is whichever required property is pinned to a single value.
+    const parts = required.map((key) => {
+      const constant = props[key]?.["const"];
+      return typeof constant === "string" ? `${key}: "${constant}"` : key;
+    });
+    described.push(`{ ${parts.join(", ")} }`);
+  }
+  if (described.length === 0) return null;
+  // "exactly one" because oneOf means exactly one: a value satisfying two branches is rejected.
+  return `exactly one of: ${described.join(" | ")}`;
 }
 
 export async function runFlow<T>(

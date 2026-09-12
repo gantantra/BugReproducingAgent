@@ -475,9 +475,41 @@ makes are asked, never defaulted:
   the page refuses it by name with the reason, not a schema error.
 - **Allowed origins** — the target's origin is added because every target origin must appear
   there; nothing else is.
-- **Destructive actions stay blocked.** Nothing in the page relaxes that. A delete-account flow is
-  exactly what the guard is for, and unblocking it needs a written per-action justification at the
-  approval gate.
+- **Destructive actions.** `safety.blockDestructiveActions` now defaults to `false`, because this
+  runs against in-house QA targets where a delete flow is the thing being investigated, not an
+  accident. The page neither sets nor clears the flag — an absent key means "take the default" —
+  and the three approval gates still apply. What is gone is being asked to re-justify each
+  `delete` inside a proposal you have already read.
+
+### Credentials the reporter supplies
+
+Most intermittent bugs only happen while signed in, so "use this test account" is the normal case.
+It used to be the one thing the agent could not accept: an answer typed into the interview was
+folded into the report, and the report is a durable artifact, so the redaction policy masked the
+phone number or email inside it — correctly. The operator supplied the data and the agent then
+reported it as missing.
+
+An answer that is a credential now takes a different road. The value goes to this session's
+credential store (`<session>/.investigator/.credentials.json`); the **report records only the
+name**. The flow references it as `{ "kind": "secretRef", "envVar": "ACCOUNT_PHONE" }` and the
+value is resolved inside the executor at run time.
+
+What that indirection buys, and why supplying a credential is safe rather than something to
+refuse:
+
+- **No model ever sees a value.** Only names are sent, as
+  `constraints.declaredCredentialEnvVarNames`.
+- **No value reaches an artifact.** Every stored value is registered with the redactor before a
+  batch starts, so an OTP that surfaces in a DOM snapshot or a console line is masked by identity
+  — exact, where a pattern could only guess. `packages/evidence/src/masked-values.spec.ts`.
+- **No value reaches argv.** The page writes through the local server directly, never by spawning
+  a command with the value on a command line where any process could read it.
+- **`DEEPSEEK_API_KEY` does not live here and cannot.** That stays environment-only, read by
+  `EnvSecretStore`, which is still its only reader.
+
+The store is a local convenience for throwaway test accounts on the machine that is already
+driving the browser those values are typed into. It is not a vault, and nothing that matters
+belongs in it. `packages/storage/src/credential-store.spec.ts` covers it.
 
 `config.yaml` is edited in place rather than rewritten, so comments, ordering and quoting survive
 — including `video: "on"`, which is quoted because bare `on` is boolean `true` under YAML 1.1.
@@ -828,6 +860,39 @@ A workspace is a plain directory. There is no server, and nothing lives outside 
 Artifacts are addressed by SHA-256 and sharded two characters deep, so identical bytes are stored
 once and every reference is verifiable.
 
+### One folder per chat session
+
+A session driven from the page does not write into the root workspace above. It gets its own
+folder, and that folder **is** a workspace:
+
+```
+<workspace>/sessions/2026-09-12T17-06-07Z-586218/
+  .investigator/
+    config.yaml                      Copied from the parent on creation, so targets carry over
+    investigator.db                  This session's investigations, jobs, runs, lineage
+    .credentials.json                Test-account values the operator supplied, this session only
+    investigations/INV-001/          Manifests, approvals, artifacts, normalized evidence, video
+  reports/report.md                  The operator's own words, as the CLI reads them
+  reports/versions/<stamp>-<name>    Every version they submitted, kept
+  session.jsonl                      What happened, appended as it happened
+```
+
+Every `investigate` command the page runs is given `--workspace <that folder>`, so the output
+lands there because the CLI was told to put it there — nothing is moved or copied afterwards,
+which is what makes "everything this session produced is in one folder" true rather than
+maintained. The folder name leads with the timestamp, so `sessions/` sorts chronologically.
+
+Two consequences, stated because they are trade-offs and not free:
+
+- **Sessions do not share a database.** `investigate status` inside one session cannot see
+  another's investigations. The folder, not the database, is now the unit you keep or delete.
+- **Deleting a session folder deletes its evidence.** There is no second copy.
+
+A request arriving without a live session is **refused**, not redirected to the root. An earlier
+version fell back, and a report written after a 60-second idle gap silently landed in the shared
+root along with the investigation it opened. Nothing failed and nothing said so. Refusal is the
+honest answer: the page re-acquires a session and resends.
+
 ## Configuration reference
 
 `config.yaml` has six blocks. Anything may use `env:NAME` to read from the environment; an unset
@@ -913,10 +978,30 @@ typed partial or inconclusive result, never a silently truncated answer.
 
 ### What is verified, and what is not
 
-`intake --ai` has run against live DeepSeek end to end. Given a report naming no URL and no
-selector, it named the failure point with a supporting quote, emitted `url: null` with an
-`unknownRef`, used a `described` selector, and recorded four unknowns — refusing to invent any of
-it.
+`intake --ai` has run against live DeepSeek end to end, in both directions.
+
+Given a report naming no URL and no selector, it named the failure point with a supporting quote,
+emitted `url: null` with an `unknownRef`, used a `described` selector, and recorded four unknowns
+— refusing to invent any of it.
+
+Given a report that DID name things, it used every one of them. From "I sign in at
+`https://www.99acres.com/login` by typing my phone number into the phone field and pressing
+Continue, then go to `/profile/editProfile` and click Delete Account", against a workspace whose
+target is `https://www.99acres.com` with `ACCOUNT_PHONE` declared, it produced:
+
+| The reporter said                      | The flow emitted                                             |
+| -------------------------------------- | ------------------------------------------------------------ |
+| a full URL on the target               | `goto /login`, `goto /profile/editProfile` — target-relative |
+| "my phone number"                      | `{ "kind": "secretRef", "envVar": "ACCOUNT_PHONE" }`         |
+| "pressing Continue"                    | `{ "strategy": "text", "value": "Continue" }` — executable   |
+| "click Delete Account"                 | `{ "strategy": "text", "value": "Delete Account" }`          |
+| "the phone field"                      | `described` + an unknown — a description, not a label        |
+| nothing about the confirmation wording | a `screenshot`, not an invented `textEquals`                 |
+
+The last two rows are the point as much as the first four. A control the reporter **quoted the
+label of** is data they supplied, and turning it into a non-executable `described` threw it away.
+A control they merely **described** is still a gap, and guessing there produces a click that lands
+somewhere they never pointed — reported afterwards as a defect in the product.
 
 `plan --ai` and `analyze --ai` have **not** been run against a live provider. They share the same
 runner, examples and validation, but that is inference rather than evidence, and their token
@@ -976,26 +1061,30 @@ server-side and is not visible while CI/CD is disabled; deleting it requires pro
 
 ## Key guarantees, and where to check them
 
-| Guarantee                                                                        | Enforced by                                                                                                                       |
-| -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| DeepSeek is never reachable from execution, evidence, or fixtures                | `tests/docs/import-boundary.spec.ts` walks the resolved module graph                                                              |
-| Nothing reaches a browser without a recorded human decision                      | `tests/e2e/m2-gates.test.ts`; `run` exits 2 and enqueues zero jobs                                                                |
-| The chat UI cannot bypass a gate or run an arbitrary command                     | `tests/e2e/web-actions.test.ts` drives every action against the built binary; `apps/web/src/actions.spec.ts` covers the allowlist |
-| Sensitive evidence is redacted before it is persisted                            | `tests/reliability/redaction_before_persistence.spec.ts`; a store call without a `RedactionStamp` raises `REDACTION_NOT_APPLIED`  |
-| Normalization is a pure function; a session rebuilds byte-identically offline    | `tests/reliability/offline_session_reconstruction.spec.ts`, with network and browser unavailable                                  |
-| A product failure is never hidden by a retry                                     | `tests/reliability/no_retry_hides_product_failure.spec.ts`                                                                        |
-| A broken script is never reported as a product defect                            | Rule 3 before rule 4 in `packages/evidence/src/outcome.ts`; `tests/e2e/described-selector.test.ts`                                |
-| Queue state and run outcome are separate concepts                                | `JobState` / `JobTerminalReason` / `RunOutcome` in `packages/core/src/types.ts`, plus SQLite CHECK constraints                    |
-| The 100-run fixture completes with zero retries and zero infrastructure failures | `tests/reliability/same_test_100_runs.spec.ts`                                                                                    |
-| Every artifact is content-hashed and verifiable                                  | `tests/reliability/artifact_integrity_hashes.spec.ts`                                                                             |
-| Mobile runs are Chromium **emulation**, recorded as read back from the browser   | `tests/reliability/mobile_emulation.spec.ts`                                                                                      |
-| The API key never reaches a log, artifact, or error                              | `packages/core/src/secret.spec.ts`, plus a canary assertion in the CLI e2e suite                                                  |
-| An AI finding cannot cite evidence it was never shown                            | `apps/cli/src/commands/analyze.ts` validates every reference against only the runs the tools returned                             |
-| What differs between failing and passing runs is computed, not inferred          | `contrastRuns` is pure; `packages/tools/src/analysis-tools.spec.ts` covers what it refuses to claim as well as what it finds      |
-| A persisted video is never presented as redacted                                 | stamped `video-raw-unredactable`; `packages/evidence/src/capture-status.spec.ts` asserts the wording a reader actually sees       |
-| A value the reporter never gave cannot be silently guessed at run time           | `EXEC_VALUE_UNRESOLVED`, at both execution and export                                                                             |
-| Each investigation keeps its own provenance chain                                | `packages/lineage/src/lineage.spec.ts`; the lineage primary key is scoped per investigation                                       |
-| A flow's few-shot examples satisfy the schema its output is validated against    | `tests/docs/flow-examples.spec.ts`, over every shipped flow                                                                       |
+| Guarantee                                                                         | Enforced by                                                                                                                           |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| DeepSeek is never reachable from execution, evidence, or fixtures                 | `tests/docs/import-boundary.spec.ts` walks the resolved module graph                                                                  |
+| Nothing reaches a browser without a recorded human decision                       | `tests/e2e/m2-gates.test.ts`; `run` exits 2 and enqueues zero jobs                                                                    |
+| The chat UI cannot bypass a gate or run an arbitrary command                      | `tests/e2e/web-actions.test.ts` drives every action against the built binary; `apps/web/src/actions.spec.ts` covers the allowlist     |
+| Sensitive evidence is redacted before it is persisted                             | `tests/reliability/redaction_before_persistence.spec.ts`; a store call without a `RedactionStamp` raises `REDACTION_NOT_APPLIED`      |
+| Normalization is a pure function; a session rebuilds byte-identically offline     | `tests/reliability/offline_session_reconstruction.spec.ts`, with network and browser unavailable                                      |
+| A product failure is never hidden by a retry                                      | `tests/reliability/no_retry_hides_product_failure.spec.ts`                                                                            |
+| A broken script is never reported as a product defect                             | Rule 3 before rule 4 in `packages/evidence/src/outcome.ts`; `tests/e2e/described-selector.test.ts`                                    |
+| Queue state and run outcome are separate concepts                                 | `JobState` / `JobTerminalReason` / `RunOutcome` in `packages/core/src/types.ts`, plus SQLite CHECK constraints                        |
+| The 100-run fixture completes with zero retries and zero infrastructure failures  | `tests/reliability/same_test_100_runs.spec.ts`                                                                                        |
+| Every artifact is content-hashed and verifiable                                   | `tests/reliability/artifact_integrity_hashes.spec.ts`                                                                                 |
+| Mobile runs are Chromium **emulation**, recorded as read back from the browser    | `tests/reliability/mobile_emulation.spec.ts`                                                                                          |
+| The API key never reaches a log, artifact, or error                               | `packages/core/src/secret.spec.ts`, plus a canary assertion in the CLI e2e suite                                                      |
+| An AI finding cannot cite evidence it was never shown                             | `apps/cli/src/commands/analyze.ts` validates every reference against only the runs the tools returned                                 |
+| What differs between failing and passing runs is computed, not inferred           | `contrastRuns` is pure; `packages/tools/src/analysis-tools.spec.ts` covers what it refuses to claim as well as what it finds          |
+| A persisted video is never presented as redacted                                  | stamped `video-raw-unredactable`; `packages/evidence/src/capture-status.spec.ts` asserts the wording a reader actually sees           |
+| A value the reporter never gave cannot be silently guessed at run time            | `EXEC_VALUE_UNRESOLVED`, at both execution and export                                                                                 |
+| Each investigation keeps its own provenance chain                                 | `packages/lineage/src/lineage.spec.ts`; the lineage primary key is scoped per investigation                                           |
+| A flow's few-shot examples satisfy the schema its output is validated against     | `tests/docs/flow-examples.spec.ts`, over every shipped flow                                                                           |
+| A supplied credential is usable but never lands in a prompt, an artifact, or argv | `packages/storage/src/credential-store.spec.ts`; `packages/evidence/src/masked-values.spec.ts` masks registered values in every scope |
+| The shape outline a model is shown describes the schema it is judged against      | `packages/ai-flows/src/shape.spec.ts` asserts the actual generated outline, including `oneOf` variants and closed enums               |
+| A closed vocabulary the CLI sends matches the enum the validator enforces         | `tests/docs/vocabulary-drift.spec.ts` compares `ACTION_TYPES` and `ASSERTION_KINDS` against the schemas                               |
+| A session writes only inside its own folder, or the request is refused            | `apps/web/src/session-workspace.spec.ts`; a lapsed session returns `SESSION_EXPIRED` rather than falling back to the root             |
 
 ## Exit codes
 
@@ -1067,11 +1156,21 @@ Approvals are file-based and SHA-256-bound to the exact proposal bytes. There is
 `--force-approve`, and no `--auto` flag — a test asserts their absence.
 
 The chat UI (`apps/web`) is a privileged local surface, because it starts processes. It binds
-loopback only, mints a token per start and requires it on every API call, refuses cross-origin
-requests, and accepts an action id with typed parameters rather than a command line. It never
-reads the API key: the CLI child process reads it from its own environment, exactly as it does
-at a terminal. Bug reports it writes go under the workspace, which is gitignored, because a
-report routinely carries test-account credentials.
+loopback only, requires a token on every API call, refuses cross-origin requests, and accepts an
+action id with typed parameters rather than a command line. The token is persisted under
+`<workspace>/.web/`, not minted per start: supervised restarts are routine here, and a token that
+could not survive one invalidated whatever page was open mid-report. It never reads the API key —
+the CLI child process reads it from its own environment, exactly as it does at a terminal. Bug
+reports it writes go under the workspace, which is gitignored, because a report routinely carries
+test-account credentials.
+
+Those credentials now have a channel of their own rather than living in the report prose. A value
+the operator supplies is written by the server straight into the session's credential store, never
+onto a command line where any process on the machine could read it. Only the **name** is sent to a
+model, only the name is written to the session log, and every stored value is registered with the
+redactor before a batch starts so it is masked out of artifacts by identity. The store holds
+throwaway test accounts on the machine already driving the browser those values are typed into; it
+is not a vault, and `DEEPSEEK_API_KEY` neither lives there nor can.
 
 **One artifact is deliberately not redacted: video.** A recording is raw pixels, and no text rule
 can mask a credential that was visible on screen. It is written only when `execution.video` is

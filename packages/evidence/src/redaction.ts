@@ -193,6 +193,8 @@ export class Redactor {
   private readonly byScope = new Map<FieldScope, CompiledRule[]>();
   private readonly maxBytes: number;
   private readonly applied = new Map<string, number>();
+  /** Exact values registered by `maskValues`. Longest first, so a superstring masks whole. */
+  private secretLiterals: string[] = [];
 
   constructor(policy: RedactionPolicy, policyHash: string) {
     this.policy = policy;
@@ -216,6 +218,20 @@ export class Redactor {
         this.byScope.set(scope, list);
       }
     }
+  }
+
+  /**
+   * Register operator-supplied values to mask by identity, in every scope.
+   *
+   * Called once before a batch starts, with the credentials the operator gave the agent to type
+   * into the page. Very short values are ignored: masking every "1" in every artifact would
+   * destroy the evidence this product exists to collect, and a one-character secret is not one.
+   */
+  maskValues(values: readonly string[]): void {
+    const kept = values.filter((v) => typeof v === "string" && v.length >= 4);
+    // Longest first: if one credential contains another, the longer must win, or the shorter
+    // masks a fragment of it and leaves the rest of a real secret on disk.
+    this.secretLiterals = [...new Set(kept)].sort((a, b) => b.length - a.length);
   }
 
   static fromFile(path: string): Redactor {
@@ -392,6 +408,36 @@ export class Redactor {
         shape: shapeOf(value),
         changed: true,
       };
+    }
+
+    // Operator-supplied credential values, masked in EVERY scope before any policy rule runs.
+    //
+    // These are literal strings, not patterns, and they are the one class of secret the policy
+    // provably cannot describe: a test account's OTP is six digits and a password is arbitrary
+    // text, so no regex distinguishes either from ordinary page content. Once the operator has
+    // told the agent to type a value into a page, that value can come back out through a DOM
+    // snapshot, a console line, or a response body -- so it is masked on the way out by identity,
+    // which is exact where a pattern would be a guess.
+    //
+    // Deliberately NOT part of `policy` or `policyHash`: the stamp records which POLICY ran, and
+    // it must stay comparable across machines. What values a given operator happened to register
+    // is local, and hashing them into a published stamp would be a disclosure in itself.
+    if (this.secretLiterals.length > 0) {
+      let masked = value;
+      for (const literal of this.secretLiterals) {
+        if (masked.includes(literal)) {
+          masked = masked.split(literal).join(this.policy.defaults.valueReplacement);
+        }
+      }
+      if (masked !== value) {
+        this.note("operator-credential-value");
+        return {
+          value: masked,
+          action: "mask-match",
+          ruleId: "operator-credential-value",
+          changed: true,
+        };
+      }
     }
 
     const rules = this.byScope.get(scope) ?? [];
