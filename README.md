@@ -73,6 +73,7 @@ prompt bytes produced each interpretation.
 | M3 — AI gateway, flows, read-only tools, eval harness      | Implemented; `intake --ai` verified against live DeepSeek |
 | Chat UI (`apps/web`)                                       | Implemented; drives the CLI, holds no pipeline logic      |
 | M4–M8 — classification, frequency, minimization, reporting | **Not implemented, and not planned**                      |
+| Authoring loop (ADR-0027)                                  | Mechanism proven end to end; not yet behind a command     |
 
 **What you can do today:** run a full investigation end to end against a local fixture or a real
 target, with human approval, full evidence capture, provenance, an exported Playwright
@@ -182,6 +183,62 @@ has nothing to answer with, so the chat UI re-opens the investigation after reco
 Note also that `deriveRequestId` is content-addressed, so re-running a flow that failed _after_ the
 ledger row was written collides on `ai_calls.request_id`. A retry needs a fresh investigation until
 that is resolved.
+
+## Authoring a reproduction, instead of guessing one
+
+Interpreting a bug report into a Flow happens **without ever seeing the application**. That is why
+a first run so often returns `AUTOMATION_FAILED`: whether "Delete Account" is a button or a link,
+which of four inputs is "the phone field", and that login redirects through an interstitial nobody
+mentioned are all facts that exist only on the page.
+
+So there is a second kind of session, decided in [ADR-0027](docs/adrs/ADR-0027-authoring-loop-separate-from-measurement.md).
+
+**Authoring** drives a real browser until the reported behaviour is reached. The operator's own
+`claude` CLI runs it — `claude-sonnet-5` at `medium` effort, using whoever is logged in, so there
+is no second credential to configure — with [Playwright MCP](https://www.npmjs.com/package/@playwright/mcp)
+as its browser tools. It navigates, recovers, and asks the operator whenever the page cannot tell
+it something only they know.
+
+**Measurement** is unchanged: the approved script runs N times with no model anywhere near it.
+
+Between them is a human watching a video of the one run that worked.
+
+### Why the script is a by-product rather than a reconstruction
+
+Playwright MCP records the exact Playwright statement for every call it makes:
+
+```
+await page.getByRole('textbox', { name: 'Search widgets' }).fill('bolt');
+await page.getByRole('button', { name: 'Search' }).click();
+```
+
+Those are the same calls, in the same order, with the same selectors as the run that worked — so
+the suite is assembled from the session rather than rebuilt from a description of it.
+Reconstruction is where drift lives: the run passes, the rebuilt script does not, and whoever
+trusts it next is the one who finds out. Selectors arrive as role plus accessible name, which
+survives a CSS refactor — and this script is run N times, unattended, possibly weeks later.
+
+### What is proven, and what is not
+
+Verified end to end against a throwaway page: the Claude CLI drove Playwright MCP for 12 turns,
+the session yielded three statements, those rendered into a standalone spec, and
+`playwright test --repeat-each=3` produced **3 passes and 3 videos** in a folder with nothing in
+it but the emitted files.
+
+Two things that verification found, which no amount of reading would have:
+
+- The ambient environment **breaks the Claude CLI silently.** This workspace keeps the DeepSeek
+  key in `ANTHROPIC_AUTH_TOKEN` and a DeepSeek model id in `ANTHROPIC_MODEL`, so an inherited
+  environment sends `claude` to Anthropic's endpoint with the wrong key asking for the wrong
+  model. It fails as `terminal_reason: api_error` with an empty result, which reads like a broken
+  CLI. `claudeCliEnv` strips those variables so the CLI falls back to the operator's own login.
+- An emitted suite **must declare its own dependency.** A folder holding only a spec and a config
+  fails with `MODULE_NOT_FOUND`, or worse resolves a mismatched `@playwright/test` from a parent
+  directory and reports `No tests found`.
+
+**Not yet built:** the `investigate author` command, the operator-question channel in the chat UI,
+and the DeepSeek analysis of failed runs after an approved batch. The pieces above are the
+mechanism those will use.
 
 ## Setup and first run
 

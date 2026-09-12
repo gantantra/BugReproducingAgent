@@ -47,6 +47,9 @@ Playwright produces evidence. Deterministic software normalizes and measures evi
 | [ADR-0022](ADR-0022-trace-disposition-withhold-default.md) | Trace disposition defaults to withhold in M1 | evidence |
 | [ADR-0023](ADR-0023-npm-workspaces-instead-of-pnpm.md) | npm workspaces instead of pnpm and Turborepo | build |
 | [ADR-0024](ADR-0024-vitest-single-test-runner.md) | Vitest is the single test runner; Playwright runner reserved for emitted reproducers | build, execution |
+| [ADR-0025](ADR-0025-browser-per-batch-context-per-run.md) | One browser per batch, one fresh context per run | execution, evidence |
+| [ADR-0026](ADR-0026-gate-proposal-bundle-and-injected-classifier.md) | Gate proposals are a bundle; the destructive classifier is injected | approvals, execution |
+| [ADR-0027](ADR-0027-authoring-loop-separate-from-measurement.md) | An interactive authoring loop, separate from the measurement loop | ai-flows, execution, cli, web |
 
 ## Supersession
 
