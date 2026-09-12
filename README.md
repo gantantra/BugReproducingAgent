@@ -457,6 +457,15 @@ difference between "it is thinking" and "it has hung", which a spinner alone can
 browser page rather than a terminal UI — a video is the artefact the second gate asks you to
 judge, and a terminal cannot show one.
 
+**One column, one scroll.** Nothing on the page draws a scrollbar and nothing scrolls inside
+anything else. Cards, the live run log, the composer and the step rail all sit on the same left
+gutter and the same right edge, so the column reads as one line down the page; the page itself is
+the only thing that scrolls, by wheel, trackpad, keys or touch. Two things followed from that: a
+scrollbar gutter appearing as content grew used to shift the layout by its own width, and the run
+log used to be a 260px box with a second scrollbar inside a card. The log is now a **tail** — the
+last 200 lines, sized to its content. The full output is in the job record and the artifacts
+either way, so what is dropped is what a tail drops, not evidence.
+
 **It contains no part of the pipeline.** Every action spawns the same `investigate` command you
 would type, with `--json`, and renders the answer. That is a safety property rather than a
 shortcut: the approval gates, the redaction boundary and the API key all live inside that child

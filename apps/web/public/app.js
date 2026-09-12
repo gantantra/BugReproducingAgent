@@ -304,6 +304,22 @@
     main.scrollTop = main.scrollHeight;
   }
 
+  /* The live log is a TAIL, and says so.
+   *
+   * It used to be a 260px box with its own scrollbar inside the card. Removing that box means the
+   * block grows with its content, and a 100-repetition batch emits far more lines than a page
+   * should carry — so the number kept in the DOM is capped here instead. Bounding the height by
+   * dropping old lines is honest in a way bounding it by clipping was not: the run's full output
+   * is in the job record and in the artifacts either way, and what is on screen is what a tail
+   * shows. */
+  const LOG_TAIL_LINES = 200;
+
+  function appendLogLine(log, line) {
+    log.appendChild(document.createTextNode(line + "\n"));
+    while (log.childNodes.length > LOG_TAIL_LINES) log.removeChild(log.firstChild);
+    scroll();
+  }
+
   function message(who, label) {
     const wrap = node("div", `msg ${who}`);
     wrap.appendChild(node("div", "who", label || who));
@@ -1088,8 +1104,7 @@
     await streamJob(
       started.jobId,
       (line) => {
-        log.appendChild(document.createTextNode(line + "\n"));
-        log.scrollTop = log.scrollHeight;
+        appendLogLine(log, line);
       },
       (payload) => {
         spinner.remove();
@@ -1185,8 +1200,7 @@
     await streamJob(
       started.jobId,
       (line) => {
-        log.appendChild(document.createTextNode(line + "\n"));
-        log.scrollTop = log.scrollHeight;
+        appendLogLine(log, line);
       },
       (payload) => {
         setBusy(false);

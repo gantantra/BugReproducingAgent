@@ -17,9 +17,29 @@
         --warn: #e0b252;
         --bad: #e57373;
         --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+
+        /* One column, one left rail. Every message indents its body past a right-aligned speaker
+           label, so the composer and the loader have to sit on the same gutter or nothing below
+           the transcript lines up with anything in it. Derived rather than repeated, so moving
+           the label width cannot leave the footer behind. */
+        --label: 54px;
+        --label-gap: 10px;
+        --gutter: calc(var(--label) + var(--label-gap));
+        --column: 860px;
       }
       * {
         box-sizing: border-box;
+      }
+
+      /* No scrollbar chrome anywhere. Scrolling still works — wheel, trackpad, keys, touch — it
+         just is not drawn. A scrollbar gutter appearing and disappearing as content grows shifts
+         the layout by its own width, which is what made cards look misaligned against each other
+         while a run streamed. */
+      * {
+        scrollbar-width: none;
+      }
+      *::-webkit-scrollbar {
+        display: none;
       }
       html,
       body {
@@ -83,8 +103,7 @@
 
       /* The pipeline, shown only while something is actually being waited on. */
       .waiting {
-        max-width: 860px;
-        margin: 0 auto 10px;
+        margin: 0 0 10px;
         padding: 10px 12px;
         background: var(--panel-2);
         border: 1px solid var(--line);
@@ -103,10 +122,13 @@
         color: var(--muted);
         font-size: 11px;
       }
+      /* Wraps rather than scrolling sideways. A horizontal scroll region in a header is the one
+         scrollbar a reader never expects, and the steps are short enough to sit on one line at
+         any sane width anyway. */
       .rail {
         display: flex;
+        flex-wrap: wrap;
         gap: 6px;
-        overflow-x: auto;
       }
       .rail .step {
         font: 11px/1 var(--mono);
@@ -141,13 +163,13 @@
 
       .msg {
         display: flex;
-        gap: 10px;
+        gap: var(--label-gap);
       }
       .msg .who {
         font: 10px/1.8 var(--mono);
         color: var(--muted);
-        width: 54px;
-        flex: 0 0 54px;
+        width: var(--label);
+        flex: 0 0 var(--label);
         text-align: right;
         text-transform: uppercase;
       }
@@ -187,6 +209,12 @@
       }
       .card .inner {
         padding: 12px 13px;
+      }
+      /* A restored transcript replays titles and key/value rows but not buttons, so a card whose
+         content was only buttons came back as a title above an empty padded strip. Collapse it
+         rather than render a box with nothing in it. */
+      .card .inner:empty {
+        display: none;
       }
       .card.bad {
         border-color: #6b3232;
@@ -232,15 +260,17 @@
         margin: 6px 0;
       }
 
+      /* No inner scroll region. The block sizes to its content and the page scrolls, so a card
+         never carries a second scrollbar inside the one the page already has. The line count is
+         capped in app.js instead, which bounds the height without clipping anything silently. */
       .log {
         font: 11.5px/1.55 var(--mono);
         background: #0b0d11;
         border: 1px solid var(--line);
         border-radius: 8px;
         padding: 9px 11px;
-        max-height: 260px;
-        overflow: auto;
         white-space: pre-wrap;
+        word-break: break-word;
         color: #c3cad8;
       }
 
@@ -318,9 +348,14 @@
         background: var(--panel);
         padding: 10px 16px 14px;
       }
-      .composer {
-        max-width: 860px;
+      /* The footer's own column, matching the transcript's: same width, same left gutter, so the
+         composer's left edge continues the line every card above it sits on. */
+      .footwrap {
+        max-width: var(--column);
         margin: 0 auto;
+        padding-left: var(--gutter);
+      }
+      .composer {
         display: flex;
         gap: 9px;
         align-items: flex-end;
@@ -342,8 +377,7 @@
         outline: 1px solid #2f4f7a;
       }
       .hint {
-        max-width: 860px;
-        margin: 7px auto 0;
+        margin: 7px 0 0;
         font: 11px var(--mono);
         color: var(--muted);
       }
@@ -376,23 +410,25 @@
     <main><div class="wrap" id="transcript"></div></main>
 
     <footer>
-      <div class="waiting" id="waiting" hidden>
-        <div class="now">
-          <span class="spin"></span>
-          <span id="waitingLabel">Working…</span>
-          <span class="elapsed" id="waitingElapsed"></span>
+      <div class="footwrap">
+        <div class="waiting" id="waiting" hidden>
+          <div class="now">
+            <span class="spin"></span>
+            <span id="waitingLabel">Working…</span>
+            <span class="elapsed" id="waitingElapsed"></span>
+          </div>
+          <div class="rail" id="rail"></div>
         </div>
-        <div class="rail" id="rail"></div>
-      </div>
 
-      <div class="composer">
-        <textarea
-          id="input"
-          placeholder="Describe the bug — the URL, the steps, what you expected, what happens instead, and how often."
-        ></textarea>
-        <button class="primary" id="send">Send</button>
+        <div class="composer">
+          <textarea
+            id="input"
+            placeholder="Describe the bug — the URL, the steps, what you expected, what happens instead, and how often."
+          ></textarea>
+          <button class="primary" id="send">Send</button>
+        </div>
+        <div class="hint">Enter to send · Shift+Enter for a new line</div>
       </div>
-      <div class="hint">Enter to send · Shift+Enter for a new line</div>
     </footer>
 
     <script src="app.js"></script>
