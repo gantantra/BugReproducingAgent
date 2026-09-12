@@ -3,7 +3,10 @@
 # Single-shot and tool-free by design. The report is the only input, and inventing anything the
 # reporter did not say is the failure mode this flow exists to avoid.
 id: intake_to_flow
-version: 1.0.0
+# 1.1.0: the prompt now states how to express a URL the reporter never gave (`url: null` plus an
+# `unknownRef`). A real report omitted the path, the model dropped the key rather than emitting
+# null, and every interpretation of that report failed validation.
+version: 1.1.0
 modelAlias: FAST_MODEL
 temperature: 0
 tools: []
