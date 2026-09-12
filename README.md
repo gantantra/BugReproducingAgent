@@ -714,6 +714,26 @@ Refreshing the page does not lose your place. The transcript and where you got t
 side against a session cookie, so a reload resumes the conversation. Restored messages are history
 and their buttons are not live — a resume card offers the action that is actually next instead.
 
+### Describing the bug
+
+Paste whatever you have. There is no form and no required shape — a paragraph, a list of steps, a
+half-remembered sequence. The page stores it and opens the browser.
+
+There used to be an interview here: the report was read into a structured Flow, and every gap the
+interpretation could not fill was put back to you as a question **before anything had been looked
+at**. That asked the wrong questions at the wrong moment. Half of them the page itself answers —
+which control, which field, which URL — and the half worth asking only becomes obvious once you
+are standing on the page that is missing something.
+
+So the session asks in context instead. It navigates, it looks, and when it meets something only
+you know it stops and says so, in the conversation. You answer in the same box you described the
+bug in, and it resumes with the browser and everything it had already done still in place.
+
+An answer that IS a credential does not travel as text. It goes to this session's credential store
+and the session is told the NAME — `ACCOUNT_PHONE` — which Playwright MCP resolves from a secrets
+file at the moment it types it into the page. The value never reaches the model, the transcript,
+or an artifact.
+
 **Sessions run concurrently.** Open as many tabs as you like; each gets its own session, its own
 folder and its own investigation numbering, and they do not interfere.
 

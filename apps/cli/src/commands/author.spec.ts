@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readAuthoringOutcome } from "./author.js";
+import { deriveTitleForTest, readAuthoringOutcome } from "./author.js";
 
 /**
  * Reading how an authoring session ended (ADR-0027).
@@ -58,5 +58,33 @@ describe("recognising the ending", () => {
     const out = readAuthoringOutcome("line one\nline two\nline three\nline four");
     expect(out.kind).toBe("unknown");
     if (out.kind === "unknown") expect(out.tail).toContain("line four");
+  });
+});
+
+describe("naming the emitted test", () => {
+  it("uses a heading when the report has one", () => {
+    expect(deriveTitleForTest("# Search shows no parts\n\nMore detail here.", "INV-001")).toBe(
+      "Search shows no parts"
+    );
+  });
+
+  it("shortens a report pasted as one long paragraph", () => {
+    // What a chat box actually produces. Taking "the first line" made the test name the whole
+    // report, which is unreadable in a Playwright run and worse in a CI summary.
+    const pasted =
+      "On the Parts Catalogue page I type bearing into the search box and press Search. " +
+      "Most of the time it lists three bearings. But every so often it says No parts found.";
+    const title = deriveTitleForTest(pasted, "INV-001");
+    expect(title.length).toBeLessThanOrEqual(81);
+    expect(title).toContain("Parts Catalogue");
+  });
+
+  it("ends on a boundary rather than mid-word", () => {
+    const title = deriveTitleForTest("a".repeat(20) + " " + "b".repeat(90), "INV-001");
+    expect(title.endsWith("…") || !title.endsWith("b")).toBe(true);
+  });
+
+  it("falls back to the investigation id when there is nothing to use", () => {
+    expect(deriveTitleForTest("   \n\n  ", "INV-007")).toBe("INV-007");
   });
 });

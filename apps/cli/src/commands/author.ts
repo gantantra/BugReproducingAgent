@@ -387,6 +387,32 @@ function statMtime(path: string): number {
   }
 }
 
+/**
+ * A short name for the test, from whatever the reporter wrote.
+ *
+ * A report pasted into the chat box is often one long paragraph with no heading, and taking "the
+ * first line" then produced a test whose name was the entire bug report -- unreadable in a
+ * Playwright run and worse in a CI summary. Trimmed at a sentence or word boundary so the name
+ * still reads as a name.
+ */
+export function deriveTitleForTest(reportSummary: string, fallback: string): string {
+  return deriveTitle(reportSummary, fallback);
+}
+
+function deriveTitle(reportSummary: string, fallback: string): string {
+  const firstLine = firstLines(reportSummary, 1)
+    .replace(/^#+\s*/, "")
+    .trim();
+  if (firstLine.length === 0) return fallback;
+  if (firstLine.length <= 80) return firstLine;
+
+  // Prefer ending on a sentence; otherwise cut on a word so it does not end mid-token.
+  const sentence = firstLine.slice(0, 80).lastIndexOf(". ");
+  if (sentence > 30) return firstLine.slice(0, sentence);
+  const word = firstLine.slice(0, 80).lastIndexOf(" ");
+  return `${firstLine.slice(0, word > 30 ? word : 80).trimEnd()}…`;
+}
+
 function firstLines(text: string, n: number): string {
   return text
     .split(/\r?\n/)
@@ -414,7 +440,7 @@ function emitSuite(a: {
   const suiteDir = join(a.sessionDir, "suite");
   mkdirSync(join(suiteDir, "tests"), { recursive: true });
 
-  const title = firstLines(a.reportSummary, 1).replace(/^#+\s*/, "") || a.investigationId;
+  const title = deriveTitle(a.reportSummary, a.investigationId);
   writeFileSync(
     join(suiteDir, "tests", "repro.spec.ts"),
     renderAuthoredSpec(steps, {

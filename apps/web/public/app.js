@@ -32,24 +32,20 @@
    * question. */
   const BUSY_LABEL = {
     describe: "Storing your report…",
-    interpret: "Reading the report into a structured flow…",
-    clarify: "Re-reading the report with your answers…",
-    propose: "Proposing experiments…",
+    reproduce: "Working through it in a browser…",
+    clarify: "Picking up where it left off…",
     approve: "Recording your decision…",
-    record: "Running in Chromium…",
     repeat: "Running the repetitions…",
     rca: "Contrasting the runs…",
   };
 
   const STEPS = [
     ["describe", "1 · Describe"],
-    ["interpret", "2 · Interpret"],
+    ["reproduce", "2 · Reproduce"],
     ["clarify", "3 · Clarify"],
-    ["propose", "4 · Propose"],
-    ["approve", "5 · Approve"],
-    ["record", "6 · Record & review"],
-    ["repeat", "7 · Repeat N"],
-    ["rca", "8 · Analyse"],
+    ["approve", "4 · Approve"],
+    ["repeat", "5 · Repeat N"],
+    ["rca", "6 · Analyse"],
   ];
 
   const state = {
@@ -70,6 +66,8 @@
     answers: [],
     pendingUnknowns: [],
     targetName: null,
+    // The paused authoring session, so a typed answer resumes it.
+    authoringSession: null,
   };
 
   // Set while rebuilding a restored transcript, so replaying does not re-record it.
@@ -537,14 +535,15 @@
     }
     state.reportPath = wrote.path;
     state.reportText = text;
-    say(`Stored your report (${wrote.bytes} bytes). Interpreting it into a structured Flow…`);
+    say(`Stored your report (${wrote.bytes} bytes).`);
 
     setStep("interpret");
     const r = resultOf(
       await act("intake", {
         from: wrote.path,
         title: firstLine(text),
-        ai: state.aiReady,
+        // No --ai. The report is stored and the investigation opened; the browser session reads
+        // the report itself, so interpreting it blind first buys nothing.
         // A target is bound to an investigation AT INTAKE. Recording one in config is not enough:
         // without this the investigation reads `target (none)` and the constraints tool has
         // nothing to answer with, which is the NOT_FOUND that stops planning.
@@ -560,7 +559,14 @@
     state.investigation = r.investigationId || r.investigation || null;
     el.inv.textContent = state.investigation || "no investigation";
     el.inv.className = "pill ok";
-    await renderFlow(r);
+
+    /* Straight to the browser. There used to be an interpretation step here that read the report
+     * into a structured flow and then asked you about everything it could not infer — before
+     * anything had been looked at. The session answers most of those by opening the page, and
+     * asks the rest when it actually meets them. */
+    const target = await ensureTarget();
+    if (!target) return;
+    offerAuthoring();
   }
 
   function firstLine(text) {
@@ -571,157 +577,7 @@
       .trim();
   }
 
-  /* `intake --json` returns counts for steps and unknowns, the failure point in full, and the
-   * content hash of the stored flow artifact. The detail lives in that artifact, so fetch it
-   * rather than inventing a shape the CLI does not emit. */
-  async function fetchFlowArtifact(sha) {
-    if (!sha) return null;
-    const clean = String(sha).replace(/^sha256:/, "");
-    try {
-      const res = await fetch(
-        `/api/artifact?investigation=${encodeURIComponent(state.investigation)}&kind=flow&sha=${encodeURIComponent(clean)}`,
-        { headers: { "x-investigator-token": TOKEN } }
-      );
-      if (!res.ok) return null;
-      return await res.json();
-    } catch {
-      return null;
-    }
-  }
-
-  async function renderFlow(r) {
-    const summary = r.flow || null;
-
-    const c = card("Interpreted flow");
-    kv(c, [
-      ["investigation", state.investigation],
-      ["report", r.reportArtifactId],
-      ["bytes", r.bytes],
-      ["redacted", r.redacted === true ? "yes" : "no"],
-      ["flow", summary && summary.flowId],
-      ["steps", summary && summary.steps],
-      ["unknowns", summary && summary.unknowns],
-      ["interpreted by", summary ? "intake_to_flow" : "not interpreted"],
-    ]);
-
-    if (!summary) {
-      c.appendChild(
-        node(
-          "p",
-          null,
-          "The report was stored but not interpreted, so there is no flow to review. Configure DeepSeek to enable this step."
-        )
-      );
-      offerPropose();
-      return;
-    }
-
-    const fp = summary.suspectedFailurePoint;
-    if (fp) {
-      const h = node("h4", null, "Where it thinks this breaks");
-      h.style.margin = "12px 0 4px";
-      c.appendChild(h);
-      kv(c, [
-        ["what", fp.what],
-        ["why", fp.why],
-        ["at", `${fp.stepId || "?"} / ${fp.actionId || "?"}`],
-        ["confidence", fp.confidence],
-      ]);
-      if (fp.sourceQuote) c.appendChild(node("div", "quote", `“${fp.sourceQuote}”`));
-    }
-
-    const full = await fetchFlowArtifact(summary.sha256);
-    state.flow = full || summary;
-
-    if (full && full.steps && full.steps.length) {
-      const h = node("h4", null, "Proposed steps");
-      h.style.margin = "12px 0 4px";
-      c.appendChild(h);
-      const ol = node("ol", "steps");
-      for (const st of full.steps) {
-        const li = node("li");
-        li.appendChild(node("span", null, st.description || st.stepId));
-        const actions = (st.actions || [])
-          .map(
-            (a) =>
-              a.type + (a.url ? ` ${a.url}` : "") + (a.description ? ` “${a.description}”` : "")
-          )
-          .join(" → ");
-        if (actions) {
-          const sub = node("div", "mono", actions);
-          sub.style.color = "var(--muted)";
-          li.appendChild(sub);
-        }
-        ol.appendChild(li);
-      }
-      c.appendChild(ol);
-    }
-
-    const unknowns = (full && full.unknowns) || [];
-    state.pendingUnknowns = unknowns.slice();
-    state.answers = [];
-
-    if (unknowns.length || summary.unknowns > 0) {
-      setStep("clarify");
-      const q = card(`${unknowns.length || summary.unknowns} things it could not infer`);
-      if (unknowns.length) {
-        const ul = node("ul", "plain");
-        for (const u of unknowns) ul.appendChild(node("li", null, `${u.field} — ${u.why}`));
-        q.appendChild(ul);
-      }
-      q.appendChild(
-        node(
-          "p",
-          null,
-          "It will not invent a URL, a selector or a credential. Press “Answer these now” and I will ask about them one at a time — type each reply in the box at the bottom and press Enter. Skip anything you do not know."
-        )
-      );
-      buttons(q, [
-        { label: "Answer these now", kind: "primary", onClick: () => askNextUnknown() },
-        { label: "Skip to the target", onClick: () => askForTarget() },
-      ]);
-      return;
-    }
-
-    await askForTarget();
-  }
-
   // --------------------------------------------------------------------------------- interview
-
-  /* The point of the agent: find out what the reporter knows before planning anything. Every gap
-   * the interpretation could not fill is put back to them as a question, and the answers are
-   * folded into the REPORT and re-interpreted rather than patched into the flow. The report is the
-   * grounded source; a flow edited behind the reporter's back is an invention with their name on
-   * it. */
-  function askNextUnknown() {
-    const next = state.pendingUnknowns.shift();
-    if (!next) {
-      void finishInterview();
-      return;
-    }
-
-    const c = card(`Question — ${next.field}`);
-    c.appendChild(node("p", null, next.why));
-    c.appendChild(
-      node(
-        "p",
-        null,
-        "Type your answer in the box at the bottom and press Enter. If you do not know it, skip it and it stays recorded as an unknown."
-      )
-    );
-    buttons(c, [{ label: "Skip this one", onClick: () => askNextUnknown() }]);
-
-    // Put the cursor where the answer goes. Being asked a question and having to find the box is
-    // the kind of small friction that makes an interview feel like a form.
-    el.input.placeholder = `Your answer — ${next.field}`;
-    el.input.focus();
-
-    state.awaiting = async (answer) => {
-      state.awaiting = null;
-      await recordAnswer(next.field, answer);
-      askNextUnknown();
-    };
-  }
 
   /* --- credentials -------------------------------------------------------------------------
    *
@@ -747,8 +603,24 @@
     { name: "ACCOUNT_OTP", re: /(?<!\d)\d{4,8}(?!\d)/ },
   ];
 
-  /** Name a credential after what it is, so the model can tell which field it belongs in. */
-  function credentialsIn(field, answer) {
+  /* Turn an answer that IS a credential into a NAME the session can reference.
+   *
+   * The authoring session asks for things in plain language — "what account should I sign in
+   * with?" — and the reply is typed into the same box as everything else. Sending that reply
+   * onward verbatim would put the value into a command line and into the model's context, which
+   * is exactly what the credential store exists to prevent.
+   *
+   * So the value goes to the store and the session is told `ACCOUNT_PHONE`. Playwright MCP reads
+   * the value from a secrets file at the moment it types it into the page. The model never learns
+   * it, and neither does the transcript.
+   *
+   * Returns the text to send onward: either the original answer, or a sentence naming what was
+   * stored. */
+  async function credentialsToNames(question, answer) {
+    const looksLikeCredential =
+      CREDENTIAL_FIELD.test(question || "") || CREDENTIAL_FIELD.test(answer);
+    if (!looksLikeCredential) return answer;
+
     const found = [];
     let rest = answer;
     for (const p of PATTERNS) {
@@ -758,73 +630,54 @@
         rest = rest.replace(m[0], " ");
       }
     }
-    if (found.length === 0 && CREDENTIAL_FIELD.test(field)) {
-      // A password has no shape to match, so fall back to the whole answer under a name derived
-      // from the question. Guessing at its shape would be worse than naming it plainly.
-      const slug =
-        field
-          .toUpperCase()
-          .replace(/[^A-Z0-9]+/g, "_")
-          .replace(/^_+|_+$/g, "")
-          .slice(0, 40) || "CREDENTIAL";
-      found.push({ name: /PASSWORD/.test(slug) ? "ACCOUNT_PASSWORD" : slug, value: answer.trim() });
+    // A password has no shape to match. If the question was clearly about one, take the whole
+    // answer rather than sending it in the clear.
+    if (found.length === 0 && /password|passcode|\bpin\b|token|secret/i.test(question || "")) {
+      found.push({ name: "ACCOUNT_PASSWORD", value: answer.trim() });
     }
-    return found;
-  }
-
-  async function recordAnswer(field, answer) {
-    const creds = CREDENTIAL_FIELD.test(field) ? credentialsIn(field, answer) : [];
-    if (creds.length === 0) {
-      state.answers.push({ field, answer });
-      return;
-    }
+    if (found.length === 0) return answer;
 
     const stored = [];
-    for (const c of creds) {
+    for (const c of found) {
       const res = await api("/api/credentials", { method: "POST", body: JSON.stringify(c) });
       if (res && res.ok) stored.push(res.name);
     }
-    if (stored.length === 0) {
-      // Storing failed, so do not silently drop what the operator typed.
-      state.answers.push({ field, answer });
-      return;
-    }
+    if (stored.length === 0) return answer; // Storing failed; do not silently drop what they typed.
 
-    state.credentials = Array.from(new Set((state.credentials || []).concat(stored)));
-    state.answers.push({
-      field,
-      answer: `supplied, and held in this session's credential store as ${stored.join(", ")}. Reference by name with a secretRef; the value is resolved at run time and never appears in this report.`,
-    });
     say(
-      `Stored ${stored.join(", ")} for this session. The value stays on this machine, is referenced by name, and is masked out of every artifact — so the flow can sign in without the credential ever reaching the model or the report.`
+      `Stored ${stored.join(", ")} for this session. The value stays on this machine and is typed straight into the page — it never reaches the model or the transcript.`
     );
+    return `Use the credential named ${stored.join(" and ")}. Reference it by name; the browser tool will supply the value.`;
   }
 
   const DEFAULT_PLACEHOLDER =
     "Describe the bug — the URL, the steps, what you expected, what happens instead, and how often.";
 
-  async function finishInterview() {
-    el.input.placeholder = DEFAULT_PLACEHOLDER;
-    if (state.answers.length === 0) {
-      await askForTarget();
-      return;
-    }
-    const block = state.answers.map((a) => `- **${a.field}**: ${a.answer}`).join("\n");
-    const count = state.answers.length;
-    state.answers = [];
-    say(`Thank you. Folding ${count} answer(s) back into the report and re-reading it…`);
-    await submitReport(
-      state.reportText + "\n\n## Answers to what could not be inferred\n\n" + block + "\n"
-    );
-  }
-
   /* Without a target the agent cannot plan at all: `get_application_constraints` returns NOT_FOUND
    * and the model correctly declines to propose experiments it cannot ground. Asking here is the
    * difference between the agent conducting the investigation and handing the operator a config
    * file to go and edit. */
+  /* A target, resolved quietly when there is one and asked for only when there is not.
+   *
+   * Returns whether the caller may carry on. When it returns false the operator is being asked,
+   * and `askForTarget` re-submits the report once they answer — so the flow resumes there rather
+   * than here. */
+  async function ensureTarget() {
+    if (state.targetName) return true;
+    const existing = await api("/api/targets");
+    const targets = (existing && existing.targets) || [];
+    if (targets.length > 0) {
+      state.targetName = targets[0].name;
+      say(`Using the configured target “${targets[0].name}” (${targets[0].baseUrl}).`);
+      return true;
+    }
+    await askForTarget();
+    return false;
+  }
+
   async function askForTarget() {
     if (state.targetName) {
-      offerPropose();
+      offerAuthoring();
       return;
     }
     const existing = await api("/api/targets");
@@ -832,7 +685,7 @@
     if (targets.length > 0) {
       state.targetName = targets[0].name;
       say(`Using the configured target “${targets[0].name}” (${targets[0].baseUrl}).`);
-      offerPropose();
+      offerAuthoring();
       return;
     }
 
@@ -858,7 +711,7 @@
       node(
         "p",
         null,
-        "There is deliberately no “production”. Choosing one of these is you asserting you are authorised to act on it. Destructive actions stay blocked either way — unblocking a delete needs a written justification at the approval gate."
+        "There is deliberately no “production”. Choosing one of these is you asserting you are authorised to act on it — the session will do on this site whatever the bug report describes, including deleting things, because that is what reproducing a delete bug means."
       )
     );
 
@@ -932,7 +785,11 @@
               )
             );
             buttons(c, [
-              { label: "Answer the unknowns", kind: "primary", onClick: () => askNextUnknown() },
+              {
+                label: "Reproduce it in a browser",
+                kind: "primary",
+                onClick: () => offerAuthoring(),
+              },
               {
                 label: "Change the target",
                 onClick: () => {
@@ -1257,6 +1114,220 @@
   }
 
   // -------------------------------------------------------------------------------- composer
+
+  // ------------------------------------------------------------------------------- authoring
+
+  /* Reproducing the bug in a real browser, and asking you things while it does.
+   *
+   * This replaced a fixed interview: the page used to take the model's list of `unknowns` and
+   * march through them one at a time, up front, before anything had been looked at. That asked
+   * the wrong questions at the wrong moment. Half of them the page itself could answer — which
+   * control, which field, which URL — and the half worth asking only becomes obvious once you are
+   * standing on the page that is missing something.
+   *
+   * So the session asks in context instead. It navigates, it looks, and when it meets something
+   * only you know, it stops and says so. You answer in the same box you described the bug in, and
+   * it carries on with the browser and everything it had already done still in place. */
+
+  function offerAuthoring() {
+    setStep("reproduce");
+    const c = card("Ready to reproduce it");
+    c.appendChild(
+      node(
+        "p",
+        `I will open ${state.targetName ? `the ${state.targetName} target` : "the target"} in a real browser and work through what you described. If I hit something only you know — which control you meant, an account to sign in with, whether what I am looking at is the bug — I will stop and ask right here.`
+      )
+    );
+    buttons(c, [
+      { label: "Reproduce it", kind: "primary", onClick: () => startAuthoring({}) },
+      {
+        label: "Watch the browser",
+        onClick: () => startAuthoring({ headed: true }),
+      },
+    ]);
+  }
+
+  async function startAuthoring(extra) {
+    setStep("reproduce");
+    setBusy(true, "Working through it in a browser…");
+
+    const started = await act("author", {
+      investigation: state.investigation,
+      ...(state.targetName ? { env: state.targetName } : {}),
+      ...extra,
+    });
+    if (started.ok !== true || !started.jobId) {
+      setBusy(false);
+      showFailure(resultOf(started), "Could not start the browser session");
+      return;
+    }
+
+    const c = card("Reproducing");
+    const spinner = node("p");
+    spinner.innerHTML = '<span class="spin"></span> driving the browser…';
+    c.appendChild(spinner);
+    const log = node("div", "log");
+    c.appendChild(log);
+
+    await streamJob(
+      started.jobId,
+      (line) => appendLogLine(log, line),
+      (payload) => {
+        spinner.remove();
+        setBusy(false);
+        handleAuthoringOutcome(payload.result || {});
+      }
+    );
+  }
+
+  /* Four endings, and only one of them produces a script. An ending nobody recognised is treated
+   * as "did not finish" rather than as success, because emitting a script from a session that
+   * stopped halfway hands you something that looks complete and is not. */
+  function handleAuthoringOutcome(r) {
+    state.authoringSession = r.sessionId || state.authoringSession || null;
+
+    if (r.outcome === "question") {
+      askAuthoringQuestion(r);
+      return;
+    }
+    if (r.outcome === "done" && r.suite) {
+      renderAuthored(r);
+      return;
+    }
+    if (r.outcome === "stuck") {
+      const c = card("It could not get there", true);
+      c.appendChild(node("p", r.reason || r.message || "The session stopped."));
+      c.appendChild(
+        node(
+          "p",
+          "No script was written. A partial reproduction looks complete, and whoever runs it next believes it — so nothing is better than half."
+        )
+      );
+      buttons(c, [
+        { label: "Add more detail", kind: "primary", onClick: () => promptForMoreDetail() },
+        { label: "Try again", onClick: () => startAuthoring({}) },
+      ]);
+      return;
+    }
+
+    showFailure(
+      { code: r.code || "AUTHORING_INCOMPLETE", message: r.message || "", exitCode: r.exitCode },
+      "The session ended without finishing"
+    );
+  }
+
+  /* The question, in the conversation, answered in the same box as everything else. */
+  function askAuthoringQuestion(r) {
+    setStep("clarify");
+    const c = card("It needs to ask you something");
+    c.appendChild(node("p", r.question || r.message || "It needs more information."));
+    c.appendChild(
+      node(
+        "p",
+        "Type your answer below and press Enter. It keeps the browser open and picks up exactly where it stopped — nothing is repeated."
+      )
+    );
+    buttons(c, [
+      {
+        label: "I don't know",
+        onClick: () =>
+          resumeAuthoring("I don't know — carry on without it if you can, or say what you need."),
+      },
+    ]);
+
+    el.input.placeholder = "Your answer…";
+    el.input.focus();
+    const question = r.question || "";
+    state.awaiting = async (answer) => {
+      state.awaiting = null;
+      await resumeAuthoring(await credentialsToNames(question, answer));
+    };
+  }
+
+  async function resumeAuthoring(answer) {
+    el.input.placeholder = DEFAULT_PLACEHOLDER;
+    if (!state.authoringSession) {
+      say("I lost track of that session. Starting a fresh one with what you have told me.");
+      await startAuthoring({});
+      return;
+    }
+    say(answer, "you");
+    setBusy(true, "Picking up where it left off…");
+
+    const started = await act("author", {
+      investigation: state.investigation,
+      resume: state.authoringSession,
+      answer,
+    });
+    if (started.ok !== true || !started.jobId) {
+      setBusy(false);
+      showFailure(resultOf(started), "Could not resume the session");
+      return;
+    }
+
+    const c = card("Continuing");
+    const spinner = node("p");
+    spinner.innerHTML = '<span class="spin"></span> back in the browser…';
+    c.appendChild(spinner);
+    const log = node("div", "log");
+    c.appendChild(log);
+
+    await streamJob(
+      started.jobId,
+      (line) => appendLogLine(log, line),
+      (payload) => {
+        spinner.remove();
+        setBusy(false);
+        handleAuthoringOutcome(payload.result || {});
+      }
+    );
+  }
+
+  function promptForMoreDetail() {
+    say(
+      "Tell me anything else that might help — the exact wording on the page, an account to use, what you were doing just before it went wrong. I will fold it in and try again."
+    );
+    el.input.placeholder = "Anything else that might help…";
+    el.input.focus();
+    state.awaiting = async (extra) => {
+      state.awaiting = null;
+      el.input.placeholder = DEFAULT_PLACEHOLDER;
+      await submitReport(`${state.reportText}\n\n## More detail\n\n${extra}\n`);
+    };
+  }
+
+  /* What a finished session hands over: a script that runs anywhere Playwright does, and the
+   * repetitions that turn one reproduction into a failure rate. */
+  function renderAuthored(r) {
+    setStep("approve");
+    const c = card("Reproduction ready");
+    kv(c, [
+      ["steps", r.suite && r.suite.steps],
+      ["script", r.suite && r.suite.dir],
+      ["investigation", state.investigation],
+    ]);
+    c.appendChild(
+      node(
+        "p",
+        "Every line in it is a call that actually ran, with the selectors Playwright itself generated — so this is the run that worked, not a rewrite of it."
+      )
+    );
+    c.appendChild(
+      node(
+        "p",
+        "Run it many times to find out how often it fails. One pass proves nothing about a bug that only shows up sometimes."
+      )
+    );
+    buttons(c, [
+      { label: "Run it 30×", kind: "primary", onClick: () => say(rerunHint(r, 30)) },
+      { label: "Run it 100×", onClick: () => say(rerunHint(r, 100)) },
+    ]);
+  }
+
+  function rerunHint(r, n) {
+    const dir = (r.suite && r.suite.dir) || "<the suite folder>";
+    return `In a terminal:\n\n  cd "${dir}"\n  npm i\n  npx playwright test --repeat-each=${n}\n\nYou get a pass/fail count and a video per run.`;
+  }
 
   async function onSend() {
     const text = el.input.value.trim();

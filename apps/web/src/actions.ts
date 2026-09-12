@@ -75,6 +75,17 @@ const NAME = /^[A-Za-z0-9 ._\-()]{1,120}$/;
 const ARTIFACT_KIND = /^[a-z0-9-]{1,40}$/;
 /** A gate name, artifact id or node id: the positional subject of `show` and `lineage`. */
 const SUBJECT = /^[A-Za-z0-9:_-]{1,100}$/;
+/** A Claude CLI session id, as returned by a previous authoring turn. */
+const SESSION_ID = /^[0-9a-fA-F-]{8,64}$/;
+/**
+ * The operator's answer to a question the authoring session asked.
+ *
+ * This is the one genuinely free-text value in the allowlist, and it is bounded rather than
+ * patterned because that is what it is: a person answering "which Delete did you mean?" in their
+ * own words. Control characters are excluded so it cannot smuggle a newline into an argument
+ * list; length is capped so it cannot become an unbounded command line.
+ */
+const FREE_TEXT = /^[^\p{Cc}]{1,2000}$/u;
 
 /**
  * Supplied by the server. Paths the browser sends are workspace-relative by contract, but the CLI
@@ -166,6 +177,30 @@ export const ACTIONS: readonly ActionDef[] = [
     "--from",
     ctx.inWorkspace(str(p, "from", REL_PATH, "a workspace-relative approval file")),
   ]),
+
+  /**
+   * Drive a real browser until the reported behaviour is reached (ADR-0027).
+   *
+   * Long-running by nature — it opens a browser and works through a flow — so it streams rather
+   * than blocking a request. It may end by ASKING the operator something only they know, which is
+   * why `resume` and `answer` are here: the session keeps its browser and everything it has
+   * already done, and the answer continues it rather than starting again.
+   */
+  def("author", "reproduce the bug in a real browser and emit the script", true, (p) => {
+    const argv = ["author", ...inv(p)];
+    const env = optionalStr(p, "env", NAME, "a target name");
+    if (env) argv.push("--env", env);
+    if (flag(p, "headed")) argv.push("--headed");
+    if (p["maxTurns"] !== undefined) argv.push("--max-turns", String(int(p, "maxTurns", 1, 200)));
+
+    // A session id from a previous turn of THIS conversation, and the operator's own words.
+    const resume = optionalStr(p, "resume", SESSION_ID, "a session id");
+    if (resume) {
+      argv.push("--resume", resume);
+      argv.push("--answer", str(p, "answer", FREE_TEXT, "the answer you typed"));
+    }
+    return argv;
+  }),
 
   def("run", "execute approved experiments in Chromium", true, (p) => {
     const argv = ["run", ...inv(p), "--repeat", String(int(p, "repeat", 1, 100))];

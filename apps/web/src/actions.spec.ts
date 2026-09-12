@@ -169,3 +169,71 @@ describe("artifact requests", () => {
     }
   });
 });
+
+describe("the authoring action", () => {
+  const ctx: BuildContext = { inWorkspace: (rel) => `/ws/${rel}` };
+  const build = (p: Record<string, unknown>): string[] => {
+    const a = ACTIONS.find((x) => x.id === "author");
+    if (!a) throw new Error("no author action");
+    return a.build(p, ctx);
+  };
+
+  it("streams, because it drives a browser for as long as the flow takes", () => {
+    expect(ACTIONS.find((a) => a.id === "author")?.streams).toBe(true);
+  });
+
+  it("builds a plain authoring command", () => {
+    expect(build({ investigation: "INV-001" })).toEqual(["author", "--investigation", "INV-001"]);
+  });
+
+  it("carries the answer back to the session that asked", () => {
+    const argv = build({
+      investigation: "INV-001",
+      resume: "6b46d147-fbf4-4c67-bdc4-21977188e01e",
+      answer: "the one in the confirmation dialog, not the row",
+    });
+    expect(argv[argv.indexOf("--resume") + 1]).toBe("6b46d147-fbf4-4c67-bdc4-21977188e01e");
+    expect(argv[argv.indexOf("--answer") + 1]).toBe(
+      "the one in the confirmation dialog, not the row"
+    );
+  });
+
+  it("refuses an answer carrying a control character", () => {
+    // The one free-text value that reaches argv. A newline in it would let a typed answer look
+    // like a second argument, so the pattern excludes the whole control range rather than
+    // listing characters — an earlier version was mangled into matching almost nothing, which a
+    // regex this permissive-looking makes easy to miss.
+    for (const bad of ["line one\nline two", "tab\there", "bell\u0007"]) {
+      expect(
+        () => build({ investigation: "INV-001", resume: "abc12345", answer: bad }),
+        JSON.stringify(bad)
+      ).toThrow(ParamError);
+    }
+  });
+
+  it("accepts ordinary prose, including punctuation and non-English text", () => {
+    for (const good of [
+      "the one in the dialog",
+      "account is 9876543210 — the QA one",
+      "इसे हिंदी में भी चलना चाहिए",
+      "it's the “Delete” button (top right)",
+    ]) {
+      expect(
+        () => build({ investigation: "INV-001", resume: "abc12345", answer: good }),
+        good
+      ).not.toThrow();
+    }
+  });
+
+  it("refuses a resume id that is not a session id", () => {
+    expect(() => build({ investigation: "INV-001", resume: "../../etc", answer: "x" })).toThrow(
+      ParamError
+    );
+  });
+
+  it("requires an answer whenever it is resuming", () => {
+    // Resuming without one would continue the session with an empty message, which reads to the
+    // model as the operator saying nothing.
+    expect(() => build({ investigation: "INV-001", resume: "abc12345" })).toThrow(ParamError);
+  });
+});
