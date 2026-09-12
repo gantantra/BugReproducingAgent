@@ -2,9 +2,7 @@ import type {
   ActionType,
   EvidenceCategory,
   ResetStrategy,
-  ResolvedEmulation,
   SideEffectClass,
-  TargetClassification,
 } from "@investigator/core";
 
 /**
@@ -121,27 +119,6 @@ export interface ExperimentSpec {
     resetStrategy: ResetStrategy;
   };
   targetName: string;
-}
-
-export interface RunContext {
-  runId: string;
-  jobId: string;
-  investigationId: string;
-  experimentId: string;
-  repetitionIndex: number;
-  attemptIndex: number;
-  previousAttemptJobId: string | null;
-  seed: number;
-  approvalId: string | null;
-  effectiveProposalChecksum: string | null;
-  target: {
-    name: string;
-    baseUrl: string;
-    classification: TargetClassification;
-    resetStrategy: ResetStrategy;
-    allowedOrigins: string[];
-  };
-  emulation: ResolvedEmulation;
 }
 
 export interface DeclaredFactor {

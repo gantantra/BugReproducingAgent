@@ -68,7 +68,6 @@ export interface Tool<I, O> {
   run(input: I, ctx: ToolContext): Promise<ToolResult<O>>;
 }
 
-export const DEFAULT_MAX_ITEMS = 200;
 export const DEFAULT_MAX_BYTES = 64 * 1024;
 
 export function toolOk<T>(
@@ -170,7 +169,6 @@ export function assertToolResultSafe(
 }
 
 export const PACKAGE_NAME = "@investigator/tools";
-export const TOOLS_VERSION = "0.1.0";
 
 export * from "./read-tools.js";
 export * from "./analysis-tools.js";

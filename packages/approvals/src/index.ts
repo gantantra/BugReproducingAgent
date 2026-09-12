@@ -803,7 +803,4 @@ export function scaffoldApprovalYaml(args: {
   lines.push('notes: ""', "");
   return lines.join("\n");
 }
-
-export const APPROVALS_COMPONENT = "approvals";
-export const APPROVALS_VERSION = "0.1.0";
 export const PACKAGE_NAME = "@investigator/approvals";

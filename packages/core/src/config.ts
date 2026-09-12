@@ -668,9 +668,6 @@ export function loadConfigFile(path: string, opts: LoadConfigOptions = {}): Reso
   }
   return loadConfigFromString(text, opts);
 }
-
-export const CONFIG_DEFAULTS = DEFAULTS;
-
 /** Whether the AI configuration can be used, without revealing any value. */
 export type LlmConfigState = "configured" | "missing" | "unavailable";
 

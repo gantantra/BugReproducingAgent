@@ -208,8 +208,4 @@ export function toInvestigatorError(e: unknown): InvestigatorError {
   return new InvestigatorError("INTERNAL", message, { cause: e });
 }
 
-export function exitCodeFor(e: unknown): ExitCode {
-  return toInvestigatorError(e).exitCode;
-}
-
 export const ERROR_SPEC = SPEC;

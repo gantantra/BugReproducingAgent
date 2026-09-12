@@ -8,7 +8,7 @@ import type {
   RedactionStamp,
   VersionStamps,
 } from "@investigator/core";
-import { EVIDENCE_CATEGORIES, worseCaptureStatus } from "@investigator/core";
+import { EVIDENCE_CATEGORIES } from "@investigator/core";
 
 /**
  * Capture completeness (ADR-0016).
@@ -236,43 +236,4 @@ export function requiredEvidenceUsable(
     if (s === "missing" || s === "corrupted") offending.push({ category: cat, status: s });
   }
   return { ok: offending.length === 0, offending };
-}
-
-/** Aggregate across runs by taking the worst status per category. Never improves a status. */
-export function aggregateCaptureStatus(
-  statuses: readonly CaptureStatus[]
-): Record<EvidenceCategory, CaptureStatusValue> {
-  const out = {} as Record<EvidenceCategory, CaptureStatusValue>;
-  for (const cat of EVIDENCE_CATEGORIES) {
-    let worst: CaptureStatusValue = "complete";
-    for (const s of statuses) {
-      worst = worseCaptureStatus(worst, s.categories[cat]?.status ?? "missing");
-    }
-    out[cat] = worst;
-  }
-  return out;
-}
-
-/**
- * Forbidden overclaiming phrases (docs/architecture/capture-completeness.md). Linted over
- * rendered reports so generated prose cannot claim capture of all browser-visible data.
- */
-export const FORBIDDEN_CLAIM_PHRASES: readonly RegExp[] = [
-  /\ball browser data\b/i,
-  /\bcomplete browser state\b/i,
-  /\bfull session capture\b/i,
-  /\beverything the browser saw\b/i,
-  /\bnothing was missed\b/i,
-  /\bon Android\b(?!.*emulated)/i,
-  /\bon a real device\b/i,
-  /\bon mobile Chrome\b(?!.*emulated)/i,
-];
-
-export function lintForOverclaiming(text: string): string[] {
-  const hits: string[] = [];
-  for (const re of FORBIDDEN_CLAIM_PHRASES) {
-    const m = re.exec(text);
-    if (m) hits.push(m[0]);
-  }
-  return hits;
 }

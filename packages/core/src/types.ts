@@ -43,17 +43,6 @@ export function isLegalTerminalOutcome(reason: JobTerminalReason, outcome: RunOu
 }
 
 /**
- * Only a captured product failure counts toward product-failure frequency. A worker error or an
- * interruption never does, no matter what it looked like on the way down.
- */
-export function countsTowardProductFailure(
-  reason: JobTerminalReason,
-  outcome: RunOutcome
-): boolean {
-  return reason === "COMPLETED" && outcome === "PRODUCT_FAILED";
-}
-
-/**
  * Retry eligibility. AUTOMATION_FAILED is deliberately NOT retryable: it means the approved
  * sequence is wrong, which is a human decision surfaced at the next gate. PRODUCT_FAILED and
  * VALID_COMPLETED are never retried because they are observations.
@@ -92,28 +81,6 @@ export const CAPTURE_STATUS_VALUES = [
   "disabled",
 ] as const;
 export type CaptureStatusValue = (typeof CAPTURE_STATUS_VALUES)[number];
-
-/**
- * Best to worst. Aggregation takes the worst status across cited runs and never improves one.
- */
-export const CAPTURE_STATUS_SEVERITY: readonly CaptureStatusValue[] = [
-  "complete",
-  "partial",
-  "redacted",
-  "disabled",
-  "unsupported",
-  "missing",
-  "corrupted",
-];
-
-export function worseCaptureStatus(
-  a: CaptureStatusValue,
-  b: CaptureStatusValue
-): CaptureStatusValue {
-  const ia = CAPTURE_STATUS_SEVERITY.indexOf(a);
-  const ib = CAPTURE_STATUS_SEVERITY.indexOf(b);
-  return ia >= ib ? a : b;
-}
 
 export const CAPTURE_REASON_CODES = [
   "SIZE_LIMIT",
@@ -173,7 +140,6 @@ export const FINDING_LEVELS = [
   "root_cause_hypothesis",
   "confirmed_root_cause",
 ] as const;
-export type FindingLevel = (typeof FINDING_LEVELS)[number];
 
 // ---------------------------------------------------------------------------
 // Actions and side effects
@@ -238,10 +204,6 @@ export const SIDE_EFFECT_SEVERITY: readonly SideEffectClass[] = [
   "destructive",
 ];
 
-export function isWeakerSideEffect(declared: SideEffectClass, computed: SideEffectClass): boolean {
-  return SIDE_EFFECT_SEVERITY.indexOf(declared) < SIDE_EFFECT_SEVERITY.indexOf(computed);
-}
-
 /** Static class per action type. The classifier may escalate an instance, never de-escalate it. */
 export const ACTION_BASE_SIDE_EFFECT: Readonly<Record<ActionType, SideEffectClass>> = {
   goto: "read",
@@ -278,9 +240,6 @@ export const RESET_STRATEGIES = [
   "idempotent-only",
 ] as const;
 export type ResetStrategy = (typeof RESET_STRATEGIES)[number];
-
-export const ACTOR_KINDS = ["human", "deterministic", "ai"] as const;
-export type ActorKind = (typeof ACTOR_KINDS)[number];
 
 export const GATES = ["experiment_selection", "target_failure", "final_reproduction"] as const;
 export type Gate = (typeof GATES)[number];
@@ -426,10 +385,4 @@ export type ConfigSource = "cli-flag" | "env" | "config-file" | "built-in-defaul
 export interface ConfigSourceEntry {
   value: JsonPrimitive;
   source: ConfigSource;
-}
-
-export interface WilsonInterval {
-  lower: number;
-  upper: number;
-  confidence: number;
 }

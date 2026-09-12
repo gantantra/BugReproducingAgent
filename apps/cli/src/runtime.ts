@@ -1,8 +1,7 @@
-import { existsSync, readFileSync, copyFileSync, mkdirSync } from "node:fs";
+import { existsSync, copyFileSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { hostname } from "node:os";
 import {
-  EXIT,
   Logger,
   SeededRng,
   detectUnsafeDiagnostics,
@@ -181,17 +180,6 @@ export function seedDefaultPolicy(ws: Workspace): boolean {
   return false;
 }
 
-export function readJsonFile<T>(path: string): T {
-  try {
-    return JSON.parse(readFileSync(path, "utf8")) as T;
-  } catch (e) {
-    return fail("INPUT_INVALID", "Cannot read or parse input file", {
-      context: { path },
-      cause: e,
-    });
-  }
-}
-
 /** Uniform error reporting. Exit codes are part of the CLI contract. */
 export function reportAndExit(e: unknown, logger: Logger, json: boolean): never {
   const err = toInvestigatorError(e);
@@ -207,5 +195,3 @@ export function emit(value: unknown, json: boolean, human: () => string): void {
   if (json) process.stdout.write(JSON.stringify(value) + "\n");
   else process.stdout.write(human() + "\n");
 }
-
-export const EXIT_CODES = EXIT;

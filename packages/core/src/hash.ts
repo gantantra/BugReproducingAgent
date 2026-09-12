@@ -59,11 +59,6 @@ export function sha256Prefixed(data: string | Uint8Array): string {
   return `sha256:${sha256Hex(data)}`;
 }
 
-/** Hash of the canonical pretty form. Matches what a reader would get by hashing the file. */
-export function hashCanonical(value: unknown): string {
-  return sha256Prefixed(canonicalJson(value));
-}
-
 /** Hash of the canonical compact form. */
 export function hashCanonicalCompact(value: unknown): string {
   return sha256Prefixed(canonicalCompactJson(value));
@@ -88,21 +83,4 @@ export function verifySealHash<T extends Record<string, unknown>>(
   const expected = computeSealHash(record, sealField);
   const actual = record[sealField];
   return { ok: actual === expected, expected, actual };
-}
-
-/**
- * Chain link for lineage: sha256(canonical(record without recordHash) || prevRecordHash).
- * Makes a rewrite of history detectable, which is the honest guarantee for a local tool.
- */
-export function computeChainHash(
-  record: Record<string, unknown>,
-  prevRecordHash: string | null
-): string {
-  const { recordHash: _omit, ...rest } = record;
-  return sha256Prefixed(canonicalCompactJson(rest) + (prevRecordHash ?? ""));
-}
-
-export function shortSha(prefixedOrHex: string, length = 12): string {
-  const hex = prefixedOrHex.startsWith("sha256:") ? prefixedOrHex.slice(7) : prefixedOrHex;
-  return hex.slice(0, length);
 }

@@ -115,11 +115,3 @@ export function readOrCreateToken(workspace: string, mint: () => string): string
   writeJsonAtomic(path, { token });
   return token;
 }
-
-/** Used where persistence is not wanted, so the store's own logic stays independent of disk. */
-export const noPersistence: SessionPersistence = {
-  loadUsers: () => [],
-  saveUsers: () => {},
-  loadSessions: () => [],
-  saveSessions: () => {},
-};

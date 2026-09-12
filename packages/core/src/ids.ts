@@ -143,14 +143,3 @@ export function artifactId(kindPrefix: string, ...parts: (string | number)[]): A
 export function workerId(hostname: string, pid: number, random: () => string): WorkerId {
   return `${hostname}:${pid}:${random().slice(0, 6)}` as WorkerId;
 }
-
-/** Parse the numeric part back out of a counter-based id. */
-export function idSequence(value: string): number {
-  const m = /-(\d+)$/.exec(value);
-  if (!m || m[1] === undefined) {
-    fail("INPUT_INVALID", "Id has no numeric sequence", { context: { value } });
-  }
-  return Number.parseInt(m[1], 10);
-}
-
-export const ID_PATTERNS = PATTERNS;

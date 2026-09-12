@@ -371,10 +371,3 @@ export function makeContrastRuns(read: RunEvidenceReader): Tool<ContrastInput, R
     },
   };
 }
-
-/** The allowlist for `analyze_failures`. */
-export const ANALYZE_FAILURES_TOOLS = [
-  "get_flow",
-  "get_failure_evidence",
-  "contrast_runs",
-] as const;

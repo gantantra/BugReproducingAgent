@@ -274,6 +274,3 @@ export class LocalArtifactStore implements ArtifactStore {
     return { ...row, tombstoned: true, tombstonedAt: at, tombstoneReason: reason };
   }
 }
-
-export const ARTIFACT_KIND_PREFIX = KIND_PREFIX;
-export const ARTIFACT_EXTENSION = EXTENSION;

@@ -168,18 +168,3 @@ export function sensitiveExperiment(targetName: string): FixtureExperiment {
     assertions: [],
   };
 }
-
-/** Slow action, so a kill lands mid-run for the interruption gate. */
-export function slowExperiment(targetName: string): FixtureExperiment {
-  return {
-    ...base(),
-    experimentId: "EXP-SLOW",
-    targetName,
-    actions: [
-      { actionId: "A1", type: "goto", url: "/search", waitUntil: "load" },
-      { actionId: "A2", type: "waitForTimeout", ms: 5000 },
-      { actionId: "A3", type: "assert", assertion: RESULT_CARDS },
-    ],
-    assertions: [RESULT_CARDS],
-  };
-}

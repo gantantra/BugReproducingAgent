@@ -1,9 +1,4 @@
-import type {
-  CaptureStatus,
-  EvidenceCategory,
-  RunOutcome,
-  VersionStamps,
-} from "@investigator/core";
+import type { CaptureStatus, EvidenceCategory, VersionStamps } from "@investigator/core";
 import { EXTRACTOR_VERSION, NORMALIZER_VERSION, canonicalJson } from "@investigator/core";
 import { parseRawLog, type RawEvent } from "./raw-events.js";
 import {
@@ -268,24 +263,6 @@ function buildCaptureStatus(
     ...(input.unsafeTrace ? { unsafeTrace: true } : {}),
     ...(input.unsafeDebug ? { unsafeDebug: true } : {}),
   });
-}
-
-/**
- * Independent recomputation check. The executor decides the outcome in-process for speed; the
- * plane recomputes it from persisted evidence and the two must agree. Disagreement is an
- * integrity failure, not a warning (ADR-0005).
- */
-export function verifyOutcomeAgreement(
-  recorded: { outcome: RunOutcome; outcomeRuleId: number },
-  recomputed: OutcomeDecision
-): { ok: boolean; detail: string | null } {
-  if (recorded.outcome === recomputed.outcome && recorded.outcomeRuleId === recomputed.ruleId) {
-    return { ok: true, detail: null };
-  }
-  return {
-    ok: false,
-    detail: `executor recorded ${recorded.outcome}/rule ${recorded.outcomeRuleId}; extractor recomputed ${recomputed.outcome}/rule ${recomputed.ruleId}`,
-  };
 }
 
 export { requiredEvidenceUsable };

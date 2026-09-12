@@ -295,5 +295,3 @@ export function isOriginAllowed(url: string, allowedOrigins: readonly string[]):
     return host === base || host.endsWith(`.${base}`);
   });
 }
-
-export const DESTRUCTIVE_PATTERNS = DEFAULT_DESTRUCTIVE_PATTERNS;

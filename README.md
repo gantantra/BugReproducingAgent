@@ -72,7 +72,7 @@ prompt bytes produced each interpretation.
 | M2 — lineage, the three approval gates, CLI workflow       | Implemented                                               |
 | M3 — AI gateway, flows, read-only tools, eval harness      | Implemented; `intake --ai` verified against live DeepSeek |
 | Chat UI (`apps/web`)                                       | Implemented; drives the CLI, holds no pipeline logic      |
-| M4–M8 — classification, frequency, minimization, reporting | **Not implemented**                                       |
+| M4–M8 — classification, frequency, minimization, reporting | **Not implemented, and not planned**                      |
 
 **What you can do today:** run a full investigation end to end against a local fixture or a real
 target, with human approval, full evidence capture, provenance, an exported Playwright
@@ -80,8 +80,20 @@ reproduction, and a measured contrast between failing and passing runs.
 
 **What you cannot:** get a failure-rate statistic with a confidence interval, automatic run
 clustering, minimization of a reproduction down to its essential steps, or a Jira-ready report.
-Those are M4–M8. Every unimplemented command is registered and exits 1 naming its milestone,
-rather than silently doing nothing:
+
+Those were M4–M8, and they are **not being built**. The partial groundwork that had been written
+for them was removed rather than left in place: Wilson score intervals and ordering-inversion
+counts for M5, capture-status aggregation and the overclaiming lint for M7, independent outcome
+recomputation for M4, and around thirty other exported symbols with no caller anywhere, tests
+included. Scaffolding for work that is not coming is not an asset — it is code every later reader
+has to evaluate and every refactor has to carry.
+
+Anything reinstating those milestones starts from the ADRs, which are unchanged and still record
+the decisions. One consequence to note if M7 ever returns: `lintForOverclaiming` enforced this
+project's language-discipline rule against generated report prose, and it went with the rest.
+
+Every unimplemented command is still registered and exits 1 naming its milestone, rather than
+silently doing nothing:
 
 ```bash
 node apps/cli/dist/bin.js classify      # -> NOT_IMPLEMENTED, "Arrives in M4"
