@@ -20,7 +20,9 @@ import { suiteGenerateCommand } from "./commands/suite.js";
 import { lineageCommand, showCommand, statusCommand } from "./commands/inspect.js";
 import { retentionApplyCommand } from "./commands/retention.js";
 import { analyzeCommand } from "./commands/analyze.js";
+import { authorCommand } from "./commands/author.js";
 import { loadEnvFile } from "./env-file.js";
+import { loadDeepSeekCredentials } from "./deepseek-credentials.js";
 
 /**
  * `investigate` CLI.
@@ -78,9 +80,13 @@ function version(): string {
   return "0.0.0";
 }
 
-// Before any command reads configuration. The real environment always wins over the file, and
-// `REPROAGENT_NO_ENV_FILE=1` disables it outright — see `env-file.ts` for why both matter.
+// Before any command reads configuration. The real environment always wins over either file, and
+// `REPROAGENT_NO_ENV_FILE=1` disables both outright — see `env-file.ts` for why both matter.
+//
+// `.env` first: a variable it sets is then already present, so `deepseek.json` leaves it alone.
+// That ordering makes the repo's own file the more specific one, which is the useful way round.
 loadEnvFile();
+loadDeepSeekCredentials();
 
 const program = new Command();
 
@@ -268,6 +274,20 @@ program
   .option("--replay <dir>", "replay recorded provider responses instead of calling one")
   .action(async function (this: Command) {
     await dispatch(this, (rt, g) => intakeCommand(rt, this.opts(), g));
+  });
+
+program
+  .command("author")
+  .description(
+    "drive a real browser with your own claude login until the bug reproduces, then emit the script"
+  )
+  .option("--env <name>", "target name")
+  .option("--headed", "show the browser instead of running it headless")
+  .option("--max-turns <n>", "ceiling on agent turns", (v) => Number.parseInt(v, 10))
+  .option("--resume <sessionId>", "resume a session that paused on a question")
+  .option("--answer <text>", "the answer to the question that paused it")
+  .action(async function (this: Command) {
+    await dispatch(this, (rt, g) => authorCommand(rt, this.opts(), g));
   });
 
 program

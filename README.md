@@ -218,6 +218,29 @@ Reconstruction is where drift lives: the run passes, the rebuilt script does not
 trusts it next is the one who finds out. Selectors arrive as role plus accessible name, which
 survives a CSS refactor — and this script is run N times, unattended, possibly weeks later.
 
+### Running it
+
+```bash
+investigate author --investigation INV-001            # headless
+investigate author --investigation INV-001 --headed   # watch it
+```
+
+It pauses to ask whenever the page cannot tell it something only you know. The session keeps its
+browser and everything it has already done, so answering resumes rather than restarts:
+
+```bash
+investigate author --investigation INV-001 --resume <sessionId> --answer "the one in the dialog"
+```
+
+A session that reaches the behaviour writes a self-contained suite to
+`<investigation>/authoring/suite/` — spec, config and `package.json`. A session that does not
+writes nothing, deliberately: a partial reproduction looks complete, and the next person runs it.
+
+**Prerequisite:** a logged-in `claude` CLI. Authoring uses the account already on the machine, so
+there is no second credential to configure — but an expired login fails as
+`Failed to authenticate: OAuth session expired`, which the command surfaces verbatim rather than
+dressing up. Run `claude` once interactively to sign in again.
+
 ### What is proven, and what is not
 
 Verified end to end against a throwaway page: the Claude CLI drove Playwright MCP for 12 turns,
@@ -914,24 +937,25 @@ most of the design exists to keep them apart.
 Every command in the frozen contract is registered. The ones not yet implemented exit 1 naming
 their milestone rather than silently doing nothing.
 
-| Command                   | Does                                                                       | AI?    |
-| ------------------------- | -------------------------------------------------------------------------- | ------ |
-| `init`                    | Create a workspace: database, `config.yaml`, redaction policy, directories | no     |
-| `intake`                  | Open an investigation from a report file                                   | `--ai` |
-| `plan`                    | Render the gate-1 proposal a human decides on                              | `--ai` |
-| `approve <gate>`          | Record a checksum-bound human approval. `--scaffold` writes a blank one    | no     |
-| `run`                     | Execute approved experiments. Makes **no** provider calls, ever            | no     |
-| `analyze`                 | Report what separates failing runs from passing ones                       | `--ai` |
-| `suite generate`          | Emit a standalone Playwright spec for approved experiments                 | no     |
-| `status`                  | Gate states, run outcomes, queue and lineage health                        | no     |
-| `show <what>`             | Print a rendered proposal, or an artifact's contents                       | no     |
-| `lineage <nodeId>`        | Ancestors and descendants of a node, with the actor on every hop           | no     |
-| `doctor`                  | Workspace, config, queue, integrity and safety state. `--verify-lineage`   | no     |
-| `retention apply`         | Tombstone artifacts past their retention age. Dry run without `--confirm`  | no     |
-| `classify`                | Cluster runs, render gate 2                                                | **M4** |
-| `frequency run`           | Execute N times and compute failure-rate statistics                        | **M5** |
-| `minimize` / `revalidate` | Reduce a reproduction; re-execute it and its control                       | **M6** |
-| `report` / `export`       | Jira-ready report; package reproducer and artifacts                        | **M7** |
+| Command                   | Does                                                                                             | AI?    |
+| ------------------------- | ------------------------------------------------------------------------------------------------ | ------ |
+| `init`                    | Create a workspace: database, `config.yaml`, redaction policy, directories                       | no     |
+| `intake`                  | Open an investigation from a report file                                                         | `--ai` |
+| `author`                  | Drive a real browser with your own `claude` login until the bug reproduces, then emit the script | Claude |
+| `plan`                    | Render the gate-1 proposal a human decides on                                                    | `--ai` |
+| `approve <gate>`          | Record a checksum-bound human approval. `--scaffold` writes a blank one                          | no     |
+| `run`                     | Execute approved experiments. Makes **no** provider calls, ever                                  | no     |
+| `analyze`                 | Report what separates failing runs from passing ones                                             | `--ai` |
+| `suite generate`          | Emit a standalone Playwright spec for approved experiments                                       | no     |
+| `status`                  | Gate states, run outcomes, queue and lineage health                                              | no     |
+| `show <what>`             | Print a rendered proposal, or an artifact's contents                                             | no     |
+| `lineage <nodeId>`        | Ancestors and descendants of a node, with the actor on every hop                                 | no     |
+| `doctor`                  | Workspace, config, queue, integrity and safety state. `--verify-lineage`                         | no     |
+| `retention apply`         | Tombstone artifacts past their retention age. Dry run without `--confirm`                        | no     |
+| `classify`                | Cluster runs, render gate 2                                                                      | **M4** |
+| `frequency run`           | Execute N times and compute failure-rate statistics                                              | **M5** |
+| `minimize` / `revalidate` | Reduce a reproduction; re-execute it and its control                                             | **M6** |
+| `report` / `export`       | Jira-ready report; package reproducer and artifacts                                              | **M7** |
 
 Global flags: `--workspace <dir>`, `--investigation <id>`, `--json`, `--verbose`, `--seed <int>`,
 `--no-color`, `--allow-unsafe-debug`.

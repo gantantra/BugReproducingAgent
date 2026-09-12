@@ -59,10 +59,32 @@ describe("the environment handed to the CLI", () => {
 });
 
 describe("the command line", () => {
+  it("never puts the prompt in argv", () => {
+    // The prompt embeds a bug report written by someone else. It goes on stdin, so no platform's
+    // argv handling -- and no shell -- ever sees it. A report containing `& del ...` was a real
+    // command-injection path while this spawned a Windows .cmd through a shell.
+    // Asserted exactly, so appending a prompt again fails here rather than in production. Every
+    // element is a flag or a value this module chose; there is no slot for a caller's free text.
+    expect(claudeCliArgs({ maxTurns: 3, mcpConfigPath: "/ws/mcp.json" })).toEqual([
+      "--print",
+      "--model",
+      "claude-sonnet-5",
+      "--effort",
+      "medium",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--mcp-config",
+      "/ws/mcp.json",
+      "--max-turns",
+      "3",
+    ]);
+  });
+
   it("always pins the model and effort explicitly", () => {
     // Inheriting these is how a session silently runs on a different model than the one the
     // behaviour was tuned for. ANTHROPIC_MODEL in this environment is the proof it happens.
-    const args = claudeCliArgs({ prompt: "do the thing" });
+    const args = claudeCliArgs({});
     expect(args).toContain("--model");
     expect(args[args.indexOf("--model") + 1]).toBe(AUTHORING_MODEL);
     expect(args[args.indexOf("--effort") + 1]).toBe(AUTHORING_EFFORT);
@@ -70,25 +92,19 @@ describe("the command line", () => {
     expect(AUTHORING_EFFORT).toBe("medium");
   });
 
-  it("puts the prompt last, so no flag can swallow it", () => {
-    const args = claudeCliArgs({ prompt: "the prompt", maxTurns: 12 });
-    expect(args[args.length - 1]).toBe("the prompt");
-  });
-
   it("asks for streaming output with the verbose flag the CLI requires alongside it", () => {
-    const args = claudeCliArgs({ prompt: "p", outputFormat: "stream-json" });
+    const args = claudeCliArgs({ outputFormat: "stream-json" });
     expect(args).toContain("--verbose");
   });
 
   it("omits verbose for a single final answer", () => {
-    const args = claudeCliArgs({ prompt: "p", outputFormat: "json" });
+    const args = claudeCliArgs({ outputFormat: "json" });
     expect(args).not.toContain("--verbose");
     expect(args[args.indexOf("--output-format") + 1]).toBe("json");
   });
 
   it("passes the MCP config and the tool allowlist when given", () => {
     const args = claudeCliArgs({
-      prompt: "p",
       mcpConfigPath: "/ws/mcp.json",
       allowedTools: ["mcp__playwright__browser_navigate", "mcp__playwright__browser_click"],
     });
@@ -97,7 +113,7 @@ describe("the command line", () => {
   });
 
   it("omits optional flags that were not supplied", () => {
-    const args = claudeCliArgs({ prompt: "p" });
+    const args = claudeCliArgs({});
     for (const flag of ["--mcp-config", "--allowed-tools", "--resume", "--max-turns"]) {
       expect(args, flag).not.toContain(flag);
     }

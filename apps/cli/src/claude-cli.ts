@@ -65,8 +65,6 @@ export function claudeCliEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 export interface ClaudeCliArgsOptions {
-  /** The task, as the operator's own words plus whatever context the harness adds. */
-  prompt: string;
   /** Absolute path to an MCP server config, normally the Playwright MCP one. */
   mcpConfigPath?: string;
   /** Exact tool names the session may use. Omitted means the CLI's own defaults apply. */
@@ -83,6 +81,13 @@ export interface ClaudeCliArgsOptions {
 
 /**
  * Build the argv for one `claude` invocation.
+ *
+ * **The prompt is NOT here.** It goes on stdin, and that is a security property rather than a
+ * style choice: the prompt embeds a bug report written by someone else, and a report is exactly
+ * the kind of untrusted text that should never become a command-line argument. This spawned a
+ * Windows `.cmd` through a shell at first, which concatenates arguments rather than escaping
+ * them — a report containing `& del ...` would have run it. Passing the prompt on stdin removes
+ * the surface entirely, whatever the platform does with argv.
  *
  * Separate from spawning so the exact command can be asserted in a test. The model and effort are
  * always passed explicitly: inheriting them is how this ends up on a different model than the one
@@ -108,7 +113,7 @@ export function claudeCliArgs(opts: ClaudeCliArgsOptions): string[] {
   if (opts.appendSystemPrompt) args.push("--append-system-prompt", opts.appendSystemPrompt);
   if (opts.maxTurns !== undefined) args.push("--max-turns", String(opts.maxTurns));
 
-  args.push(opts.prompt);
+  // No positional prompt. It arrives on stdin -- see the note above.
   return args;
 }
 
@@ -157,7 +162,19 @@ export function playwrightMcpConfig(opts: {
  */
 export function findClaudeCli(env: NodeJS.ProcessEnv = process.env): string | null {
   const onPath = (env["PATH"] ?? "").split(delimiter).filter(Boolean);
-  const names = process.platform === "win32" ? ["claude.cmd", "claude.exe", "claude"] : ["claude"];
+
+  for (const dir of onPath) {
+    // The real executable first, wherever it is reachable from this PATH entry.
+    //
+    // npm puts a `claude.cmd` shim on PATH and the actual binary under its own node_modules. The
+    // shim is a batch file, and spawning a batch file requires a shell, which concatenates
+    // arguments instead of escaping them. Preferring the binary means no shell is involved at
+    // all -- belt to the stdin braces, since neither alone should be what protects this.
+    const real = join(dir, "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe");
+    if (existsSync(real)) return real;
+  }
+
+  const names = process.platform === "win32" ? ["claude.exe", "claude.cmd", "claude"] : ["claude"];
   for (const dir of onPath) {
     for (const name of names) {
       const candidate = join(dir, name);

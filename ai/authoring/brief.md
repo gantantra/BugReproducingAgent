@@ -59,7 +59,34 @@ real application, and evidence that looks exactly as trustworthy as the real thi
 
 Do not ask about things you can determine yourself by looking.
 
+## How to ask, mechanically
+
+You have no live channel to the operator. To ask, **end your turn** with the question as the very
+last line, in this exact form:
+
+```
+AUTHORING: QUESTION <your question>
+```
+
+The harness shows it to them, waits, and resumes this same session with their answer. Nothing is
+lost — you keep the browser, the page and everything you have done. So ending a turn to ask is
+cheap, and it is the intended move, not a failure.
+
+Say what you need and why in the message above that line, so the question makes sense to someone
+who has not been watching. Then the sentinel line, alone, last.
+
 ## Finishing
+
+End your final turn with exactly one of these as the last line, so the harness knows what
+happened without having to interpret prose:
+
+```
+AUTHORING: DONE
+AUTHORING: QUESTION <question>
+AUTHORING: STUCK <reason>
+```
+
+Everything you want the operator to read goes above it.
 
 **When you have reproduced it:** say what on the page shows it — what you saw, not what you think
 causes it. Diagnosis is a later step and a different job.
