@@ -42,22 +42,48 @@ interpret that measurement, and only where every claim it makes can be checked a
           │
           ▼
    ① intake ──────────► stored verbatim, redacted, content-hashed
-          │                   └─ optional: DeepSeek reads it into a structured Flow
+          │              (deterministic — no model reads it; the browser session reads it later)
           ▼
-   ② plan ────────────► a gate-1 proposal: ranked experiments, each with a FALSIFIER
+   ② author ──────────► your own `claude` CLI writes a PLAN, with no browser tools at all
+          │              on that turn, and asks about what only you can answer
+          ▼
+   ③ you approve the plan
           │
           ▼
-   ③ approve ─────────► a HUMAN decision, SHA-256-bound to the exact bytes they read
+   ④ author --approve-plan
+          │           ──► a fresh session, now with Playwright MCP, drives a real browser
+          │               until the reported behaviour is reached. Two artifacts fall out
+          │               of the session record, both rendered from the same statements:
+          │                 • suite/ ................ a standalone spec for a developer
+          │                 • experiment-proposal.json  the same flow in the closed
+          │                                             action vocabulary, so it can be
+          │                                             MEASURED
+          ▼
+   ⑤ plan --from <that proposal>
+          │           ──► the gate-1 document: the flow, its falsifier, its repetition
+          │               count, and the exact statement behind every action
+          ▼
+   ⑥ approve ─────────► a HUMAN decision, SHA-256-bound to the exact bytes they read
           │              (nothing below this line can happen without it)
           ▼
-   ④ run ─────────────► N deterministic Chromium runs, fresh context each,
-          │              full evidence capture, redacted before it is stored
+   ⑦ run ─────────────► N deterministic Chromium runs, fresh context each,
+          │              full evidence capture, redacted before it is stored,
+          │              no model anywhere near it
           ▼
-   ⑤ analyze ─────────► what separates failing runs from passing ones — computed
+   ⑧ analyze ─────────► what separates failing runs from passing ones — computed
           │                   └─ optional: DeepSeek reads that contrast and proposes causes
           ▼
-   ⑥ suite generate ──► a standalone Playwright spec you hand to a developer
+   ⑨ suite generate ──► a standalone Playwright spec you hand to a developer
 ```
+
+Steps ② through ④ are the **authoring loop** (ADR-0027) — the one place a model drives a
+browser. It produces no evidence, no outcome and no statistic. Steps ⑥ onward are
+**measurement**, and they are deterministic.
+
+`plan --ai` can still draft a gate-1 proposal with DeepSeek instead of authoring one, for an
+investigation where nobody has driven the browser yet. It is the older path and it reaches a
+model before anything has been observed; the authored proposal above is the one produced by a
+flow a human watched work.
 
 Every arrow is auditable afterwards: `investigate lineage <runId>` walks an append-only,
 hash-chained graph and tells you which human decision authorised each step, and which flow and
@@ -203,6 +229,36 @@ it something only they know.
 
 Between them is a human watching a video of the one run that worked.
 
+### From an authored session to a measured one
+
+A session emits two things, both rendered from the same recorded statements:
+
+| Artifact                                       | For                                                                      |
+| ---------------------------------------------- | ------------------------------------------------------------------------ |
+| `<session>/authoring/suite/`                   | a developer — ordinary Playwright, `npx playwright test --repeat-each=N` |
+| `<session>/authoring/experiment-proposal.json` | measurement — the same flow in the `action.v1` vocabulary                |
+
+The suite records video and a trace. Only the proposal reaches the evidence pipeline: console,
+exceptions, network metadata, actions, navigation, video and trace, redacted and normalized, which
+is what `analyze` contrasts and what DeepSeek is then allowed to interpret. Hand it to the gate
+with `plan --from`; nothing new is needed, because the gate does not care who drafted a proposal.
+
+**The statements are parsed, not executed.** ADR-0006 forbids running model-authored source, so
+each statement is reduced to declared vocabulary — `getByRole(...)` becomes a `role` selector,
+`.filter({ hasText })` and `.nth()` become fields on it — and anything the vocabulary cannot
+express is **refused by name** rather than approximated. A mistranslated selector would not fail
+loudly; it would silently measure a different flow than the one the human approved and report a
+pass rate for it.
+
+What makes that trustworthy is a **round trip**: every action is rendered back into a Playwright
+statement by a separate function and compared with the one it came from. A mismatch refuses the
+whole translation, because a proposal missing one step from the middle is not a shorter version
+of the flow, it is a different flow.
+
+A value typed into a field that matches a credential you supplied becomes a `secretRef` naming the
+variable, never the value — the proposal is written to disk, content-hashed and read back at the
+gate, so a password in it would be a password at rest.
+
 ### Why the script is a by-product rather than a reconstruction
 
 Playwright MCP records the exact Playwright statement for every call it makes:
@@ -341,10 +397,16 @@ Two things that verification found, which no amount of reading would have:
   fails with `MODULE_NOT_FOUND`, or worse resolves a mismatched `@playwright/test` from a parent
   directory and reports `No tests found`.
 
-**Not yet built:** the DeepSeek analysis of failed runs after an approved batch. `investigate
-author` and the operator-question channel in the chat UI are built; what is unproven is that a
-session completes a reproduction end to end against a real production site — every completed run
-so far has been against local test servers.
+**Built, and verified only as far as stated.** An authoring session now emits
+`experiment-proposal.json` beside the suite, so the authored flow can be measured by
+`investigate run` with full evidence capture and then analysed. That path was exercised end to
+end with a proposal generated from the statements of real captured sessions: `plan --from`
+accepted it and minted a checksum. What has **not** happened is a live authoring session against
+a real production site producing that proposal itself — every completed authoring run so far has
+been against local test servers, so the join between the two halves is proven from real
+statements but not yet from a real session.
+
+**Not built:** nothing consumes an authored batch automatically. You run the four commands.
 
 ## Setup and first run
 
@@ -801,15 +863,20 @@ step and implying the pipeline is shorter than it is.
 
 ### The one rule everything follows
 
-Four kinds of work, kept strictly apart, because mixing them is how an investigation tool starts
+Five kinds of work, kept strictly apart, because mixing them is how an investigation tool starts
 lying:
 
-| Who                    | Does                                      | Never does                                        |
-| ---------------------- | ----------------------------------------- | ------------------------------------------------- |
-| **Playwright**         | Drives a browser, produces raw evidence   | Decides what the evidence means                   |
-| **Deterministic code** | Normalizes, redacts, measures, classifies | Guesses, or asks a model                          |
-| **DeepSeek**           | Interprets, ranks, hypothesises, explains | Touches a browser, or decides an outcome          |
-| **A human**            | Authorizes every consequential transition | Gets bypassed by a `--yes` flag — there isn't one |
+| Who                    | Does                                                                                                        | Never does                                                           |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| **Playwright**         | Drives a browser, produces raw evidence                                                                     | Decides what the evidence means                                      |
+| **Your `claude` CLI**  | Authors a reproduction: asks you what only you know, drives a real browser until the behaviour appears      | Produces evidence, an outcome or a statistic; touches a measured run |
+| **Deterministic code** | Normalizes, redacts, measures, classifies; translates an authored session into the closed action vocabulary | Guesses, or asks a model                                             |
+| **DeepSeek**           | Interprets, ranks, hypothesises, explains                                                                   | Touches a browser, or decides an outcome                             |
+| **A human**            | Authorizes every consequential transition                                                                   | Gets bypassed by a `--yes` flag — there isn't one                    |
+
+Five kinds, not four: the authoring model is separate from DeepSeek and separate from the
+deterministic core. It is the only model that drives a browser, it does so in a session that
+records nothing anyone measures, and a human approves its output before anything runs.
 
 The import graph enforces the second and third rows rather than trusting them.
 `packages/execution`, `packages/evidence` and `packages/test-fixtures` **cannot** import
@@ -1332,34 +1399,38 @@ server-side and is not visible while CI/CD is disabled; deleting it requires pro
 
 ## Key guarantees, and where to check them
 
-| Guarantee                                                                                                           | Enforced by                                                                                                                                                                      |
-| ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| DeepSeek is never reachable from execution, evidence, or fixtures                                                   | `tests/docs/import-boundary.spec.ts` walks the resolved module graph                                                                                                             |
-| Nothing reaches a browser without a recorded human decision                                                         | `tests/e2e/m2-gates.test.ts`; `run` exits 2 and enqueues zero jobs                                                                                                               |
-| The chat UI cannot bypass a gate or run an arbitrary command                                                        | `tests/e2e/web-actions.test.ts` drives every action against the built binary; `apps/web/src/actions.spec.ts` covers the allowlist                                                |
-| Sensitive evidence is redacted before it is persisted                                                               | `tests/reliability/redaction_before_persistence.spec.ts`; a store call without a `RedactionStamp` raises `REDACTION_NOT_APPLIED`                                                 |
-| Normalization is a pure function; a session rebuilds byte-identically offline                                       | `tests/reliability/offline_session_reconstruction.spec.ts`, with network and browser unavailable                                                                                 |
-| A product failure is never hidden by a retry                                                                        | `tests/reliability/no_retry_hides_product_failure.spec.ts`                                                                                                                       |
-| A broken script is never reported as a product defect                                                               | Rule 3 before rule 4 in `packages/evidence/src/outcome.ts`; `tests/e2e/described-selector.test.ts`                                                                               |
-| Queue state and run outcome are separate concepts                                                                   | `JobState` / `JobTerminalReason` / `RunOutcome` in `packages/core/src/types.ts`, plus SQLite CHECK constraints                                                                   |
-| The 100-run fixture completes with zero retries and zero infrastructure failures                                    | `tests/reliability/same_test_100_runs.spec.ts`                                                                                                                                   |
-| Every artifact is content-hashed and verifiable                                                                     | `tests/reliability/artifact_integrity_hashes.spec.ts`                                                                                                                            |
-| Mobile runs are Chromium **emulation**, recorded as read back from the browser                                      | `tests/reliability/mobile_emulation.spec.ts`                                                                                                                                     |
-| The API key never reaches a log, artifact, or error                                                                 | `packages/core/src/secret.spec.ts`, plus a canary assertion in the CLI e2e suite                                                                                                 |
-| An AI finding cannot cite evidence it was never shown                                                               | `apps/cli/src/commands/analyze.ts` validates every reference against only the runs the tools returned                                                                            |
-| What differs between failing and passing runs is computed, not inferred                                             | `contrastRuns` is pure; `packages/tools/src/analysis-tools.spec.ts` covers what it refuses to claim as well as what it finds                                                     |
-| A persisted video is never presented as redacted                                                                    | stamped `video-raw-unredactable`; `packages/evidence/src/capture-status.spec.ts` asserts the wording a reader actually sees                                                      |
-| A URL the reporter never gave is never defaulted to the target root                                                 | `EXEC_VALUE_UNRESOLVED`, at both execution and export; a described SELECTOR is resolved by role and name instead — `packages/execution/src/described-resolution.spec.ts`         |
-| Relaxing the origin allowlist to subdomains did not open it to other sites                                          | `packages/execution/src/described-resolution.spec.ts` covers suffix-smuggling, protocol downgrade and port changes                                                               |
-| Each investigation keeps its own provenance chain                                                                   | `packages/lineage/src/lineage.spec.ts`; the lineage primary key is scoped per investigation                                                                                      |
-| A flow's few-shot examples satisfy the schema its output is validated against                                       | `tests/docs/flow-examples.spec.ts`, over every shipped flow                                                                                                                      |
-| An authoring session is never denied a browser tool it should have, nor offered one that cannot fake a reproduction | `tests/e2e/playwright-mcp-tools.test.ts` boots the pinned MCP server and diffs `ALLOWED_PLAYWRIGHT_TOOLS` against its real `tools/list`, in both directions                      |
-| No browser opens before a human has read the plan                                                                   | the planning phase is spawned with no `--mcp-config` and no `--allowed-tools`; `apps/cli/src/claude-cli.spec.ts` asserts the argv contains neither                               |
-| An authored suite that cannot fail is never offered for measurement                                                 | `whyStepsCannotMeasure` in `apps/cli/src/authoring-script.ts` refuses at emit time; `apps/cli/src/authoring-script.spec.ts` uses the script that actually shipped as the fixture |
-| A supplied credential is usable but never lands in a prompt, an artifact, or argv                                   | `packages/storage/src/credential-store.spec.ts`; `packages/evidence/src/masked-values.spec.ts` masks registered values in every scope                                            |
-| The shape outline a model is shown describes the schema it is judged against                                        | `packages/ai-flows/src/shape.spec.ts` asserts the actual generated outline, including `oneOf` variants and closed enums                                                          |
-| A closed vocabulary the CLI sends matches the enum the validator enforces                                           | `tests/docs/vocabulary-drift.spec.ts` compares `ACTION_TYPES` and `ASSERTION_KINDS` against the schemas                                                                          |
-| A session writes only inside its own folder, or the request is refused                                              | `apps/web/src/session-workspace.spec.ts`; a lapsed session returns `SESSION_EXPIRED` rather than falling back to the root                                                        |
+| Guarantee                                                                                                           | Enforced by                                                                                                                                                                                    |
+| ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| An authored statement is never mistranslated into a different flow                                                  | Round trip in `apps/cli/src/authoring-actions.spec.ts`: every action renders back to the statement it came from, and any statement the vocabulary cannot express refuses the whole translation |
+| An authored proposal is one `plan --from` will actually accept                                                      | `apps/cli/src/authoring-proposal.spec.ts` asserts it against `gate-proposal.v1.json`, the same schema the command asserts                                                                      |
+| A supplied credential never reaches a persisted proposal                                                            | `apps/cli/src/authoring-proposal.spec.ts`; the value becomes a `secretRef` and the originating statement is redacted                                                                           |
+| A reviewer at gate 1 can tell which element an action picks                                                         | `packages/approvals/src/approvals.spec.ts` renders role, name, filter and `nth`, plus the statement each action came from                                                                      |
+| DeepSeek is never reachable from execution, evidence, or fixtures                                                   | `tests/docs/import-boundary.spec.ts` walks the resolved module graph                                                                                                                           |
+| Nothing reaches a browser without a recorded human decision                                                         | `tests/e2e/m2-gates.test.ts`; `run` exits 2 and enqueues zero jobs                                                                                                                             |
+| The chat UI cannot bypass a gate or run an arbitrary command                                                        | `tests/e2e/web-actions.test.ts` drives every action against the built binary; `apps/web/src/actions.spec.ts` covers the allowlist                                                              |
+| Sensitive evidence is redacted before it is persisted                                                               | `tests/reliability/redaction_before_persistence.spec.ts`; a store call without a `RedactionStamp` raises `REDACTION_NOT_APPLIED`                                                               |
+| Normalization is a pure function; a session rebuilds byte-identically offline                                       | `tests/reliability/offline_session_reconstruction.spec.ts`, with network and browser unavailable                                                                                               |
+| A product failure is never hidden by a retry                                                                        | `tests/reliability/no_retry_hides_product_failure.spec.ts`                                                                                                                                     |
+| A broken script is never reported as a product defect                                                               | Rule 3 before rule 4 in `packages/evidence/src/outcome.ts`; `tests/e2e/described-selector.test.ts`                                                                                             |
+| Queue state and run outcome are separate concepts                                                                   | `JobState` / `JobTerminalReason` / `RunOutcome` in `packages/core/src/types.ts`, plus SQLite CHECK constraints                                                                                 |
+| The 100-run fixture completes with zero retries and zero infrastructure failures                                    | `tests/reliability/same_test_100_runs.spec.ts`                                                                                                                                                 |
+| Every artifact is content-hashed and verifiable                                                                     | `tests/reliability/artifact_integrity_hashes.spec.ts`                                                                                                                                          |
+| Mobile runs are Chromium **emulation**, recorded as read back from the browser                                      | `tests/reliability/mobile_emulation.spec.ts`                                                                                                                                                   |
+| The API key never reaches a log, artifact, or error                                                                 | `packages/core/src/secret.spec.ts`, plus a canary assertion in the CLI e2e suite                                                                                                               |
+| An AI finding cannot cite evidence it was never shown                                                               | `apps/cli/src/commands/analyze.ts` validates every reference against only the runs the tools returned                                                                                          |
+| What differs between failing and passing runs is computed, not inferred                                             | `contrastRuns` is pure; `packages/tools/src/analysis-tools.spec.ts` covers what it refuses to claim as well as what it finds                                                                   |
+| A persisted video is never presented as redacted                                                                    | stamped `video-raw-unredactable`; `packages/evidence/src/capture-status.spec.ts` asserts the wording a reader actually sees                                                                    |
+| A URL the reporter never gave is never defaulted to the target root                                                 | `EXEC_VALUE_UNRESOLVED`, at both execution and export; a described SELECTOR is resolved by role and name instead — `packages/execution/src/described-resolution.spec.ts`                       |
+| Relaxing the origin allowlist to subdomains did not open it to other sites                                          | `packages/execution/src/described-resolution.spec.ts` covers suffix-smuggling, protocol downgrade and port changes                                                                             |
+| Each investigation keeps its own provenance chain                                                                   | `packages/lineage/src/lineage.spec.ts`; the lineage primary key is scoped per investigation                                                                                                    |
+| A flow's few-shot examples satisfy the schema its output is validated against                                       | `tests/docs/flow-examples.spec.ts`, over every shipped flow                                                                                                                                    |
+| An authoring session is never denied a browser tool it should have, nor offered one that cannot fake a reproduction | `tests/e2e/playwright-mcp-tools.test.ts` boots the pinned MCP server and diffs `ALLOWED_PLAYWRIGHT_TOOLS` against its real `tools/list`, in both directions                                    |
+| No browser opens before a human has read the plan                                                                   | the planning phase is spawned with no `--mcp-config` and no `--allowed-tools`; `apps/cli/src/claude-cli.spec.ts` asserts the argv contains neither                                             |
+| An authored suite that cannot fail is never offered for measurement                                                 | `whyStepsCannotMeasure` in `apps/cli/src/authoring-script.ts` refuses at emit time; `apps/cli/src/authoring-script.spec.ts` uses the script that actually shipped as the fixture               |
+| A supplied credential is usable but never lands in a prompt, an artifact, or argv                                   | `packages/storage/src/credential-store.spec.ts`; `packages/evidence/src/masked-values.spec.ts` masks registered values in every scope                                                          |
+| The shape outline a model is shown describes the schema it is judged against                                        | `packages/ai-flows/src/shape.spec.ts` asserts the actual generated outline, including `oneOf` variants and closed enums                                                                        |
+| A closed vocabulary the CLI sends matches the enum the validator enforces                                           | `tests/docs/vocabulary-drift.spec.ts` compares `ACTION_TYPES` and `ASSERTION_KINDS` against the schemas                                                                                        |
+| A session writes only inside its own folder, or the request is refused                                              | `apps/web/src/session-workspace.spec.ts`; a lapsed session returns `SESSION_EXPIRED` rather than falling back to the root                                                                      |
 
 ## Exit codes
 
@@ -1398,7 +1469,7 @@ developers, or observability tooling.
 | `docs/prompt-a.txt`                 | The frozen originating brief, byte-for-byte, with a SHA-256 checksum                                                                     |
 | `docs/m0-decisions.md`              | Human decisions, adapter choices, and what supersedes the brief                                                                          |
 | `docs/FREEZE-M0.md`                 | M0 sign-off and the amendment log                                                                                                        |
-| `docs/adrs/`                        | 26 architecture decision records                                                                                                         |
+| `docs/adrs/`                        | 28 architecture decision records                                                                                                         |
 | `docs/architecture/`                | Component, evidence, queue, approval and evidence-reference models                                                                       |
 | `docs/milestones/`                  | Authoritative scope per milestone                                                                                                        |
 | `docs/security/`                    | The security model and the redaction policy                                                                                              |

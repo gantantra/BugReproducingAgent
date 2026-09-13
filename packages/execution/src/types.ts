@@ -23,6 +23,13 @@ export interface SelectorSpec {
   role?: string;
   name?: string;
   exact?: boolean;
+  /**
+   * `.filter({ hasText })`, applied BEFORE `nth` because that is Playwright's own order and the
+   * two are not commutative: filtering then taking the 5th match is a different element from
+   * taking the 5th match and then filtering.
+   */
+  filterHasText?: string;
+  filterHasNotText?: string;
   nth?: number;
 }
 

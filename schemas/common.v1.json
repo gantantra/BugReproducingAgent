@@ -390,6 +390,14 @@
         "exact": {
           "type": "boolean"
         },
+        "filterHasText": {
+          "type": "string",
+          "description": "Narrows the matched set to elements containing this text, applied BEFORE `nth`. Playwright MCP's codegen emits `.filter({ hasText })` for an element a snapshot identified structurally rather than by role and name, so a session against a real site produces selectors that no other strategy here can express. Added deliberately under ADR-0006: a new vocabulary member is a schema change plus a code change plus a human gate, never an interpreter that accepts more than it declares."
+        },
+        "filterHasNotText": {
+          "type": "string",
+          "description": "The negative form of `filterHasText`, applied in the same position. Present because Playwright's filter carries both and translating only one half would silently drop the distinction."
+        },
         "nth": {
           "type": "integer",
           "minimum": 0

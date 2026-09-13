@@ -20,7 +20,10 @@ import {
   renderPlaywrightConfig,
   renderSuitePackageJson,
   whyStepsCannotMeasure,
+  type AuthoredStep,
 } from "../authoring-script.js";
+import { translateAuthoredSteps } from "../authoring-actions.js";
+import { buildAuthoredGateProposal } from "../authoring-proposal.js";
 
 /**
  * `investigate author` — drive a real browser until the reported behaviour is reached (ADR-0027).
@@ -40,6 +43,16 @@ import {
 
 /** Bumped whenever ai/authoring/brief.md changes in a way that changes behaviour. */
 export const AUTHORING_BRIEF_VERSION = "2.0.0";
+
+/**
+ * Repetitions the emitted proposal starts at.
+ *
+ * Thirty rather than ten because the bugs this product exists for are intermittent: a fault that
+ * appears one run in five shows up in ten runs about 89% of the time, which is not a rate anyone
+ * should plan around. The operator edits this in the rendered proposal before approving, and the
+ * approval binds to the number they approved.
+ */
+export const DEFAULT_REPETITIONS = 30;
 
 /** How the session ended, read from the last line of the final message. */
 export type AuthoringOutcome =
@@ -249,6 +262,13 @@ export async function authorCommand(
       sessionDir,
       outputDir,
       reportSummary: firstLines(report, 3),
+      // The plan the operator approved before the browser opened. It is the authored prose the
+      // proposal's hypothesis is taken from, and it has already been read and accepted by the
+      // person who will read it again at the gate.
+      approvedPlan,
+      // A starting point, not the decision. The operator edits it in the rendered proposal and
+      // the approval binds to the edited bytes.
+      repetitions: DEFAULT_REPETITIONS,
     });
     await new LineageWriter(rt.metadata, systemClock).append({
       investigationId,
@@ -290,7 +310,12 @@ export async function authorCommand(
 function renderHuman(
   outcome: AuthoringOutcome,
   session: { sessionId: string | null; finalMessage: string },
-  suite: { dir: string; steps: number } | null,
+  suite: {
+    dir: string;
+    steps: number;
+    proposalPath?: string;
+    proposalRefusal?: string;
+  } | null,
   investigationId: string
 ): string {
   const lines = [session.finalMessage.trim(), ""];
@@ -310,6 +335,26 @@ function renderHuman(
       "  npm i && npx playwright test            # once, with video",
       "  npx playwright test --repeat-each=100   # to measure how often it fails"
     );
+    if (suite.proposalPath) {
+      lines.push(
+        "",
+        "The same flow is also ready to MEASURE, which is the path that captures console,",
+        `network and trace evidence and can be analysed afterwards (${DEFAULT_REPETITIONS} runs by default —`,
+        "edit `repetitions` in the proposal before approving if you want a different count):",
+        "",
+        `  investigate plan --investigation ${investigationId} --from ${suite.proposalPath}`,
+        `  investigate approve experiment_selection --investigation ${investigationId} ...`,
+        `  investigate run --investigation ${investigationId}`,
+        `  investigate analyze --investigation ${investigationId} --ai`
+      );
+    } else if (suite.proposalRefusal) {
+      lines.push(
+        "",
+        "The suite above is fine, but this session could NOT be turned into a measurable",
+        "experiment, so the evidence-capturing path is unavailable for it:",
+        `  ${suite.proposalRefusal}`
+      );
+    }
   } else if (outcome.kind === "stuck") {
     lines.push(
       "The session stopped and produced no script. That is deliberate:",
@@ -589,14 +634,33 @@ function firstLines(text: string, n: number): string {
     .join("\n");
 }
 
-/** Assemble the emitted suite from the MCP session record. */
+/**
+ * Assemble the emitted suite, and the gate-1 proposal that lets the same flow be MEASURED.
+ *
+ * Two artifacts from one session, both rendered from the same `AuthoredStep[]`:
+ *
+ * - `suite/` is the developer handoff — ordinary Playwright, runnable by someone who has never
+ *   heard of this tool.
+ * - `experiment-proposal.json` is the same flow in the closed action vocabulary, so
+ *   `plan --from` can render it into the checksum-bound triple a human approves and `run` can
+ *   execute it with full evidence capture. Without it the authored flow can only ever produce a
+ *   pass/fail count and a video in its own folder, which no part of the analysis can read.
+ *
+ * The proposal is BEST EFFORT and never fails the command. A session can legitimately produce a
+ * statement the vocabulary cannot express, and when that happens the suite is still worth having
+ * — refusing to emit anything would trade a working handoff for nothing. The refusal reason is
+ * returned so the operator is told plainly why the measured path is unavailable, rather than
+ * discovering later that the button is missing.
+ */
 function emitSuite(a: {
   rt: Runtime;
   investigationId: string;
   sessionDir: string;
   outputDir: string;
   reportSummary: string;
-}): { dir: string; steps: number } {
+  approvedPlan: string;
+  repetitions: number;
+}): { dir: string; steps: number; proposalPath?: string; proposalRefusal?: string } {
   const sessionMd = findSessionMarkdown(a.outputDir);
   const steps = sessionMd ? extractAuthoredSteps(readFileSync(sessionMd, "utf8")) : [];
 
@@ -641,7 +705,63 @@ function emitSuite(a: {
     "utf8"
   );
 
-  return { dir: suiteDir, steps: steps.length };
+  const { proposalPath, proposalRefusal } = emitProposal({ ...a, steps, suiteDir });
+  return {
+    dir: suiteDir,
+    steps: steps.length,
+    ...(proposalPath ? { proposalPath } : {}),
+    ...(proposalRefusal ? { proposalRefusal } : {}),
+  };
+}
+
+/**
+ * Render the same session into a gate-1 proposal, or explain why it could not be.
+ *
+ * The credential map is built from `names()` plus `revealSync`, which is the only way to tell a
+ * typed password apart from a typed search term. A value that matches a supplied credential
+ * becomes a `secretRef` carrying the variable NAME, so the proposal — which is written to disk,
+ * content-hashed, and read back at the gate — never holds the secret itself.
+ */
+function emitProposal(a: {
+  rt: Runtime;
+  investigationId: string;
+  sessionDir: string;
+  reportSummary: string;
+  approvedPlan: string;
+  repetitions: number;
+  steps: readonly AuthoredStep[];
+  suiteDir: string;
+}): { proposalPath?: string; proposalRefusal?: string } {
+  const secretsByValue = new Map<string, string>();
+  for (const name of a.rt.credentials.names()) {
+    const value = a.rt.credentials.revealSync(name);
+    if (value && value.length > 0) secretsByValue.set(value, name);
+  }
+
+  const translated = translateAuthoredSteps(
+    a.steps.map((s) => s.code),
+    { secretsByValue }
+  );
+  if (!translated.ok) {
+    return {
+      proposalRefusal: `${translated.reason} — statement: ${translated.statement}`,
+    };
+  }
+
+  const built = buildAuthoredGateProposal({
+    investigationId: a.investigationId,
+    actions: translated.actions,
+    approvedPlan: a.approvedPlan,
+    reportSummary: a.reportSummary,
+    repetitions: a.repetitions,
+    authoredAt: systemClock.nowIso(),
+    briefVersion: AUTHORING_BRIEF_VERSION,
+  });
+  if (!built.ok) return { proposalRefusal: built.reason };
+
+  const proposalPath = join(a.sessionDir, "experiment-proposal.json");
+  writeFileSync(proposalPath, `${JSON.stringify(built.proposal, null, 2)}\n`, "utf8");
+  return { proposalPath };
 }
 
 function findSessionMarkdown(outputDir: string): string | null {

@@ -485,6 +485,56 @@ describe("rendering and scaffolding", () => {
     expect(md).toContain("Humans authorize consequential transitions.");
   });
 
+  it("renders every part of a selector that decides which element is picked", () => {
+    /* An authored proposal carries the selectors Playwright's own codegen emits. Rendering only
+     * `strategy=value` described this click as `css=div` — thirty matches narrowed to one by a
+     * filter the reviewer never saw. Approving that is not consent, so each discriminating part
+     * is rendered, `nth` last because it applies after the filter. */
+    const b = bundle();
+    b.items[0]!["actions"] = [
+      {
+        actionId: "A1",
+        type: "click",
+        selector: {
+          strategy: "css",
+          value: "div",
+          filterHasText: "CONTACT US Toll Free",
+          nth: 5,
+        },
+        description:
+          "await page.locator('div').filter({ hasText: 'CONTACT US Toll Free' }).nth(5).click();",
+      },
+      {
+        actionId: "A2",
+        type: "fill",
+        selector: { strategy: "role", role: "textbox", nth: 2 },
+        value: { kind: "secretRef", envVar: "ACCOUNT_PASSWORD" },
+      },
+    ];
+    const md = renderProposalMarkdown(b, proposalChecksumOf(b));
+    expect(md).toContain('css="div"');
+    expect(md).toContain('hasText="CONTACT US Toll Free"');
+    expect(md).toContain("nth=5");
+    // A role selector with no accessible name used to render as `role=` and nothing else.
+    expect(md).toContain("role=textbox");
+    // The statement the action was translated from, so the reviewer reads what will run.
+    expect(md).toContain("from: await page.locator('div')");
+  });
+
+  it("names a secret variable in a rendered action but never its value", () => {
+    const b = bundle();
+    b.items[0]!["actions"] = [
+      {
+        actionId: "A1",
+        type: "fill",
+        selector: { strategy: "role", role: "textbox" },
+        value: { kind: "secretRef", envVar: "ACCOUNT_PASSWORD" },
+      },
+    ];
+    const md = renderProposalMarkdown(b, proposalChecksumOf(b));
+    expect(md).toContain("value=<ACCOUNT_PASSWORD>");
+  });
+
   it("renders the editable surface so a human knows what they may change", () => {
     const b = bundle();
     const md = renderProposalMarkdown(b, proposalChecksumOf(b));

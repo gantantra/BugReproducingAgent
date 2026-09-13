@@ -196,7 +196,16 @@ function locatorFor(page: Page, sel: SelectorSpec): Locator {
 }
 
 function resolveLocator(page: Page, sel: SelectorSpec): Locator {
-  const base = locatorFor(page, sel);
+  let base = locatorFor(page, sel);
+  // Before `nth`, matching Playwright's own order. Reversing them silently selects a different
+  // element, which is the kind of difference that shows up as an unreproducible run rather than
+  // as an error.
+  if (sel.filterHasText !== undefined || sel.filterHasNotText !== undefined) {
+    base = base.filter({
+      ...(sel.filterHasText !== undefined ? { hasText: sel.filterHasText } : {}),
+      ...(sel.filterHasNotText !== undefined ? { hasNotText: sel.filterHasNotText } : {}),
+    });
+  }
   if (sel.nth !== undefined) return base.nth(sel.nth);
   // A described phrase can legitimately match more than one element — "Delete" on a row button
   // and again in the confirmation dialog. Taking the first in DOM order is what a person clicking

@@ -598,14 +598,64 @@ export function validateApproval(args: ValidateArgs): ValidatedApproval {
 // Rendering
 // ---------------------------------------------------------------------------------------------
 
-function actionLine(a: unknown): string {
+/**
+ * One selector, rendered so a reviewer can tell WHICH element it picks.
+ *
+ * Every discriminating part is shown. The earlier rendering printed
+ * `strategy=value-or-name`, which was adequate while selectors were a strategy and one string,
+ * and became actively misleading once authored proposals started carrying the selectors
+ * Playwright's own codegen produces: `role` with a name rendered as `role=` with nothing after
+ * it, and a `.filter({ hasText })` narrowing thirty matches down to one disappeared entirely,
+ * leaving `css=div` as the whole description of a click. A reviewer cannot consent to that —
+ * and gate 1 exists to be a judgement rather than a rubber stamp (risk R10).
+ */
+function selectorDescription(sel: Record<string, unknown>): string {
+  const strategy = String(sel["strategy"] ?? "?");
+  const parts: string[] = [];
+  if (strategy === "role") {
+    parts.push(`role=${String(sel["role"] ?? "?")}`);
+    if (sel["name"] !== undefined) parts.push(`name=${JSON.stringify(String(sel["name"]))}`);
+  } else {
+    parts.push(`${strategy}=${JSON.stringify(String(sel["value"] ?? ""))}`);
+  }
+  if (sel["exact"] !== undefined) parts.push(`exact=${String(sel["exact"])}`);
+  if (sel["filterHasText"] !== undefined)
+    parts.push(`hasText=${JSON.stringify(String(sel["filterHasText"]))}`);
+  if (sel["filterHasNotText"] !== undefined)
+    parts.push(`hasNotText=${JSON.stringify(String(sel["filterHasNotText"]))}`);
+  // `nth` is last because it applies after the filter, which is the order that decides the match.
+  if (sel["nth"] !== undefined) parts.push(`nth=${String(sel["nth"])}`);
+  return parts.join(" ");
+}
+
+function actionLine(a: unknown): string[] {
   const act = a as Record<string, unknown>;
   const parts = [String(act["actionId"] ?? "?"), String(act["type"] ?? "?")];
   if (act["url"]) parts.push(String(act["url"]));
+  if (act["ms"] !== undefined) parts.push(`${String(act["ms"])}ms`);
+  if (act["condition"] !== undefined) parts.push(String(act["condition"]));
+  if (act["key"] !== undefined) parts.push(`key=${String(act["key"])}`);
+  const value = act["value"] as Record<string, unknown> | undefined;
+  // The value's KIND, never its content: a literal is shown, a secretRef names the variable, and
+  // neither reveals anything the proposal does not already hold.
+  if (value) {
+    if (value["kind"] === "secretRef") parts.push(`value=<${String(value["envVar"])}>`);
+    else if (value["kind"] === "literal")
+      parts.push(`value=${JSON.stringify(String(value["literal"]))}`);
+    else parts.push(`value=${String(value["kind"])}`);
+  }
   const sel = act["selector"] as Record<string, unknown> | undefined;
-  if (sel) parts.push(`${String(sel["strategy"])}=${String(sel["value"] ?? sel["name"] ?? "")}`);
+  if (sel) parts.push(selectorDescription(sel));
   if (act["timeoutMs"]) parts.push(`${String(act["timeoutMs"])}ms`);
-  return parts.join("  ");
+
+  const out = [parts.join("  ")];
+  /* An authored action carries the exact Playwright statement it was translated from. Showing it
+   * is the difference between reviewing a summary of what will run and reviewing what will run. */
+  const description = act["description"];
+  if (typeof description === "string" && description.trim().length > 0) {
+    out.push(`      from: ${description.trim()}`);
+  }
+  return out;
 }
 
 /**
@@ -660,7 +710,7 @@ export function renderProposalMarkdown(bundle: ProposalBundle, checksum: string)
     const actions = item["actions"] as unknown[] | undefined;
     if (actions?.length) {
       lines.push("**Actions.**", "", "```");
-      for (const a of actions) lines.push(actionLine(a));
+      for (const a of actions) lines.push(...actionLine(a));
       lines.push("```", "");
     }
 
