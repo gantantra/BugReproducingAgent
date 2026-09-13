@@ -279,13 +279,15 @@ program
 program
   .command("author")
   .description(
-    "drive a real browser with your own claude login until the bug reproduces, then emit the script"
+    "write the plan for reproducing the bug; with --approve-plan, drive a real browser with your " +
+      "own claude login until it reproduces, then emit the script"
   )
   .option("--env <name>", "target name")
   .option("--headed", "show the browser instead of running it headless")
   .option("--max-turns <n>", "ceiling on agent turns", (v) => Number.parseInt(v, 10))
+  .option("--approve-plan", "accept the written plan and open the browser")
   .option("--resume <sessionId>", "resume a session that paused on a question")
-  .option("--answer <text>", "the answer to the question that paused it")
+  .option("--answer <text>", "the answer to the question, or a correction to the plan")
   .action(async function (this: Command) {
     await dispatch(this, (rt, g) => authorCommand(rt, this.opts(), g));
   });

@@ -39,11 +39,12 @@ import {
  */
 
 /** Bumped whenever ai/authoring/brief.md changes in a way that changes behaviour. */
-export const AUTHORING_BRIEF_VERSION = "1.6.0";
+export const AUTHORING_BRIEF_VERSION = "2.0.0";
 
 /** How the session ended, read from the last line of the final message. */
 export type AuthoringOutcome =
   | { kind: "done" }
+  | { kind: "plan"; plan: string }
   | { kind: "question"; question: string }
   | { kind: "stuck"; reason: string }
   | { kind: "unknown"; tail: string };
@@ -66,7 +67,7 @@ export function readAuthoringOutcome(finalMessage: string): AuthoringOutcome {
   const lines = finalMessage.trimEnd().split(/\r?\n/);
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i]!.trim().replace(/^[*_`\s]+|[*_`\s]+$/g, "");
-    const m = /^AUTHORING:\s*(DONE|QUESTION|STUCK)\b\s*(.*)$/i.exec(line);
+    const m = /^AUTHORING:\s*(DONE|PLAN|QUESTION|STUCK)\b\s*(.*)$/i.exec(line);
     if (!m) continue;
     const verb = m[1]!.toUpperCase();
     const rest = (m[2] ?? "").trim();
@@ -76,6 +77,8 @@ export function readAuthoringOutcome(finalMessage: string): AuthoringOutcome {
     // empty question is useless to the person being asked -- the page rendered a card with a
     // blank space in it and a button, which tells them nothing about what is wanted.
     const body = () => lines.slice(0, i).join("\n").trim();
+    // A plan is always the message above the sentinel: it is a numbered list, never one line.
+    if (verb === "PLAN") return { kind: "plan", plan: body() || rest };
     if (verb === "QUESTION") return { kind: "question", question: rest || body() };
     return { kind: "stuck", reason: rest || body() };
   }
@@ -93,8 +96,16 @@ export interface AuthorOptions {
   maxTurns?: number;
   /** Resume a paused session after answering its question. */
   resume?: string;
-  /** The answer to the question that paused it. */
+  /** The answer to the question that paused it, or a correction to the plan. */
   answer?: string;
+  /**
+   * Approve the written plan and start the browser.
+   *
+   * Without this, `author` runs the planning phase and stops. The two are separate CLI
+   * invocations rather than one paused session because the planning phase is spawned with no MCP
+   * server at all — see `runPlanningPhase`.
+   */
+  approvePlan?: boolean;
 }
 
 export interface AuthorResult {
@@ -168,6 +179,39 @@ export async function authorCommand(
   );
 
   const brief = readBrief();
+  const planPath = join(sessionDir, "plan.md");
+
+  /* The planning phase, and why it is a separate spawn rather than a pause.
+   *
+   * A session used to go from "Reproduce it" straight to a live browser, and the operator's first
+   * sight of its intentions was the finished script. One filled in a change-password form on a
+   * production site while signed out, with a password it invented, and reported success. Every
+   * one of those mistakes was legible before a single page load.
+   *
+   * So the first turn writes a plan with NO MCP CONFIG AND NO TOOLS. That is the enforcement: it
+   * is not asked to wait before browsing, it has no browser to reach for. Instruction alone has
+   * already failed once here — 1.5.0 told sessions to end with a check and one did not — so the
+   * guarantee is structural or it is not a guarantee.
+   *
+   * The approved plan then seeds a FRESH session that does have the browser. Nothing is lost by
+   * not resuming: the planning turn has no page, no cookies and no snapshot to carry over, only
+   * text, and the text is passed forward explicitly. */
+  if (!opts.resume && !opts.approvePlan) {
+    return runPlanningPhase({
+      rt,
+      cli: cli!,
+      brief,
+      planPath,
+      investigationId,
+      targetName: targetName!,
+      report,
+      baseUrl: target.baseUrl,
+    });
+  }
+
+  const approvedPlan =
+    opts.approvePlan && existsSync(planPath) ? readFileSync(planPath, "utf8") : "";
+
   const prompt = opts.resume
     ? (opts.answer ?? "")
     : buildPrompt({
@@ -176,6 +220,8 @@ export async function authorCommand(
         baseUrl: target.baseUrl,
         allowedOrigins: rt.config.safety.allowedOrigins,
         credentialNames: rt.credentials.names(),
+        approvedPlan,
+        ...(opts.answer ? { planAmendments: opts.answer } : {}),
       });
 
   const args = claudeCliArgs({
@@ -339,6 +385,8 @@ function buildPrompt(a: {
   baseUrl: string;
   allowedOrigins: readonly string[];
   credentialNames: readonly string[];
+  approvedPlan?: string;
+  planAmendments?: string;
 }): string {
   return [
     "Reproduce this reported bug in the browser.",
@@ -355,7 +403,115 @@ function buildPrompt(a: {
     a.credentialNames.length
       ? `Credentials available by name (reference them, never type a value): ${a.credentialNames.join(", ")}`
       : "No credentials were supplied. Ask if the flow needs one.",
+    ...(a.approvedPlan
+      ? [
+          "",
+          "## The plan the operator approved",
+          "",
+          a.approvedPlan,
+          "",
+          "Follow it. If the page turns out to differ from what you assumed when you wrote this,",
+          "that is expected and you should adapt — but a step the operator struck out stays struck",
+          "out, and anything they supplied here is the value to use rather than one you choose.",
+        ]
+      : []),
+    ...(a.planAmendments
+      ? ["", "## What the operator changed about that plan", "", a.planAmendments]
+      : []),
   ].join("\n");
+}
+
+/**
+ * Write the plan, with no browser anywhere near the session.
+ *
+ * No `--mcp-config` and no `--allowed-tools`, so the model physically cannot navigate, click or
+ * submit while it is deciding what to do. The plan is persisted next to the session so approving
+ * it is a second CLI call rather than state held in a web process.
+ */
+async function runPlanningPhase(a: {
+  rt: Runtime;
+  cli: string;
+  brief: string;
+  planPath: string;
+  investigationId: string;
+  targetName: string;
+  report: string;
+  baseUrl: string;
+}): Promise<AuthorResult> {
+  const prompt = [
+    "Write the plan for reproducing this reported bug. Do not reproduce it yet.",
+    "",
+    "You have NO browser tools on this turn. That is deliberate: the operator reads your plan",
+    "before anything touches their application, and approves or corrects it first.",
+    "",
+    "## The report, in the reporter's own words",
+    "",
+    a.report,
+    "",
+    "## Where",
+    "",
+    `Target: ${a.targetName} — ${a.baseUrl}`,
+    "",
+    a.rt.credentials.names().length
+      ? `Credentials available by name: ${a.rt.credentials.names().join(", ")}`
+      : "No credentials were supplied.",
+  ].join("\n");
+
+  const args = claudeCliArgs({
+    appendSystemPrompt: a.brief,
+    maxTurns: 4,
+    outputFormat: "json",
+  });
+
+  const session = await runClaude(a.cli, args, prompt, a.rt);
+  const outcome = readAuthoringOutcome(session.finalMessage);
+
+  /* A planning turn may legitimately end on QUESTION rather than PLAN, and the first real one did:
+   * it wrote seven steps, then asked which account to sign in as and what password to type. Both
+   * endings are the same thing here -- a plan, with the gaps named -- so the plan is the body above
+   * whichever sentinel was used, and a question is carried alongside rather than replacing it.
+   * Keeping the sentinel line out of the plan matters: it is shown to the operator verbatim. */
+  const plan = stripSentinel(session.finalMessage);
+  const question = outcome.kind === "question" ? outcome.question : "";
+  writeFileSync(a.planPath, plan, "utf8");
+
+  return {
+    json: {
+      ok: outcome.kind === "plan" || outcome.kind === "question",
+      investigationId: a.investigationId,
+      target: a.targetName,
+      outcome: "plan",
+      plan,
+      ...(question ? { question } : {}),
+      sessionId: session.sessionId,
+      suite: null,
+      message: session.finalMessage,
+    },
+    human: () =>
+      [
+        "The plan, before anything opens a browser:",
+        "",
+        plan,
+        ...(question ? ["", `It needs to know: ${question}`] : []),
+        "",
+        `Approve it with:  investigate author --investigation ${a.investigationId} --approve-plan`,
+        `Answer or change: the same command plus --answer "<your answer>"`,
+      ].join("\n"),
+  };
+}
+
+/**
+ * Everything above the last `AUTHORING:` line.
+ *
+ * The sentinel is harness plumbing; showing it to the operator inside the plan they are being
+ * asked to approve is noise at best and confusing at worst.
+ */
+export function stripSentinel(message: string): string {
+  const lines = message.trimEnd().split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (/^\s*[*_`\s]*AUTHORING:/i.test(lines[i]!)) return lines.slice(0, i).join("\n").trim();
+  }
+  return message.trim();
 }
 
 /**

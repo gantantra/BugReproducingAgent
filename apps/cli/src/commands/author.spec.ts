@@ -128,3 +128,30 @@ describe("a question always carries its text", () => {
     if (out.kind === "stuck") expect(out.reason).toContain("CAPTCHA");
   });
 });
+
+describe("reading the plan sentinel", () => {
+  it("takes the plan from the body above the sentinel, not the sentinel line", () => {
+    // A plan is a numbered list, so unlike a question it never fits on the sentinel line.
+    const outcome = readAuthoringOutcome(
+      [
+        "1. Sign in as ACCOUNT_EMAIL / ACCOUNT_PASSWORD",
+        "2. Open /account/password",
+        '3. Fill "New Password" with ??? — I don\'t have this',
+        '4. Check for "Password changed"',
+        "",
+        "AUTHORING: PLAN",
+      ].join("\n")
+    );
+    expect(outcome.kind).toBe("plan");
+    if (outcome.kind !== "plan") throw new Error("unreachable");
+    expect(outcome.plan).toContain("Sign in as ACCOUNT_EMAIL");
+    expect(outcome.plan).toContain("I don't have this");
+    expect(outcome.plan).not.toContain("AUTHORING:");
+  });
+
+  it("does not mistake a plan for a finished reproduction", () => {
+    // The distinction that matters: "done" emits a script, "plan" must not.
+    expect(readAuthoringOutcome("steps\n\nAUTHORING: PLAN").kind).toBe("plan");
+    expect(readAuthoringOutcome("steps\n\nAUTHORING: DONE").kind).toBe("done");
+  });
+});

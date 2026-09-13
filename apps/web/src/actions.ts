@@ -207,6 +207,16 @@ export const ACTIONS: readonly ActionDef[] = [
     if (resume) {
       argv.push("--resume", resume);
       argv.push("--answer", str(p, "answer", FREE_TEXT, "the answer you typed"));
+      return argv;
+    }
+
+    /* Without `approvePlan` this writes a plan and stops, with no browser in the process at all.
+     * The flag is the operator having read it. `answer` alongside it carries their corrections,
+     * which is why it is accepted here as well as on the resume path. */
+    if (flag(p, "approvePlan")) {
+      argv.push("--approve-plan");
+      const amendments = optionalStr(p, "answer", FREE_TEXT, "your changes to the plan");
+      if (amendments) argv.push("--answer", amendments);
     }
     return argv;
   }),

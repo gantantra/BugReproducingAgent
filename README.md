@@ -246,12 +246,36 @@ keeps, what it still loses, and that captured evidence is unchanged.
 
 ### Running it
 
+It runs in two phases, and the first one has no browser.
+
 ```bash
-investigate author --investigation INV-001            # headless
-investigate author --investigation INV-001 --headed   # watch it
+investigate author --investigation INV-001            # writes the plan, opens nothing
 ```
 
-It pauses to ask whenever the page cannot tell it something only you know. The session keeps its
+The planning turn is spawned with **no MCP config and no tool allowlist**, so it cannot navigate,
+click or submit while it is deciding what to do. It writes a numbered plan naming every value it
+would have to type, and marks the ones nobody gave it rather than inventing them. You read that
+before your application is touched:
+
+```
+2. Sign in — this flow requires an authenticated session. No credentials were supplied.
+4. Fill "New Password" field with ??? — not given, need a value to type.
+7. Check: finish the script with browser_wait_for on the confirmation text.
+```
+
+Approving it starts a fresh session that does have the browser, seeded with the plan:
+
+```bash
+investigate author --investigation INV-001 --approve-plan              # headless
+investigate author --investigation INV-001 --approve-plan --headed     # watch it
+investigate author --investigation INV-001 --approve-plan --answer "sign in as the QA account"
+```
+
+This exists because the version without it drove straight to a live site: one session filled in a
+change-password form while signed out, with a password it invented, and reported success. All of
+it was legible in five lines of plan.
+
+It also pauses to ask whenever the page cannot tell it something only you know. The session keeps its
 browser and everything it has already done, so answering resumes rather than restarts:
 
 ```bash
@@ -317,9 +341,10 @@ Two things that verification found, which no amount of reading would have:
   fails with `MODULE_NOT_FOUND`, or worse resolves a mismatched `@playwright/test` from a parent
   directory and reports `No tests found`.
 
-**Not yet built:** the `investigate author` command, the operator-question channel in the chat UI,
-and the DeepSeek analysis of failed runs after an approved batch. The pieces above are the
-mechanism those will use.
+**Not yet built:** the DeepSeek analysis of failed runs after an approved batch. `investigate
+author` and the operator-question channel in the chat UI are built; what is unproven is that a
+session completes a reproduction end to end against a real production site — every completed run
+so far has been against local test servers.
 
 ## Setup and first run
 
@@ -1015,25 +1040,25 @@ most of the design exists to keep them apart.
 Every command in the frozen contract is registered. The ones not yet implemented exit 1 naming
 their milestone rather than silently doing nothing.
 
-| Command                   | Does                                                                                             | AI?    |
-| ------------------------- | ------------------------------------------------------------------------------------------------ | ------ |
-| `init`                    | Create a workspace: database, `config.yaml`, redaction policy, directories                       | no     |
-| `intake`                  | Open an investigation from a report file                                                         | `--ai` |
-| `author`                  | Drive a real browser with your own `claude` login until the bug reproduces, then emit the script | Claude |
-| `plan`                    | Render the gate-1 proposal a human decides on                                                    | `--ai` |
-| `approve <gate>`          | Record a checksum-bound human approval. `--scaffold` writes a blank one                          | no     |
-| `run`                     | Execute approved experiments. Makes **no** provider calls, ever                                  | no     |
-| `analyze`                 | Report what separates failing runs from passing ones                                             | `--ai` |
-| `suite generate`          | Emit a standalone Playwright spec for approved experiments                                       | no     |
-| `status`                  | Gate states, run outcomes, queue and lineage health                                              | no     |
-| `show <what>`             | Print a rendered proposal, or an artifact's contents                                             | no     |
-| `lineage <nodeId>`        | Ancestors and descendants of a node, with the actor on every hop                                 | no     |
-| `doctor`                  | Workspace, config, queue, integrity and safety state. `--verify-lineage`                         | no     |
-| `retention apply`         | Tombstone artifacts past their retention age. Dry run without `--confirm`                        | no     |
-| `classify`                | Cluster runs, render gate 2                                                                      | **M4** |
-| `frequency run`           | Execute N times and compute failure-rate statistics                                              | **M5** |
-| `minimize` / `revalidate` | Reduce a reproduction; re-execute it and its control                                             | **M6** |
-| `report` / `export`       | Jira-ready report; package reproducer and artifacts                                              | **M7** |
+| Command                   | Does                                                                                                                                                       | AI?    |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| `init`                    | Create a workspace: database, `config.yaml`, redaction policy, directories                                                                                 | no     |
+| `intake`                  | Open an investigation from a report file                                                                                                                   | `--ai` |
+| `author`                  | Write the plan for reproducing the bug; with `--approve-plan`, drive a real browser with your own `claude` login until it reproduces, then emit the script | Claude |
+| `plan`                    | Render the gate-1 proposal a human decides on                                                                                                              | `--ai` |
+| `approve <gate>`          | Record a checksum-bound human approval. `--scaffold` writes a blank one                                                                                    | no     |
+| `run`                     | Execute approved experiments. Makes **no** provider calls, ever                                                                                            | no     |
+| `analyze`                 | Report what separates failing runs from passing ones                                                                                                       | `--ai` |
+| `suite generate`          | Emit a standalone Playwright spec for approved experiments                                                                                                 | no     |
+| `status`                  | Gate states, run outcomes, queue and lineage health                                                                                                        | no     |
+| `show <what>`             | Print a rendered proposal, or an artifact's contents                                                                                                       | no     |
+| `lineage <nodeId>`        | Ancestors and descendants of a node, with the actor on every hop                                                                                           | no     |
+| `doctor`                  | Workspace, config, queue, integrity and safety state. `--verify-lineage`                                                                                   | no     |
+| `retention apply`         | Tombstone artifacts past their retention age. Dry run without `--confirm`                                                                                  | no     |
+| `classify`                | Cluster runs, render gate 2                                                                                                                                | **M4** |
+| `frequency run`           | Execute N times and compute failure-rate statistics                                                                                                        | **M5** |
+| `minimize` / `revalidate` | Reduce a reproduction; re-execute it and its control                                                                                                       | **M6** |
+| `report` / `export`       | Jira-ready report; package reproducer and artifacts                                                                                                        | **M7** |
 
 Global flags: `--workspace <dir>`, `--investigation <id>`, `--json`, `--verbose`, `--seed <int>`,
 `--no-color`, `--allow-unsafe-debug`.
@@ -1329,6 +1354,7 @@ server-side and is not visible while CI/CD is disabled; deleting it requires pro
 | Each investigation keeps its own provenance chain                                                                   | `packages/lineage/src/lineage.spec.ts`; the lineage primary key is scoped per investigation                                                                                      |
 | A flow's few-shot examples satisfy the schema its output is validated against                                       | `tests/docs/flow-examples.spec.ts`, over every shipped flow                                                                                                                      |
 | An authoring session is never denied a browser tool it should have, nor offered one that cannot fake a reproduction | `tests/e2e/playwright-mcp-tools.test.ts` boots the pinned MCP server and diffs `ALLOWED_PLAYWRIGHT_TOOLS` against its real `tools/list`, in both directions                      |
+| No browser opens before a human has read the plan                                                                   | the planning phase is spawned with no `--mcp-config` and no `--allowed-tools`; `apps/cli/src/claude-cli.spec.ts` asserts the argv contains neither                               |
 | An authored suite that cannot fail is never offered for measurement                                                 | `whyStepsCannotMeasure` in `apps/cli/src/authoring-script.ts` refuses at emit time; `apps/cli/src/authoring-script.spec.ts` uses the script that actually shipped as the fixture |
 | A supplied credential is usable but never lands in a prompt, an artifact, or argv                                   | `packages/storage/src/credential-store.spec.ts`; `packages/evidence/src/masked-values.spec.ts` masks registered values in every scope                                            |
 | The shape outline a model is shown describes the schema it is judged against                                        | `packages/ai-flows/src/shape.spec.ts` asserts the actual generated outline, including `oneOf` variants and closed enums                                                          |

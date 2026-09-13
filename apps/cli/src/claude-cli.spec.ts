@@ -160,3 +160,23 @@ describe("the Playwright MCP server config", () => {
     expect(cfg({ headless: false }).mcpServers.playwright.args).not.toContain("--headless");
   });
 });
+
+describe("the planning phase has no browser, structurally", () => {
+  it("omits the MCP server and the tool allowlist entirely", () => {
+    // The enforcement, in one assertion. The planning turn is not asked to refrain from browsing
+    // -- it is spawned with no browser to reach for. Instruction alone has already failed here
+    // once: brief 1.5.0 told every session to end with a check and one did not, so a rule that
+    // matters is structural or it is not a rule.
+    const args = claudeCliArgs({ appendSystemPrompt: "brief", maxTurns: 4, outputFormat: "json" });
+
+    expect(args).not.toContain("--mcp-config");
+    expect(args).not.toContain("--allowed-tools");
+    expect(args.join(" ")).not.toContain("playwright");
+  });
+
+  it("still runs as the operator's own sonnet 5 medium login", () => {
+    const args = claudeCliArgs({ appendSystemPrompt: "brief", outputFormat: "json" });
+    expect(args.join(" ")).toContain("--model claude-sonnet-5");
+    expect(args.join(" ")).toContain("--effort medium");
+  });
+});

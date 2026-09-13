@@ -274,6 +274,29 @@
         color: #c3cad8;
       }
 
+      /* The plan the operator reads before a browser opens. Same no-inner-scroll rule as .log:
+         it sizes to its content and the page scrolls, never the card. Slightly larger than the
+         log because this one is meant to be read carefully rather than glanced at. */
+      .plan {
+        font: 12.5px/1.65 var(--mono);
+        background: #0b0d11;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px 14px;
+        margin: 10px 0 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        color: #d6dcea;
+      }
+
+      /* The one thing in a plan card that needs answering, rather than reading. */
+      .ask {
+        margin-top: 12px;
+        padding-left: 10px;
+        border-left: 2px solid var(--accent);
+        color: var(--text);
+      }
+
       .row {
         display: flex;
         gap: 8px;

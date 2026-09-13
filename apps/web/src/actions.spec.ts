@@ -249,3 +249,29 @@ describe("the authoring action", () => {
     expect(() => build({ investigation: "INV-001", resume: "abc12345" })).toThrow(ParamError);
   });
 });
+
+describe("approving the plan", () => {
+  it("plans by default — a bare author call never opens a browser", () => {
+    const argv = build("author", { investigation: "INV-001" });
+    expect(argv).not.toContain("--approve-plan");
+    expect(argv).not.toContain("--resume");
+  });
+
+  it("passes the approval through, and the operator's corrections with it", () => {
+    const argv = build("author", {
+      investigation: "INV-001",
+      approvePlan: true,
+      answer: "sign in first, and ask me for the new password",
+    });
+    expect(argv).toContain("--approve-plan");
+    expect(argv[argv.indexOf("--answer") + 1]).toBe(
+      "sign in first, and ask me for the new password"
+    );
+  });
+
+  it("accepts approval with no corrections", () => {
+    const argv = build("author", { investigation: "INV-001", approvePlan: true });
+    expect(argv).toContain("--approve-plan");
+    expect(argv).not.toContain("--answer");
+  });
+});

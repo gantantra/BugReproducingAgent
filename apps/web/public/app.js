@@ -1189,7 +1189,11 @@
 
   async function startAuthoring(extra) {
     setStep("reproduce");
-    setBusy(true, "Working through it in a browser…");
+    const planning = !extra || extra.approvePlan !== true;
+    setBusy(
+      true,
+      planning ? "Working out how to reproduce it…" : "Working through it in a browser…"
+    );
 
     const started = await act("author", {
       investigation: state.investigation,
@@ -1202,9 +1206,11 @@
       return;
     }
 
-    const c = card("Reproducing");
+    const c = card(planning ? "Working out the steps" : "Reproducing");
     const spinner = node("p");
-    spinner.innerHTML = '<span class="spin"></span> driving the browser…';
+    spinner.innerHTML =
+      '<span class="spin"></span> ' +
+      (planning ? "no browser yet — writing the plan first…" : "driving the browser…");
     c.appendChild(spinner);
     const log = node("div", "log");
     c.appendChild(log);
@@ -1226,6 +1232,10 @@
   function handleAuthoringOutcome(r) {
     state.authoringSession = r.sessionId || state.authoringSession || null;
 
+    if (r.outcome === "plan") {
+      showPlan(r);
+      return;
+    }
     if (r.outcome === "question") {
       askAuthoringQuestion(r);
       return;
@@ -1255,6 +1265,86 @@
       { code: r.code || "AUTHORING_INCOMPLETE", message: r.message || "", exitCode: r.exitCode },
       "The session ended without finishing"
     );
+  }
+
+  /* The plan, before anything opens a browser.
+   *
+   * This card is the whole reason the planning phase exists. A session used to go from "Reproduce
+   * it" straight to a live browser, and the operator's first sight of its intentions was the
+   * finished script — by which point it had filled in a change-password form on a production site
+   * while signed out, using a password it invented. All of that is legible in five lines of plan.
+   *
+   * So: read it, approve it, or say what to change. The correction goes to the same session as
+   * free text, because "log in first, and use ACCOUNT_PASSWORD for the new one" is a sentence,
+   * not a form. */
+  function showPlan(r) {
+    setStep("reproduce");
+    const c = card("Here is what I plan to do");
+    c.appendChild(
+      node(
+        "p",
+        null,
+        "Nothing has touched your site yet — I have not opened a browser. Read this first; if a step is wrong or a value is missing, tell me and I will redo it."
+      )
+    );
+
+    const plan = node("pre", "plan");
+    plan.textContent = (r.plan || r.message || "").trim() || "(the session returned no plan)";
+    c.appendChild(plan);
+
+    /* A plan with gaps in it ends on a question rather than a bare sentinel, and that is the
+     * normal case -- the first real planning run asked which account to sign in as and what
+     * password to type, which are exactly the two things the earlier browser-first session
+     * guessed at. Answering here is better than approving, so the composer opens. */
+    const asked = (r.question || "").trim();
+    if (asked) {
+      c.appendChild(node("p", "ask", asked));
+      el.input.placeholder = "Your answer…";
+      el.input.focus();
+      const handler = async (answer) => {
+        state.awaiting = null;
+        await startAuthoring({
+          approvePlan: true,
+          answer: await credentialsToNames(asked, answer),
+        });
+      };
+      handler.echoesItself = true;
+      state.awaiting = handler;
+    }
+
+    buttons(c, [
+      {
+        label: asked ? "Go anyway" : "Looks right — go",
+        kind: asked ? "" : "primary",
+        onClick: () => startAuthoring({ approvePlan: true }),
+      },
+      { label: "Change something", onClick: () => askPlanChange() },
+      {
+        label: "Watch the browser",
+        onClick: () => startAuthoring({ approvePlan: true, headed: true }),
+      },
+    ]);
+  }
+
+  /* A correction to the plan, in the operator's own words, then straight into the browser run. */
+  function askPlanChange() {
+    const c = card("What should I do differently?");
+    c.appendChild(
+      node(
+        "p",
+        null,
+        "Anything the plan got wrong — a step to skip, an account to sign in as, a value to type. I will follow the plan with your changes applied."
+      )
+    );
+    el.input.placeholder = "What should change…";
+    el.input.focus();
+
+    const handler = async (answer) => {
+      state.awaiting = null;
+      await startAuthoring({ approvePlan: true, answer: await credentialsToNames("plan", answer) });
+    };
+    handler.echoesItself = true;
+    state.awaiting = handler;
   }
 
   /* The question, in the conversation, answered in the same box as everything else. */
