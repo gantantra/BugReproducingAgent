@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
   extractAuthoredSteps,
+  isFailableCheck,
   renderAuthoredSpec,
   renderPlaywrightConfig,
   renderSuitePackageJson,
+  whyStepsCannotMeasure,
 } from "./authoring-script.js";
 
 /**
@@ -194,5 +196,70 @@ describe("the emitted package manifest", () => {
 
   it("ships the N-times command rather than leaving it to be remembered", () => {
     expect(pkg.scripts["test:100"]).toContain("--repeat-each=100");
+  });
+});
+
+describe("refusing a suite that cannot measure anything", () => {
+  const step = (code: string, tool = "browser_click") => ({ code, tool });
+
+  /**
+   * The exact script a session emitted against a real site, reported DONE, and offered to the
+   * operator with a "Run it 30×" button. It contains no assertion, so those 30 runs would have
+   * reported 30 passes and a bug that does not reproduce — while the bug reproduced.
+   */
+  const THE_ONE_THAT_GOT_THROUGH = [
+    step("await page.goto('https://www.99acres.com/createNewPassword');", "browser_navigate"),
+    step("await page.getByRole('textbox').nth(2).fill('TestPass123');", "browser_type"),
+    step("await page.getByRole('textbox').nth(3).fill('TestPass123');", "browser_type"),
+    step("await page.getByRole('button', { name: 'Create New Password' }).click();"),
+  ];
+
+  it("refuses the script that actually shipped, naming why", () => {
+    const why = whyStepsCannotMeasure(THE_ONE_THAT_GOT_THROUGH);
+    expect(why).toBeTruthy();
+    expect(why).toContain("not one of the recorded steps can fail");
+  });
+
+  it("refuses a check that is only a sleep", () => {
+    // browser_wait_for given `time` rather than `text`. It looks like a wait and asserts nothing:
+    // a script ending in it passes exactly as often as one ending immediately.
+    const why = whyStepsCannotMeasure([
+      ...THE_ONE_THAT_GOT_THROUGH,
+      step("await page.waitForTimeout(2000);", "browser_wait_for"),
+    ]);
+    expect(why).toContain("not one of the recorded steps can fail");
+  });
+
+  it("accepts a script that ends in a real wait, which is what the brief asks for", () => {
+    const steps = [
+      ...THE_ONE_THAT_GOT_THROUGH,
+      step(
+        "await page.getByText(\"Password changed\").first().waitFor({ state: 'visible' });",
+        "browser_wait_for"
+      ),
+    ];
+    expect(whyStepsCannotMeasure(steps)).toBeNull();
+  });
+
+  it("refuses a check followed by more clicking, because the tail is unverified", () => {
+    const steps = [
+      step(
+        "await page.getByText(\"Settings\").first().waitFor({ state: 'visible' });",
+        "browser_wait_for"
+      ),
+      step("await page.getByRole('button', { name: 'Save' }).click();"),
+    ];
+    expect(whyStepsCannotMeasure(steps)).toContain("last recorded step is an action");
+  });
+
+  it("still refuses an empty session", () => {
+    expect(whyStepsCannotMeasure([])).toContain("no browser steps");
+  });
+
+  it("counts waitFor and expect as failable, and actions and sleeps as not", () => {
+    expect(isFailableCheck("await page.getByText('x').waitFor({ state: 'hidden' });")).toBe(true);
+    expect(isFailableCheck("await expect(page.getByRole('alert')).toBeVisible();")).toBe(true);
+    expect(isFailableCheck("await page.getByRole('button').click();")).toBe(false);
+    expect(isFailableCheck("await page.waitForTimeout(500);")).toBe(false);
   });
 });

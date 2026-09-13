@@ -19,6 +19,7 @@ import {
   renderAuthoredSpec,
   renderPlaywrightConfig,
   renderSuitePackageJson,
+  whyStepsCannotMeasure,
 } from "../authoring-script.js";
 
 /**
@@ -38,7 +39,7 @@ import {
  */
 
 /** Bumped whenever ai/authoring/brief.md changes in a way that changes behaviour. */
-export const AUTHORING_BRIEF_VERSION = "1.5.0";
+export const AUTHORING_BRIEF_VERSION = "1.6.0";
 
 /** How the session ended, read from the last line of the final message. */
 export type AuthoringOutcome =
@@ -442,9 +443,17 @@ function emitSuite(a: {
 }): { dir: string; steps: number } {
   const sessionMd = findSessionMarkdown(a.outputDir);
   const steps = sessionMd ? extractAuthoredSteps(readFileSync(sessionMd, "utf8")) : [];
-  if (steps.length === 0) {
-    fail("EXEC_VALUE_UNRESOLVED", "The session reported success but recorded no browser steps", {
-      context: { outputDir: a.outputDir },
+
+  /* A session saying DONE is a claim, not a result — the same status every AI output in this
+   * product has, and the same rule applies: untrusted until validated. The claim being checked
+   * here is the only one that matters for what happens next, because the suite is about to be
+   * handed to a human with a "Run it 30×" button beside it. If it cannot fail, those 30 runs
+   * produce 30 passes and a report saying the bug did not reproduce, which is worse than no
+   * report at all. Refusing here costs the operator one more authoring round. */
+  const unmeasurable = whyStepsCannotMeasure(steps);
+  if (unmeasurable) {
+    fail("EXEC_VALUE_UNRESOLVED", `The session reported success but ${unmeasurable}`, {
+      context: { outputDir: a.outputDir, steps: steps.length },
     });
   }
 

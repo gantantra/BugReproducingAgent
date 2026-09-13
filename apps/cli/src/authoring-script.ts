@@ -66,6 +66,66 @@ export function extractAuthoredSteps(sessionMarkdown: string): AuthoredStep[] {
   return steps;
 }
 
+/**
+ * Does this statement assert something, or does it merely do something?
+ *
+ * `browser_wait_for` given `text` emits `.waitFor({ state: 'visible' })`, which throws when the
+ * text never appears; given `textGone` it emits `state: 'hidden'`. Both can fail, which is the
+ * whole point. Given `time` it emits a sleep, which cannot fail and is explicitly not a check —
+ * a script that ends by waiting two seconds passes exactly as often as one that ends immediately.
+ *
+ * Actions are not checks even though Playwright auto-waits and a `click` on a missing element
+ * fails. That failure says the CONTROL was absent, not that the application misbehaved. A form
+ * that silently fails to save still renders its Save button, so a script ending in a click passes
+ * every run while the bug happens in front of it.
+ */
+export function isFailableCheck(code: string): boolean {
+  if (/waitForTimeout|setTimeout/.test(code)) return false;
+  return /\.waitFor\s*\(|\bexpect\s*\(/.test(code);
+}
+
+/**
+ * Why the emitted steps cannot measure anything, or null when they can.
+ *
+ * This is a hard gate rather than advice, because advice did not hold. The brief tells every
+ * session to end with a check, and a session against a real site returned DONE with this:
+ *
+ * ```
+ * await page.goto('…/createNewPassword');
+ * await page.getByRole('textbox').nth(2).fill('…');
+ * await page.getByRole('button', { name: 'Create New Password' }).click();
+ * ```
+ *
+ * Eight statements, no assertion. Run 30 times it reports 30 passes whatever the application
+ * does, and the report reads as evidence the bug does not reproduce — the most expensive possible
+ * wrong answer, because it looks like a result. Refusing to emit turns a fake success into a
+ * visible failure the operator can act on, which is the outcome the product's governing principle
+ * requires: a script that cannot fail measures nothing.
+ */
+export function whyStepsCannotMeasure(steps: readonly AuthoredStep[]): string | null {
+  if (steps.length === 0) return "the session recorded no browser steps at all";
+
+  const checks = steps.filter((s) => isFailableCheck(s.code));
+  if (checks.length === 0) {
+    return (
+      "not one of the recorded steps can fail. Every statement is an action — navigate, fill, " +
+      "click — so re-running this suite reports a pass on every run no matter how the " +
+      "application behaves, and a pass rate computed from it is meaningless. The session needed " +
+      "to end with a browser_wait_for on text that is present when the flow works"
+    );
+  }
+
+  if (!isFailableCheck(steps[steps.length - 1]!.code)) {
+    return (
+      "the last recorded step is an action, not a check. Whatever the flow did after the final " +
+      "assertion is unverified, which is the part the bug is in. The session needed to finish " +
+      "with a browser_wait_for rather than a click"
+    );
+  }
+
+  return null;
+}
+
 /** Every ```json fenced block in a markdown fragment, in order. */
 function fencedJsonBlocks(markdown: string): string[] {
   const blocks: string[] = [];

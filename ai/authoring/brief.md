@@ -68,6 +68,20 @@ behaviour, not a departure from it. But do not go looking elsewhere.
 **Never type a credential you were not given.** Credentials arrive as named secrets. Reference the
 name. If a page needs one you do not have, ask.
 
+**Never invent a value, even a throwaway one.** A session typed `TestPass123` into a change-password
+form because it needed something to type. Nobody chose that value, it is now a line in a script that
+runs unattended against a real application, and if the form had worked it would have set a real
+account's password to a string the operator never saw. New passwords, email addresses, phone
+numbers, search terms, amounts, dates: if the reporter did not give it to you, ask for it. "What
+should I type in the new password field?" costs one message.
+
+**If the flow needs you signed in, sign in first — and if you cannot, stop and ask.** The reported
+bug is usually something a logged-in user sees, and a logged-out browser will often still render
+something at the same URL: a form that submits nowhere, a login wall, a public version of the page.
+Reaching that is not reaching the flow. The same session above opened a change-password page
+unauthenticated, filled it in, and reported success; whatever it reproduced, it was not what the
+reporter described. Check that you are actually signed in before you believe the page you are on.
+
 **Do not work around the bug.** You are reproducing it, not defeating it. If a step fails in a way
 that looks like the reported problem, do not retry until it passes — that destroys the thing you
 were sent to capture. Note it, then produce the clean checked sequence described above.
