@@ -16,7 +16,6 @@
   const el = {
     transcript: document.getElementById("transcript"),
     input: document.getElementById("input"),
-    send: document.getElementById("send"),
     rail: document.getElementById("rail"),
     waiting: document.getElementById("waiting"),
     waitingLabel: document.getElementById("waitingLabel"),
@@ -436,7 +435,6 @@
    */
   function setBusy(on, label) {
     state.busy = on;
-    el.send.disabled = on;
     el.input.disabled = on;
 
     if (!on) {
@@ -1505,7 +1503,6 @@
     };
   }
 
-  el.send.addEventListener("click", onSend);
   el.input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
