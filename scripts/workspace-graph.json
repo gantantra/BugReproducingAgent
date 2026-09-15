@@ -104,7 +104,8 @@
   },
   "apps/web": {
     "deps": [
-      "storage"
+      "storage",
+      "ai-flows"
     ],
     "external": [
       "yaml"

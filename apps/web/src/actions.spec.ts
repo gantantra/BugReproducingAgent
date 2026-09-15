@@ -170,6 +170,56 @@ describe("artifact requests", () => {
   });
 });
 
+describe("sending a script back to be re-recorded", () => {
+  it("resumes the session in repair mode, with nothing typed", () => {
+    expect(
+      build("author", { investigation: "INV-001", resume: "62433c00-f352-4735-94b0-d5210d3da831", repair: true })
+    ).toEqual(["author", "--investigation", "INV-001", "--resume", "62433c00-f352-4735-94b0-d5210d3da831", "--repair"]);
+  });
+
+  it("still requires an answer on an ordinary resume", () => {
+    expect(() => build("author", { investigation: "INV-001", resume: "62433c00-f352-4735-94b0-d5210d3da831" })).toThrow(
+      ParamError
+    );
+  });
+});
+
+describe("re-running the authored suite", () => {
+  it("passes the count the operator pressed", () => {
+    expect(build("rerun", { investigation: "INV-003", repeat: 30 })).toEqual([
+      "rerun",
+      "--investigation",
+      "INV-003",
+      "--repeat",
+      "30",
+    ]);
+  });
+
+  it("streams, because thirty runs of a real flow take minutes", () => {
+    expect(findAction("rerun")?.streams).toBe(true);
+  });
+
+  it("refuses a count that is not a whole number in range", () => {
+    for (const repeat of [0, 501, -1, 2.5, "lots"]) {
+      expect(() => build("rerun", { investigation: "INV-003", repeat }), String(repeat)).toThrow(
+        ParamError
+      );
+    }
+  });
+
+  it("puts only the parsed number in argv, never the string it came from", () => {
+    // The count is the one value the browser supplies here, and what reaches the process is the
+    // integer it parsed to — so nothing a page could append to it survives.
+    expect(build("rerun", { investigation: "INV-003", repeat: "30; rm -rf /" })).toEqual([
+      "rerun",
+      "--investigation",
+      "INV-003",
+      "--repeat",
+      "30",
+    ]);
+  });
+});
+
 describe("the authoring action", () => {
   const ctx: BuildContext = { inWorkspace: (rel) => `/ws/${rel}` };
   const build = (p: Record<string, unknown>): string[] => {

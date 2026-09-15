@@ -81,8 +81,8 @@ export class SessionStore {
   constructor(
     private readonly newId: () => string,
     private readonly clock: Clock = systemClock,
-    /** How long a session survives without a heartbeat. */
-    readonly ttlMs: number = 60_000,
+    /** How long a session survives without a heartbeat. Default 2 hours. */
+    readonly ttlMs: number = 7_200_000,
     persistence: SessionPersistence | null = null
   ) {
     this.persistence = persistence;

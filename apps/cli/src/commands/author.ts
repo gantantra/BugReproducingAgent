@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { fail, sha256Prefixed, systemClock } from "@investigator/core";
 import { investigationDirs } from "@investigator/storage";
 import { LineageWriter } from "@investigator/lineage";
@@ -16,14 +16,30 @@ import {
 } from "../claude-cli.js";
 import {
   extractAuthoredSteps,
+  planOptionalBlocks,
+  readOptionalScreens,
   renderAuthoredSpec,
   renderPlaywrightConfig,
   renderSuitePackageJson,
   whyStepsCannotMeasure,
   type AuthoredStep,
+  type OptionalScreen,
 } from "../authoring-script.js";
 import { translateAuthoredSteps } from "../authoring-actions.js";
 import { buildAuthoredGateProposal } from "../authoring-proposal.js";
+import { buildRepairPrompt, readRepairEvidence } from "../authoring-repair.js";
+import { LIVE_VIEW_DIR, liveFramePath, writeLiveViewHook } from "../live-view.js";
+import type { EmulationProfile } from "@investigator/core";
+import {
+  browserContextOptions,
+  describeProfile,
+  profileCatalogue,
+  readPlatformFile,
+  readPlatformLine,
+  stripPlatformLine,
+  writePlatformFile,
+  type PlatformChoice,
+} from "../authoring-platform.js";
 
 /**
  * `investigate author` — drive a real browser until the reported behaviour is reached (ADR-0027).
@@ -42,7 +58,7 @@ import { buildAuthoredGateProposal } from "../authoring-proposal.js";
  */
 
 /** Bumped whenever ai/authoring/brief.md changes in a way that changes behaviour. */
-export const AUTHORING_BRIEF_VERSION = "2.0.0";
+export const AUTHORING_BRIEF_VERSION = "2.4.0";
 
 /**
  * Repetitions the emitted proposal starts at.
@@ -60,12 +76,14 @@ export type AuthoringOutcome =
   | { kind: "plan"; plan: string }
   | { kind: "question"; question: string }
   | { kind: "stuck"; reason: string }
+  /** The browser must be relaunched as another profile before the session can carry on. */
+  | { kind: "platform"; profile: string }
   | { kind: "unknown"; tail: string };
 
 /**
  * Read the sentinel the brief asks for.
  *
- * One line rather than a schema, on purpose. Sonnet driving a browser does not need a validator
+ * One line rather than a schema, on purpose. DeepSeek driving a browser does not need a validator
  * adjudicating every step; it needs the harness to know which of three things just happened. The
  * sentinel is scanned from the END, because the model may legitimately mention the format while
  * explaining itself.
@@ -80,11 +98,12 @@ export function readAuthoringOutcome(finalMessage: string): AuthoringOutcome {
   const lines = finalMessage.trimEnd().split(/\r?\n/);
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i]!.trim().replace(/^[*_`\s]+|[*_`\s]+$/g, "");
-    const m = /^AUTHORING:\s*(DONE|PLAN|QUESTION|STUCK)\b\s*(.*)$/i.exec(line);
+    const m = /^AUTHORING:\s*(DONE|PLAN|QUESTION|STUCK|PLATFORM)\b\s*(.*)$/i.exec(line);
     if (!m) continue;
     const verb = m[1]!.toUpperCase();
     const rest = (m[2] ?? "").trim();
     if (verb === "DONE") return { kind: "done" };
+    if (verb === "PLATFORM") return { kind: "platform", profile: rest.split(/\s+/)[0] ?? "" };
 
     // The text may be on the sentinel line, or in the message above it. Both happen, and an
     // empty question is useless to the person being asked -- the page rendered a card with a
@@ -94,6 +113,12 @@ export function readAuthoringOutcome(finalMessage: string): AuthoringOutcome {
     if (verb === "PLAN") return { kind: "plan", plan: body() || rest };
     if (verb === "QUESTION") return { kind: "question", question: rest || body() };
     return { kind: "stuck", reason: rest || body() };
+  }
+  if (/maximum number of turns|max_turns_reached|maximum turns reached|turn limit reached/i.test(finalMessage)) {
+    return {
+      kind: "stuck",
+      reason: "Authoring reached the turn limit without completing. You can inspect screenshots, supply credentials or instructions, and resume.",
+    };
   }
   // No sentinel. Reported as unknown rather than assumed complete: treating an unrecognised
   // ending as success would emit a script from a session that may have stopped halfway.
@@ -111,6 +136,11 @@ export interface AuthorOptions {
   resume?: string;
   /** The answer to the question that paused it, or a correction to the plan. */
   answer?: string;
+  /**
+   * With `resume`: re-record the script from where its last replay stopped before the final check.
+   * The evidence is read from disk (see authoring-repair.ts), so nothing is typed.
+   */
+  repair?: boolean;
   /**
    * Approve the written plan and start the browser.
    *
@@ -169,27 +199,55 @@ export async function authorCommand(
   const dirs = investigationDirs(rt.workspace, investigationId);
   const sessionDir = join(dirs.root, "authoring");
   const outputDir = join(sessionDir, "mcp");
+  const userDataDir = join(sessionDir, "browser-profile");
   mkdirSync(outputDir, { recursive: true });
+  mkdirSync(userDataDir, { recursive: true });
 
   // Credentials reach the browser as a file the MCP server reads, never as prompt text and never
   // as argv. The model names a secret; it never learns the value.
   const secretsPath = writeSecretsFile(rt, sessionDir);
 
+  const liveViewHook = writeLiveViewHook(sessionDir);
   const mcpConfigPath = join(sessionDir, "mcp-config.json");
-  writeFileSync(
-    mcpConfigPath,
-    JSON.stringify(
-      playwrightMcpConfig({
-        outputDir,
-        ...(secretsPath ? { secretsPath } : {}),
-        allowedOrigins: rt.config.safety.allowedOrigins,
-        headless: opts.headed !== true,
-      }),
-      null,
-      2
-    ),
-    "utf8"
-  );
+  const platformPath = join(sessionDir, "platform.json");
+  const profiles = rt.config.execution.emulation.profiles;
+  const defaultPlatform: PlatformChoice = {
+    profile: rt.config.execution.emulation.defaultProfile,
+    source: "default",
+  };
+
+  /* The browser is launched as a platform, not asked to imitate one (see authoring-platform.ts).
+   * Rewritten before every browser session, because a session may switch profile mid-way and
+   * each resume starts a fresh MCP server that reads these files. */
+  const writeBrowserConfig = (profileName: string): void => {
+    const profile = profiles[profileName];
+    if (!profile) {
+      return fail("CONFIG_INVALID", "Emulation profile is not defined", { context: { profileName } });
+    }
+    const browserConfigPath = join(sessionDir, "browser-config.json");
+    writeFileSync(
+      browserConfigPath,
+      JSON.stringify({ browser: { contextOptions: browserContextOptions(profile) } }, null, 2),
+      "utf8"
+    );
+    writeFileSync(
+      mcpConfigPath,
+      JSON.stringify(
+        playwrightMcpConfig({
+          outputDir,
+          userDataDir,
+          initPage: liveViewHook,
+          browserConfigPath,
+          ...(secretsPath ? { secretsPath } : {}),
+          allowedOrigins: rt.config.safety.allowedOrigins,
+          headless: opts.headed !== true,
+        }),
+        null,
+        2
+      ),
+      "utf8"
+    );
+  };
 
   const brief = readBrief();
   const planPath = join(sessionDir, "plan.md");
@@ -219,38 +277,131 @@ export async function authorCommand(
       targetName: targetName!,
       report,
       baseUrl: target.baseUrl,
+      profiles,
+      defaultProfile: defaultPlatform.profile,
+      platformPath,
     });
   }
 
   const approvedPlan =
     opts.approvePlan && existsSync(planPath) ? readFileSync(planPath, "utf8") : "";
 
+  // The platform the plan chose, or the session later asked for. With neither on record the
+  // configured default is used, and the log names it either way.
+  let platform: PlatformChoice = readPlatformFile(platformPath, profiles) ?? defaultPlatform;
+  const describePlatform = (): string => describeProfile(platform.profile, profiles[platform.profile]!);
+  writeBrowserConfig(platform.profile);
+  process.stderr.write(`📱 Browser: ${describePlatform()}\n`);
+
+  // A plan approval starts a new attempt; a resume or a platform relaunch continues it, so the
+  // script is built from every browser run since this moment.
+  const attemptPath = join(sessionDir, "attempt.json");
+  // A repair re-records the whole flow, so it is a new attempt too: the script it produces must
+  // not include the recording it replaces.
+  if (!opts.resume || opts.repair) writeFileSync(attemptPath, `${JSON.stringify({ startedAt: Date.now() })}\n`, "utf8");
+  const attemptStartedAt = readAttemptStart(attemptPath);
+
+  const resumeCreds = rt.credentials.entries();
+  const credsReminder =
+    resumeCreds.length > 0
+      ? `\n\n(Session variables in secret store: ${resumeCreds.map((c) => (c.description ? `${c.name} (${c.description})` : c.name)).join(", ")}. Reference them by exact KEY NAME, never type raw values.)`
+      : "";
+
+  const platformReminder = `\n\n(The browser is ${describePlatform()}. If what the operator said calls for a different platform, end your turn with AUTHORING: PLATFORM <profile name>. Configured profiles:\n${profileCatalogue(profiles)})`;
+
+  /* A repair turn is told where the replay stopped and what the page showed. The page snapshot is
+   * the replay's own view of the site, not the session's, so it can hold what the replay TYPED —
+   * a phone number, an OTP. Every stored value is replaced by its key name before the model sees
+   * it, the same rule as everywhere else: the model names a secret, it never learns one. */
+  let repairPrompt = "";
+  if (opts.repair) {
+    if (!opts.resume) {
+      fail("INPUT_INVALID", "`--repair` re-records a session's script, so it needs --resume <sessionId>", {
+        context: { flag: "--repair" },
+      });
+    }
+    const suiteDirForRepair = join(sessionDir, "suite");
+    const evidence = readRepairEvidence(suiteDirForRepair);
+    if (!evidence || evidence.stoppedEarly === 0) {
+      fail(
+        "INPUT_INVALID",
+        "There is no replay that stopped before the final check to repair from. Replay the script first.",
+        { context: { suiteDir: suiteDirForRepair } }
+      );
+    }
+    repairPrompt = rt.credentials.names().reduce((text, name) => {
+      const value = rt.credentials.revealSync(name);
+      return value ? text.split(value).join(`<${name}>`) : text;
+    }, buildRepairPrompt(evidence));
+  }
+
+  // What a resumed turn actually gets: a new MCP server, so a fresh page on the same profile.
+  const resumeNote =
+    "\n\n(The browser restarted for this turn: the page is fresh, the browser profile and any sign-in in it are kept, and the steps from your earlier turns are already part of the script. Navigate back and carry on from where the flow stands.)";
+
   const prompt = opts.resume
-    ? (opts.answer ?? "")
+    ? (opts.repair ? repairPrompt : (opts.answer ?? "") + resumeNote) + credsReminder + platformReminder
     : buildPrompt({
         report,
         targetName: targetName!,
         baseUrl: target.baseUrl,
         allowedOrigins: rt.config.safety.allowedOrigins,
         credentialNames: rt.credentials.names(),
+        credentialEntries: rt.credentials.entries(),
         approvedPlan,
         ...(opts.answer ? { planAmendments: opts.answer } : {}),
+        platform: describePlatform(),
+        platforms: profileCatalogue(profiles),
       });
 
-  const args = claudeCliArgs({
+  const argsFor = (resume?: string): string[] => claudeCliArgs({
     mcpConfigPath,
+    strictMcpConfig: true,
     // Without this the session stops on its first navigation asking for permission, which is not
     // a question the operator can usefully answer -- they approve the SCRIPT, at a gate, after
     // watching it. The allowlist is where "what may this session do" is decided, once.
     allowedTools: ALLOWED_PLAYWRIGHT_TOOLS,
     appendSystemPrompt: brief,
     maxTurns: opts.maxTurns ?? 60,
-    outputFormat: "json",
-    ...(opts.resume ? { resume: opts.resume } : {}),
+    outputFormat: "stream-json",
+    ...(resume ? { resume } : {}),
   });
 
-  const session = await runClaude(cli!, args, prompt, rt);
-  const outcome = readAuthoringOutcome(session.finalMessage);
+  // The web server names this session's folder as `--workspace` and serves screenshots relative
+  // to it. A hand run without the flag has no page watching, and keeps the workspace root.
+  const workspaceDir = globals.workspace ? resolve(globals.workspace) : rt.workspace.root;
+  let session = await runClaude(cli!, argsFor(opts.resume), prompt, rt, sessionDir, workspaceDir);
+  let outcome = readAuthoringOutcome(session.finalMessage);
+
+  /* A platform named after the browser is already open -- in a plan correction or an answer --
+   * cannot be applied from inside the page. The session ends its turn asking for it; the harness
+   * checks the name, relaunches the browser as that profile and resumes the same session. Bounded,
+   * so a session that keeps asking ends instead of relaunching forever. */
+  const maxRelaunches = 2;
+  for (let relaunches = 0; outcome.kind === "platform"; relaunches++) {
+    const requested = outcome.profile;
+    if (relaunches >= maxRelaunches || !session.sessionId) {
+      outcome = {
+        kind: "stuck",
+        reason: `The session asked to switch the browser to "${requested}" again after ${maxRelaunches} relaunches, or could not be resumed to do it.`,
+      };
+      break;
+    }
+    let note: string;
+    if (!Object.prototype.hasOwnProperty.call(profiles, requested)) {
+      note = `"${requested}" is not a configured browser platform, so nothing was relaunched. The browser is still ${describePlatform()}. Configured profiles:\n${profileCatalogue(profiles)}`;
+    } else if (requested === platform.profile) {
+      note = `The browser is already ${describePlatform()}. Carry on.`;
+    } else {
+      platform = { profile: requested, source: "session-request" };
+      writePlatformFile(platformPath, platform);
+      writeBrowserConfig(requested);
+      process.stderr.write(`📱 Relaunching the browser as ${describePlatform()}\n`);
+      note = `The browser has been relaunched as ${describePlatform()}. The page was reset but the browser profile, and any sign-in in it, was kept, and the steps from your earlier turns are already part of the script. Navigate again and carry on from where the flow stands.`;
+    }
+    session = await runClaude(cli!, argsFor(session.sessionId), note, rt, sessionDir, workspaceDir);
+    outcome = readAuthoringOutcome(session.finalMessage);
+  }
 
   // A script is emitted only from a session that reached the behaviour. A partial one is worse
   // than none: it looks complete, and the next person runs it.
@@ -269,6 +420,11 @@ export async function authorCommand(
       // A starting point, not the decision. The operator edits it in the rendered proposal and
       // the approval binds to the edited bytes.
       repetitions: DEFAULT_REPETITIONS,
+      // The platform it was authored on, so the suite and the measured runs use the same browser.
+      platform: { name: platform.profile, profile: profiles[platform.profile]! },
+      attemptStartedAt,
+      // Screens the session declared as appearing on some runs only; checked, never trusted.
+      optionalScreens: readOptionalScreens(session.finalMessage),
     });
     await new LineageWriter(rt.metadata, systemClock).append({
       investigationId,
@@ -297,6 +453,7 @@ export async function authorCommand(
       investigationId,
       target: targetName,
       outcome: outcome.kind,
+      platform: { profile: platform.profile, description: describePlatform(), source: platform.source },
       ...(outcome.kind === "question" ? { question: outcome.question } : {}),
       ...(outcome.kind === "stuck" ? { reason: outcome.reason } : {}),
       sessionId: session.sessionId,
@@ -331,9 +488,12 @@ function renderHuman(
       `Reproduction authored: ${suite.steps} steps.`,
       `  ${suite.dir}`,
       "",
-      "Watch it work, then run it as many times as you need:",
-      "  npm i && npx playwright test            # once, with video",
-      "  npx playwright test --repeat-each=100   # to measure how often it fails"
+      "Run it many times to find out how often it fails — one pass proves nothing about a bug",
+      "that only shows up sometimes:",
+      "",
+      `  investigate rerun --investigation ${investigationId} --repeat 30`,
+      "",
+      "That installs what the suite needs the first time, runs it, and reports the failure count."
     );
     if (suite.proposalPath) {
       lines.push(
@@ -369,12 +529,103 @@ function renderHuman(
   return lines.join("\n");
 }
 
+export function formatToolUse(name: string, input: unknown): string {
+  const tool = name.replace(/^mcp__playwright__/, "");
+  const inp = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+  switch (tool) {
+    // Not browser actions: the session reading files MCP saved (a snapshot, a response body).
+    // Labelled as what they are, so a log full of them reads as a session digging, not browsing.
+    case "Read":
+      return `📄 Reading saved file: ${String(inp.file_path ?? "").split(/[\\/]/).pop() || "file"}`;
+    case "Grep":
+      return `🔎 Searching saved files for: ${String(inp.pattern ?? "").slice(0, 60)}`;
+    case "browser_navigate":
+      return `🌐 Navigating to ${inp.url || inp.target || "URL"}`;
+    case "browser_navigate_back":
+      return `🔙 Navigating back`;
+    case "browser_click":
+      return `👆 Clicking: ${inp.element || inp.selector || inp.target || JSON.stringify(inp)}`;
+    case "browser_type":
+      return `⌨️ Typing text: ${inp.text !== undefined ? inp.text : inp.value || ""}`;
+    case "browser_fill_form":
+      return `📝 Filling form: ${inp.fields ? Object.keys(inp.fields as object).join(", ") : inp.element || JSON.stringify(inp)}`;
+    case "browser_press_key":
+      return `⌨️ Key press: ${inp.key ?? ""}`;
+    case "browser_wait_for":
+      return `⏳ Waiting for: ${inp.text || inp.selector || JSON.stringify(inp)}`;
+    case "browser_find":
+      return `🔍 Searching for element: ${inp.query || inp.text || inp.selector || JSON.stringify(inp)}`;
+    case "browser_take_screenshot":
+      return `📸 Capturing viewport screenshot...`;
+    case "browser_snapshot":
+      return `👁️ Inspecting page DOM snapshot`;
+    case "browser_tabs":
+      return `📑 Managing browser tabs (${inp.action || "list"})`;
+    case "browser_resize":
+      return `📐 Resizing viewport to ${inp.width}x${inp.height}`;
+    case "browser_hover":
+      return `👆 Hovering: ${inp.element || inp.selector || JSON.stringify(inp)}`;
+    case "browser_select_option":
+      return `📋 Selecting option: ${Array.isArray(inp.values) ? inp.values.join(", ") : JSON.stringify(inp)}`;
+    default:
+      return `🤖 Browser action: ${tool}`;
+  }
+}
+
+/**
+ * The line the web page turns into a live viewport frame.
+ *
+ * The path is relative to the folder passed as `--workspace`, because that is the folder the
+ * server resolves `/api/session-image` against. It is not `rt.workspace.root`: that is the
+ * `.investigator` directory inside it, and a path relative to that named a file the server could
+ * never find, so every frame rendered as "Error rendering screenshot".
+ */
+export function screenshotLine(workspaceDir: string, imagePath: string): string {
+  const rel = relative(workspaceDir, imagePath).replace(/\\/g, "/");
+  return `[SCREENSHOT:/api/session-image?file=${encodeURIComponent(rel)}]`;
+}
+
+function mtimeOf(path: string): number {
+  try {
+    return statSync(path).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+function scanForImages(dir: string, seen: Set<string>, skipDir?: string): string[] {
+  if (!existsSync(dir)) return [];
+  const found: string[] = [];
+  function scan(curr: string) {
+    try {
+      for (const entry of readdirSync(curr, { withFileTypes: true })) {
+        const fullPath = join(curr, entry.name);
+        if (entry.isDirectory()) {
+          if (fullPath !== skipDir) scan(fullPath);
+        } else if (entry.isFile() && /\.(png|jpe?g|webp)$/i.test(entry.name)) {
+          if (!seen.has(fullPath)) {
+            seen.add(fullPath);
+            found.push(fullPath);
+          }
+        }
+      }
+    } catch {
+      // Ignore transient filesystem errors
+    }
+  }
+  scan(dir);
+  return found;
+}
+
 /** Run the CLI to completion and return its final message. */
 function runClaude(
   cli: string,
   args: string[],
   prompt: string,
-  rt: Runtime
+  rt: Runtime,
+  sessionDir?: string,
+  /** The folder screenshot paths are made relative to; see `screenshotLine`. */
+  workspaceDir?: string
 ): Promise<{ sessionId: string | null; finalMessage: string; exitCode: number | null }> {
   return new Promise((resolvePromise) => {
     // `shell: false`, always. The prompt embeds a bug report written by someone else, and a shell
@@ -382,6 +633,7 @@ function runClaude(
     // `& del ...` would have run it. The prompt does not go in argv at all now; it is written to
     // stdin below.
     const child = spawn(cli, args, {
+      cwd: sessionDir,
       env: claudeCliEnv(process.env),
       stdio: ["pipe", "pipe", "pipe"],
       shell: false,
@@ -390,26 +642,135 @@ function runClaude(
     child.stdin.end(prompt, "utf8");
 
     let out = "";
+    let sessionId: string | null = null;
+    let finalMessage = "";
+    const seenImages = new Set<string>();
+
+    // The live frame is rewritten in place, so it is followed by mtime rather than by name.
+    const liveDir = sessionDir ? join(sessionDir, LIVE_VIEW_DIR) : undefined;
+    const liveFrame = sessionDir ? liveFramePath(sessionDir) : undefined;
+    // A frame left by an earlier run shows a browser that no longer exists; wait for this run's.
+    let liveFrameMtime = liveFrame ? mtimeOf(liveFrame) : 0;
+
+    if (sessionDir) {
+      scanForImages(sessionDir, seenImages, liveDir);
+    }
+
+    function emitNewImages() {
+      if (!sessionDir || !workspaceDir) return;
+      const newImgs = scanForImages(sessionDir, seenImages, liveDir);
+      for (const imgPath of newImgs) {
+        process.stderr.write(`${screenshotLine(workspaceDir, imgPath)}\n`);
+      }
+    }
+
+    function emitLiveFrame() {
+      if (!liveFrame || !workspaceDir) return;
+      const mtime = mtimeOf(liveFrame);
+      if (mtime === 0 || mtime === liveFrameMtime) return;
+      liveFrameMtime = mtime;
+      process.stderr.write(`${screenshotLine(workspaceDir, liveFrame)}\n`);
+    }
+
+    const imagePollTimer = sessionDir ? setInterval(emitNewImages, 1000) : null;
+    const liveFrameTimer = liveFrame ? setInterval(emitLiveFrame, 500) : null;
+
+    let stdoutBuf = "";
+    let maxTurnsReached = false;
     child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (d: string) => (out += d));
-    // stderr carries the CLI's own progress. Surfaced live so a long session is not a silent one.
+    child.stdout.on("data", (d: string) => {
+      out += d;
+      stdoutBuf += d;
+      const lines = stdoutBuf.split(/\r?\n/);
+      stdoutBuf = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const parsed = JSON.parse(line) as {
+            type?: string;
+            subtype?: string;
+            is_error?: boolean;
+            attachment?: { type?: string };
+            session_id?: string;
+            result?: string;
+            message?: { content?: Array<{ type: string; name?: string; input?: unknown; text?: string }> };
+          };
+          if (
+            (parsed.type === "attachment" && parsed.attachment?.type === "max_turns_reached") ||
+            parsed.subtype === "error_max_turns" ||
+            (parsed.is_error && /maximum number of turns|max_turns/i.test(parsed.result || ""))
+          ) {
+            maxTurnsReached = true;
+          }
+          if (parsed.type === "result") {
+            if (parsed.session_id) sessionId = parsed.session_id;
+            if (parsed.result) finalMessage = parsed.result;
+            continue;
+          }
+          if (parsed.session_id) sessionId = parsed.session_id;
+          if (parsed.result) finalMessage = parsed.result;
+
+          if (parsed.type === "assistant" && parsed.message?.content) {
+            if (Array.isArray(parsed.message.content)) {
+              for (const item of parsed.message.content) {
+                if (item.type === "tool_use" && item.name) {
+                  const formatted = formatToolUse(item.name, item.input);
+                  process.stderr.write(`${formatted}\n`);
+                  emitNewImages();
+                } else if (item.type === "text" && item.text) {
+                  finalMessage = item.text;
+                }
+              }
+            }
+          } else if (parsed.type === "user") {
+            emitNewImages();
+          }
+        } catch {
+          // Plain text line or incomplete JSON
+        }
+      }
+    });
+
+    // stderr carries the CLI's own internal progress/diagnostics
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (d: string) => rt.logger.debug("claude", { line: d.trimEnd() }));
 
     child.on("close", (exitCode) => {
-      let sessionId: string | null = null;
-      let finalMessage = out.trim();
-      try {
-        const parsed = JSON.parse(out) as { session_id?: string; result?: string };
-        sessionId = parsed.session_id ?? null;
-        finalMessage = parsed.result ?? finalMessage;
-      } catch {
-        // Not JSON. The raw text is still the most useful thing to show.
+      if (imagePollTimer) clearInterval(imagePollTimer);
+      if (liveFrameTimer) clearInterval(liveFrameTimer);
+      emitNewImages();
+
+      if (stdoutBuf.trim()) {
+        try {
+          const parsed = JSON.parse(stdoutBuf.trim()) as { session_id?: string; result?: string };
+          if (parsed.session_id) sessionId = parsed.session_id;
+          if (parsed.result) finalMessage = parsed.result;
+        } catch {
+          // ignore
+        }
       }
+
+      if (!finalMessage) {
+        try {
+          const parsed = JSON.parse(out) as { session_id?: string; result?: string };
+          sessionId = parsed.session_id ?? sessionId;
+          finalMessage = parsed.result ?? out.trim();
+        } catch {
+          finalMessage = out.trim();
+        }
+      }
+
+      if (maxTurnsReached && !finalMessage.includes("AUTHORING:")) {
+        finalMessage = "AUTHORING: STUCK Authoring reached the maximum turn limit without completing.";
+      }
+
       resolvePromise({ sessionId, finalMessage, exitCode });
     });
   });
 }
+
+/** Exported so a spec can run the session loop against a stand-in CLI. */
+export const runClaudeForTest = runClaude;
 
 /** The operator's brief, a versioned file rather than a string literal in TypeScript. */
 function readBrief(): string {
@@ -424,15 +785,42 @@ function readBrief(): string {
   });
 }
 
-function buildPrompt(a: {
+export function buildPrompt(a: {
   report: string;
   targetName: string;
   baseUrl: string;
   allowedOrigins: readonly string[];
   credentialNames: readonly string[];
+  credentialEntries?: readonly { name: string; description?: string }[];
   approvedPlan?: string;
   planAmendments?: string;
+  /** The profile the browser was launched as, described. */
+  platform?: string;
+  /** Every configured profile, for a session that must ask for a different one. */
+  platforms?: string;
 }): string {
+  const credLines: string[] = [];
+  if (a.credentialEntries && a.credentialEntries.length > 0) {
+    for (const entry of a.credentialEntries) {
+      credLines.push(entry.description ? `- ${entry.name}: ${entry.description}` : `- ${entry.name}`);
+    }
+  } else if (a.credentialNames.length > 0) {
+    for (const name of a.credentialNames) {
+      credLines.push(`- ${name}`);
+    }
+  }
+
+  const credentialsSection =
+    credLines.length > 0
+      ? [
+          "## Session Credentials & Variables",
+          "The following credentials and variables are configured for this session in the MCP secret store.",
+          "IMPORTANT: You MUST reference them strictly by their exact KEY NAME (e.g. browser_type with text set to the key name like \"ACCOUNT_PHONE\").",
+          "NEVER guess, ask for, or type raw values; the browser tool resolves them automatically from the secret store.",
+          ...credLines,
+        ].join("\n")
+      : "No credentials were supplied. Ask if the flow needs one.";
+
   return [
     "Reproduce this reported bug in the browser.",
     "",
@@ -445,9 +833,17 @@ function buildPrompt(a: {
     `Target: ${a.targetName} — ${a.baseUrl}`,
     `Stay within these origins: ${a.allowedOrigins.join(", ") || "(none configured)"}`,
     "",
-    a.credentialNames.length
-      ? `Credentials available by name (reference them, never type a value): ${a.credentialNames.join(", ")}`
-      : "No credentials were supplied. Ask if the flow needs one.",
+    credentialsSection,
+    ...(a.platform
+      ? [
+          "",
+          "## Browser platform",
+          "",
+          `The browser was launched as ${a.platform}.`,
+          "Do not resize it to imitate another platform. If the report, the plan correction or an answer calls for a different one, end your turn with AUTHORING: PLATFORM <profile name>. Configured profiles:",
+          a.platforms ?? "",
+        ]
+      : []),
     ...(a.approvedPlan
       ? [
           "",
@@ -482,12 +878,26 @@ async function runPlanningPhase(a: {
   targetName: string;
   report: string;
   baseUrl: string;
+  profiles: Readonly<Record<string, EmulationProfile>>;
+  defaultProfile: string;
+  platformPath: string;
 }): Promise<AuthorResult> {
+  const credEntries = a.rt.credentials.entries();
+  const credSummary =
+    credEntries.length > 0
+      ? `Credentials & variables available by name:\n${credEntries.map((e) => (e.description ? `- ${e.name}: ${e.description}` : `- ${e.name}`)).join("\n")}`
+      : a.rt.credentials.names().length
+      ? `Credentials available by name: ${a.rt.credentials.names().join(", ")}`
+      : "No credentials were supplied.";
+
   const prompt = [
     "Write the plan for reproducing this reported bug. Do not reproduce it yet.",
     "",
     "You have NO browser tools on this turn. That is deliberate: the operator reads your plan",
     "before anything touches their application, and approves or corrects it first.",
+    "",
+    "Do not attempt to search or modify the codebase, and do not execute terminal commands.",
+    "Output the numbered reproduction plan immediately, naming any gaps, and conclude with AUTHORING: PLAN.",
     "",
     "## The report, in the reporter's own words",
     "",
@@ -497,14 +907,21 @@ async function runPlanningPhase(a: {
     "",
     `Target: ${a.targetName} — ${a.baseUrl}`,
     "",
-    a.rt.credentials.names().length
-      ? `Credentials available by name: ${a.rt.credentials.names().join(", ")}`
-      : "No credentials were supplied.",
+    credSummary,
+    "",
+    "## Browser platforms you can choose from",
+    "",
+    profileCatalogue(a.profiles),
+    `Default, when nothing the operator said names a platform: ${a.defaultProfile}`,
+    "",
+    "Put PLATFORM: <profile name> on its own line directly above AUTHORING: PLAN.",
   ].join("\n");
 
   const args = claudeCliArgs({
     appendSystemPrompt: a.brief,
-    maxTurns: 4,
+    strictMcpConfig: true,
+    tools: "",
+    maxTurns: 2,
     outputFormat: "json",
   });
 
@@ -516,32 +933,60 @@ async function runPlanningPhase(a: {
    * endings are the same thing here -- a plan, with the gaps named -- so the plan is the body above
    * whichever sentinel was used, and a question is carried alongside rather than replacing it.
    * Keeping the sentinel line out of the plan matters: it is shown to the operator verbatim. */
-  const plan = stripSentinel(session.finalMessage);
+  const plan = stripPlatformLine(stripSentinel(session.finalMessage));
   const question = outcome.kind === "question" ? outcome.question : "";
-  writeFileSync(a.planPath, plan, "utf8");
+  const ok = outcome.kind === "plan" || outcome.kind === "question";
+
+  // The model proposes a profile name; config decides whether it exists. The operator sees the
+  // result on the plan card before any browser opens.
+  const named = readPlatformLine(session.finalMessage);
+  const known = named !== null && Object.prototype.hasOwnProperty.call(a.profiles, named);
+  const platform: PlatformChoice = known
+    ? { profile: named, source: "plan" }
+    : { profile: a.defaultProfile, source: "default" };
+  const platformNote =
+    named !== null && !known
+      ? `The plan named "${named}", which is not a configured platform, so the default is used.`
+      : undefined;
+  const platformDescription = describeProfile(platform.profile, a.profiles[platform.profile]!);
+  if (ok) {
+    writeFileSync(a.planPath, plan, "utf8");
+    writePlatformFile(a.platformPath, platform);
+  }
 
   return {
     json: {
-      ok: outcome.kind === "plan" || outcome.kind === "question",
+      ok,
       investigationId: a.investigationId,
       target: a.targetName,
-      outcome: "plan",
-      plan,
+      outcome: ok ? "plan" : outcome.kind === "stuck" ? "stuck" : "error",
+      plan: ok ? plan : "",
+      platform: {
+        profile: platform.profile,
+        description: platformDescription,
+        source: platform.source,
+        ...(platformNote ? { note: platformNote } : {}),
+      },
       ...(question ? { question } : {}),
       sessionId: session.sessionId,
       suite: null,
       message: session.finalMessage,
     },
     human: () =>
-      [
-        "The plan, before anything opens a browser:",
-        "",
-        plan,
-        ...(question ? ["", `It needs to know: ${question}`] : []),
-        "",
-        `Approve it with:  investigate author --investigation ${a.investigationId} --approve-plan`,
-        `Answer or change: the same command plus --answer "<your answer>"`,
-      ].join("\n"),
+      ok
+        ? [
+            "The plan, before anything opens a browser:",
+            "",
+            plan,
+            "",
+            `Browser: ${platformDescription}`,
+            ...(platformNote ? [platformNote] : []),
+            ...(question ? ["", `It needs to know: ${question}`] : []),
+            "",
+            `Approve it with:  investigate author --investigation ${a.investigationId} --approve-plan`,
+            `Answer or change: the same command plus --answer "<your answer>"`,
+          ].join("\n")
+        : renderHuman(outcome, session, null, a.investigationId),
   };
 }
 
@@ -660,9 +1105,21 @@ function emitSuite(a: {
   reportSummary: string;
   approvedPlan: string;
   repetitions: number;
-}): { dir: string; steps: number; proposalPath?: string; proposalRefusal?: string } {
-  const sessionMd = findSessionMarkdown(a.outputDir);
-  const steps = sessionMd ? extractAuthoredSteps(readFileSync(sessionMd, "utf8")) : [];
+  platform: { name: string; profile: EmulationProfile };
+  attemptStartedAt: number;
+  optionalScreens: readonly OptionalScreen[];
+}): {
+  dir: string;
+  steps: number;
+  proposalPath?: string;
+  proposalRefusal?: string;
+  optionalScreens?: string[];
+  optionalRefused?: string[];
+} {
+  // Every browser run of this attempt, in the order they ran (see attemptSessionMarkdowns).
+  const steps = attemptSessionMarkdowns(a.outputDir, a.attemptStartedAt).flatMap((path) =>
+    extractAuthoredSteps(readFileSync(path, "utf8"))
+  );
 
   /* A session saying DONE is a claim, not a result — the same status every AI output in this
    * product has, and the same rule applies: untrusted until validated. The claim being checked
@@ -688,12 +1145,17 @@ function emitSuite(a: {
       investigationId: a.investigationId,
       reportSummary: a.reportSummary,
       authoredAt: systemClock.nowIso(),
+      optional: a.optionalScreens,
     }),
     "utf8"
   );
   writeFileSync(
     join(suiteDir, "playwright.config.ts"),
-    renderPlaywrightConfig({ outputDir: "./artifacts" }),
+    renderPlaywrightConfig({
+      outputDir: "./artifacts",
+      contextOptions: browserContextOptions(a.platform.profile),
+      steps: steps.length,
+    }),
     "utf8"
   );
   writeFileSync(
@@ -705,12 +1167,24 @@ function emitSuite(a: {
     "utf8"
   );
 
-  const { proposalPath, proposalRefusal } = emitProposal({ ...a, steps, suiteDir });
+  const optionalPlan = planOptionalBlocks(steps, a.optionalScreens);
+  /* The measured runner's action vocabulary has no "only if this screen shows". Turning a script
+   * with optional screens into a proposal would silently make those steps mandatory again — the
+   * exact failure the declaration exists to prevent — so it is measured through the suite instead,
+   * and the refusal says why. */
+  const { proposalPath, proposalRefusal }: { proposalPath?: string; proposalRefusal?: string } =
+    optionalPlan.blocks.length > 0
+      ? {
+          proposalRefusal: `the script has ${optionalPlan.blocks.length} screen(s) that appear on some runs only, which the measured runner's actions cannot express, so it is run as a suite`,
+        }
+      : emitProposal({ ...a, steps, suiteDir });
   return {
     dir: suiteDir,
     steps: steps.length,
     ...(proposalPath ? { proposalPath } : {}),
     ...(proposalRefusal ? { proposalRefusal } : {}),
+    ...(optionalPlan.blocks.length ? { optionalScreens: optionalPlan.blocks.map((b) => b.trigger) } : {}),
+    ...(optionalPlan.refused.length ? { optionalRefused: optionalPlan.refused } : {}),
   };
 }
 
@@ -731,6 +1205,7 @@ function emitProposal(a: {
   repetitions: number;
   steps: readonly AuthoredStep[];
   suiteDir: string;
+  platform: { name: string; profile: EmulationProfile };
 }): { proposalPath?: string; proposalRefusal?: string } {
   const secretsByValue = new Map<string, string>();
   for (const name of a.rt.credentials.names()) {
@@ -756,6 +1231,7 @@ function emitProposal(a: {
     repetitions: a.repetitions,
     authoredAt: systemClock.nowIso(),
     briefVersion: AUTHORING_BRIEF_VERSION,
+    emulationProfile: a.platform.name,
   });
   if (!built.ok) return { proposalRefusal: built.reason };
 
@@ -764,13 +1240,40 @@ function emitProposal(a: {
   return { proposalPath };
 }
 
-function findSessionMarkdown(outputDir: string): string | null {
-  if (!existsSync(outputDir)) return null;
-  for (const entry of readdirSync(outputDir)) {
-    const candidate = join(outputDir, entry, "session.md");
-    if (existsSync(candidate)) return candidate;
+/**
+ * The session logs of one authoring attempt, oldest first.
+ *
+ * MCP writes `session-<epoch ms>/session.md` each time its server starts, and every
+ * `claude --resume` starts a new server. This used to return whichever folder `readdir` listed
+ * first: in a real run that was the sign-in, while the run that reached the flow sat in the second
+ * folder, so even a DONE would have been scripted from the wrong steps. Logs from before this
+ * attempt began (an earlier "Try again") are left out.
+ */
+export function attemptSessionMarkdowns(outputDir: string, sinceMs: number): string[] {
+  if (!existsSync(outputDir)) return [];
+  return readdirSync(outputDir)
+    .map((entry) => ({ entry, startedAt: Number(/^session-(\d+)$/.exec(entry)?.[1]) }))
+    .filter(
+      (s) =>
+        Number.isFinite(s.startedAt) &&
+        s.startedAt >= sinceMs &&
+        existsSync(join(outputDir, s.entry, "session.md"))
+    )
+    .sort((a, b) => a.startedAt - b.startedAt)
+    .map((s) => join(outputDir, s.entry, "session.md"));
+}
+
+/**
+ * When the current attempt began, or 0 when that was never recorded (a session authored before
+ * attempts were), in which case every log in the folder counts, as it did then.
+ */
+function readAttemptStart(path: string): number {
+  try {
+    const startedAt = (JSON.parse(readFileSync(path, "utf8")) as { startedAt?: unknown }).startedAt;
+    return typeof startedAt === "number" && Number.isFinite(startedAt) ? startedAt : 0;
+  } catch {
+    return 0;
   }
-  return null;
 }
 
 /** Pin the emitted suite to the Playwright this machine authored with. */

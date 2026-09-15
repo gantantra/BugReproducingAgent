@@ -125,5 +125,48 @@ describe("the file on disk", () => {
   it("starts empty rather than failing when there is no file", () => {
     expect(new CredentialStore(dir, {}).names()).toEqual([]);
     expect(new CredentialStore(dir, {}).allValues()).toEqual([]);
+    expect(new CredentialStore(dir, {}).entries()).toEqual([]);
+  });
+
+  it("stores and retrieves description metadata with entries()", () => {
+    const store = new CredentialStore(dir, {});
+    store.set("ACCOUNT_PHONE", "9876543210", "Phone number for login");
+    store.set("ACCOUNT_OTP", "1234", "One-time passcode");
+
+    expect(store.entries()).toEqual([
+      { name: "ACCOUNT_OTP", description: "One-time passcode" },
+      { name: "ACCOUNT_PHONE", description: "Phone number for login" },
+    ]);
+    expect(store.descriptions()).toEqual({
+      ACCOUNT_PHONE: "Phone number for login",
+      ACCOUNT_OTP: "One-time passcode",
+    });
+
+    store.delete("ACCOUNT_OTP");
+    expect(store.entries()).toEqual([
+      { name: "ACCOUNT_PHONE", description: "Phone number for login" },
+    ]);
+    expect(store.descriptions()).toEqual({
+      ACCOUNT_PHONE: "Phone number for login",
+    });
+  });
+
+  it("transparently loads schemaVersion 1 files without descriptions", () => {
+    const v1Path = join(dir, CREDENTIALS_FILENAME);
+    writeFileSync(
+      v1Path,
+      JSON.stringify({
+        schemaVersion: 1,
+        credentials: {
+          LEGACY_KEY: "legacy-val",
+        },
+      }),
+      "utf8"
+    );
+
+    const store = new CredentialStore(dir, {});
+    expect(store.revealSync("LEGACY_KEY")).toBe("legacy-val");
+    expect(store.entries()).toEqual([{ name: "LEGACY_KEY" }]);
   });
 });
+

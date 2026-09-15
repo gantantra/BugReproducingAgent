@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { spawn } from "node:child_process";
 import { randomUUID, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { extname, join, resolve, sep } from "node:path";
+import { basename, extname, join, resolve, sep } from "node:path";
 
 import {
   ACTIONS,
@@ -14,13 +14,14 @@ import {
 } from "./actions.js";
 import { SessionStore, normalizeIp, readCookie } from "./sessions.js";
 import { FileSessionPersistence } from "./storage.js";
-import { readTargets, validateTargetRequest, writeTarget } from "./target.js";
+import { readTargets, targetFromReport, validateTargetRequest, writeTarget } from "./target.js";
 import {
   ensureSessionWorkspace,
   listSessionFolders,
   recordSessionEvent,
 } from "./session-workspace.js";
 import { CredentialStore } from "@investigator/storage";
+import { extractCredentials } from "@investigator/ai-flows";
 
 /**
  * A local chat front end for the investigator.
@@ -107,7 +108,7 @@ export function createInvestigatorServer(opts: ServerOptions) {
   const sessions = new SessionStore(
     () => randomUUID(),
     undefined,
-    opts.sessionTtlMs ?? 60_000,
+    opts.sessionTtlMs ?? 7_200_000,
     persistence
   );
   const SESSION_COOKIE = "investigator_session";
@@ -232,7 +233,7 @@ export function createInvestigatorServer(opts: ServerOptions) {
     for (const listener of job.listeners) listener.write(payload);
   }
 
-  function startJob(actionId: string, argv: string[], workspace: string): Job {
+  function startJob(actionId: string, argv: string[], workspace: string, sessionId?: string | null): Job {
     const job: Job = {
       id: randomUUID(),
       action: actionId,
@@ -244,10 +245,18 @@ export function createInvestigatorServer(opts: ServerOptions) {
     };
     jobs.set(job.id, job);
 
+    const keepAliveTimer = sessionId
+      ? setInterval(() => {
+          sessions.touch(sessionId);
+        }, 15_000)
+      : null;
+
     void runCli(argv, workspace, (line) => {
       job.lines.push(line);
       pushJobEvent(job, "log", { line });
     }).then(({ json, text, exitCode }) => {
+      if (keepAliveTimer) clearInterval(keepAliveTimer);
+      if (sessionId) sessions.touch(sessionId);
       job.result = json ?? { ok: exitCode === 0, message: text };
       job.exitCode = exitCode;
       job.status = exitCode === 0 ? "complete" : "failed";
@@ -284,8 +293,10 @@ export function createInvestigatorServer(opts: ServerOptions) {
     return full.startsWith(root) ? full : null;
   }
 
-  function authorised(req: IncomingMessage): boolean {
-    const sent = req.headers["x-investigator-token"];
+  function authorised(req: IncomingMessage, url?: URL): boolean {
+    const headerToken = req.headers["x-investigator-token"];
+    const queryToken = url?.searchParams.get("token");
+    const sent = (typeof headerToken === "string" ? headerToken : undefined) ?? (typeof queryToken === "string" ? queryToken : undefined);
     if (typeof sent !== "string" || sent !== opts.token) return false;
     // A page on another origin must not be able to drive a process runner on this machine.
     const reqOrigin = req.headers.origin;
@@ -332,12 +343,13 @@ export function createInvestigatorServer(opts: ServerOptions) {
         return;
       }
 
-      if (!authorised(req)) {
+      if (!authorised(req, url)) {
         sendJson(res, 403, { ok: false, code: "FORBIDDEN", message: "bad or missing token" });
         return;
       }
 
-      const sessionId = readCookie(req.headers.cookie, SESSION_COOKIE);
+      const sessionId =
+        readCookie(req.headers.cookie, SESSION_COOKIE) ?? url.searchParams.get("session");
       const userId = readCookie(req.headers.cookie, USER_COOKIE);
       const clientIp = normalizeIp(req.socket.remoteAddress);
 
@@ -445,6 +457,32 @@ export function createInvestigatorServer(opts: ServerOptions) {
           return;
         }
 
+        /* The target named in the report, recorded without asking the operator to repeat it.
+         *
+         * `target: null` means the text names no web address, and only then does the page ask. The
+         * same route records an address the operator types into that box, so a typed address and one
+         * found in a report go through one derivation and one validation. */
+        if (path === "/api/targets/from-report" && req.method === "POST") {
+          const sessionWs = requireSessionDir(res, sessionId);
+          if (!sessionWs) return;
+          sessions.touch(sessionId);
+          const body = (await readBody(req)) as { text?: unknown };
+          const derived = targetFromReport(typeof body.text === "string" ? body.text : "");
+          if (!derived) {
+            sendJson(res, 200, { ok: true, target: null });
+            return;
+          }
+          const written = writeTarget(sessionWs, derived);
+          recordSessionEvent(sessionWs, {
+            kind: "target",
+            name: written.name,
+            baseUrl: written.baseUrl,
+            source: "report",
+          });
+          sendJson(res, 200, { ok: true, target: written });
+          return;
+        }
+
         /* Test-account credentials, supplied by the operator so a flow that must sign in can.
          *
          * Deliberately NOT an allowlist action. Every other capability here spawns `investigate`
@@ -453,13 +491,14 @@ export function createInvestigatorServer(opts: ServerOptions) {
          * straight into the workspace credential store instead, so it never becomes argv and
          * never becomes a log line.
          *
-         * GET returns NAMES only. There is no route that reads a value back out: the executor
-         * resolves one in its own process, and nothing else needs to. */
+         * GET returns NAMES and masked ENTRIES with descriptions. There is no route that reads a value
+         * back out: the executor resolves one in its own process, and nothing else needs to. */
         if (path === "/api/credentials" && req.method === "GET") {
           const dir = requireSessionDir(res, sessionId);
           if (!dir) return;
           sessions.touch(sessionId);
-          sendJson(res, 200, { ok: true, names: credentialsFor(dir).names() });
+          const store = credentialsFor(dir);
+          sendJson(res, 200, { ok: true, names: store.names(), entries: store.entries() });
           return;
         }
 
@@ -467,9 +506,10 @@ export function createInvestigatorServer(opts: ServerOptions) {
           const dir = requireSessionDir(res, sessionId);
           if (!dir) return;
           sessions.touch(sessionId);
-          const body = (await readBody(req)) as { name?: unknown; value?: unknown };
+          const body = (await readBody(req)) as { name?: unknown; value?: unknown; description?: unknown };
           const name = typeof body.name === "string" ? body.name : "";
           const value = typeof body.value === "string" ? body.value : "";
+          const description = typeof body.description === "string" ? body.description.trim() : undefined;
           if (!/^[A-Z][A-Z0-9_]{0,63}$/.test(name)) {
             sendJson(res, 400, {
               ok: false,
@@ -488,11 +528,11 @@ export function createInvestigatorServer(opts: ServerOptions) {
             return;
           }
           const store = credentialsFor(dir);
-          store.set(name, value);
+          store.set(name, value, description);
           // The NAME is recorded so the session's history shows a credential was supplied. The
           // value is not, here or anywhere else this process writes.
           recordSessionEvent(dir, { kind: "credential", name });
-          sendJson(res, 200, { ok: true, name, names: store.names() });
+          sendJson(res, 200, { ok: true, name, names: store.names(), entries: store.entries() });
           return;
         }
 
@@ -507,7 +547,40 @@ export function createInvestigatorServer(opts: ServerOptions) {
           }
           const store = credentialsFor(dir);
           const removed = store.delete(name);
-          sendJson(res, 200, { ok: true, removed, names: store.names() });
+          sendJson(res, 200, { ok: true, removed, names: store.names(), entries: store.entries() });
+          return;
+        }
+
+        if (path === "/api/credentials/extract" && req.method === "POST") {
+          const dir = requireSessionDir(res, sessionId);
+          if (!dir) return;
+          sessions.touch(sessionId);
+          const body = (await readBody(req)) as { text?: unknown; question?: unknown };
+          const text = typeof body.text === "string" ? body.text : "";
+          const question = typeof body.question === "string" ? body.question : undefined;
+          if (!text.trim()) {
+            sendJson(res, 400, {
+              ok: false,
+              code: "BAD_PARAM",
+              message: "text is required",
+            });
+            return;
+          }
+          const result = await extractCredentials(text, question ? { question } : undefined);
+          const store = credentialsFor(dir);
+          for (const item of result.extracted) {
+            store.set(item.name, item.value, item.description);
+            recordSessionEvent(dir, { kind: "credential", name: item.name });
+          }
+          sendJson(res, 200, {
+            ok: true,
+            extracted: result.extracted.map((e) => ({ name: e.name, description: e.description })),
+            // The reply as the operator wrote it, secrets swapped for their names. It carries no
+            // value, so it can go back to the page and on to the model.
+            referencedText: result.referencedText,
+            names: store.names(),
+            entries: store.entries(),
+          });
           return;
         }
 
@@ -588,7 +661,7 @@ export function createInvestigatorServer(opts: ServerOptions) {
           recordSessionEvent(sessionWs, { kind: "action", action: action.id, argv });
 
           if (action.streams) {
-            const job = startJob(action.id, argv, sessionWs);
+            const job = startJob(action.id, argv, sessionWs, sessionId);
             sendJson(res, 202, { ok: true, jobId: job.id, argv, summary: action.summary });
             return;
           }
@@ -657,6 +730,43 @@ export function createInvestigatorServer(opts: ServerOptions) {
           const ext = extname(full).toLowerCase();
           res.writeHead(200, {
             "content-type": MIME[ext] ?? "application/octet-stream",
+            "cache-control": "no-store",
+            "x-content-type-options": "nosniff",
+          });
+          res.end(readFileSync(full));
+          return;
+        }
+
+        if (path === "/api/session-image" && req.method === "GET") {
+          const fileParam = url.searchParams.get("file") ?? "";
+          if (!fileParam) {
+            sendJson(res, 400, { ok: false, code: "BAD_PARAM", message: "file parameter required" });
+            return;
+          }
+          const dir = requireSessionDir(res, sessionId);
+          if (!dir) return;
+          let full = resolve(dir, fileParam);
+          const root = resolve(dir) + sep;
+          if (!full.startsWith(root) || !existsSync(full)) {
+            const folderName = basename(dir);
+            if (fileParam.startsWith(folderName + "/") || fileParam.startsWith(folderName + "\\")) {
+              const alt = resolve(dir, fileParam.slice(folderName.length + 1));
+              if (alt.startsWith(root) && existsSync(alt)) {
+                full = alt;
+              }
+            }
+          }
+          if (!full.startsWith(root) || !existsSync(full)) {
+            sendJson(res, 404, { ok: false, code: "NOT_FOUND", message: "image not found" });
+            return;
+          }
+          const ext = extname(full).toLowerCase();
+          if (![".png", ".jpg", ".jpeg", ".webp", ".gif"].includes(ext)) {
+            sendJson(res, 403, { ok: false, code: "FORBIDDEN", message: "not an image" });
+            return;
+          }
+          res.writeHead(200, {
+            "content-type": MIME[ext] ?? "image/png",
             "cache-control": "no-store",
             "x-content-type-options": "nosniff",
           });

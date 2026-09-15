@@ -166,6 +166,17 @@ describe("the emitted config", () => {
     expect(config).toContain('video: "on"');
   });
 
+  it("re-runs on the platform the session was authored on", () => {
+    const mobile = renderPlaywrightConfig({
+      outputDir: "./artifacts",
+      contextOptions: { isMobile: true, hasTouch: true, userAgent: "UA", viewport: { width: 412, height: 915 } },
+    });
+    expect(mobile).toContain("isMobile: true,");
+    expect(mobile).toContain('userAgent: "UA",');
+    expect(mobile).toContain('viewport: {"width":412,"height":915},');
+    expect(config).not.toContain("isMobile");
+  });
+
   it("never retries", () => {
     // A retry hides the intermittent failure the whole suite exists to count.
     expect(config).toContain("retries: 0");
@@ -178,7 +189,8 @@ describe("the emitted config", () => {
   it("fails faster than Playwright's default, because failures are the point", () => {
     // Measured: 30 runs of a 1-in-3 bug took 6.4 minutes, almost all of it ten failing runs
     // waiting out a 30s timeout for an element that was never going to appear.
-    expect(config).toContain("timeout: 15_000");
+    // A step that cannot happen still gives up quickly; the whole run is sized to its steps instead.
+    expect(config).toContain("actionTimeout: 15_000");
   });
 });
 

@@ -122,7 +122,7 @@ describe("the Playwright MCP allowlist against the server that actually runs", (
     expect([...allowed].sort()).toEqual(expected);
   });
 
-  it("withholds the two tools that can fake a reproduction, and they are real", async () => {
+  it("withholds the tools that can fake a reproduction or a platform, and they are real", async () => {
     const exposed = await serverToolNames();
 
     // If a refusal names a tool that does not exist, the refusal is decoration. Both of these

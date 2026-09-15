@@ -1,431 +1,88 @@
 # ReproAgent
 
-A standalone local CLI agent that investigates **intermittent** Chrome-based web issues — the
-bugs that happen one time in five, that nobody can reproduce on demand, and that get closed as
-"cannot reproduce".
+A local agent that investigates **intermittent** Chrome-based web issues: the bugs that happen one
+time in five, that nobody can reproduce on demand, and that get closed as "cannot reproduce".
+
+You describe the bug in your own words. The agent drives a real browser until it reaches the
+reported behaviour. It turns that session into a Playwright script, checks the script replays,
+and repairs it if it doesn't. Then it runs the script as many times as you ask and tells you how
+often the bug actually happened.
 
 > Playwright produces evidence. Deterministic software normalizes and measures evidence. DeepSeek
 > interprets and prioritizes evidence. Humans authorize consequential transitions.
 
-That sentence is the architectural contract, not a slogan. Browser execution and evidence capture
-are deterministic and never call a model; a model never decides an outcome, a statistic, or an
-approval. Any change that violates it is rejected regardless of convenience or test coverage.
+That sentence is the architectural contract. Browser execution and evidence capture never call a
+model. A model never decides an outcome, a statistic, or an approval.
 
 ---
 
-## The problem this exists for
+## Why it exists
 
-An intermittent bug is hard for a specific reason: **a single run tells you almost nothing.** One
-green run is not evidence the defect is gone, and one red run is not evidence of where it lives.
-You need many runs, executed identically, with enough captured from each to tell them apart
-afterwards.
+A single run of an intermittent bug tells you almost nothing. One green run doesn't show the
+defect is gone, and one red run doesn't show where it lives. You need many identical runs, and
+you need to tell them apart afterwards. The usual shortcuts corrupt that answer:
 
-That is tedious to do by hand, and the usual shortcuts quietly corrupt the answer:
+| The shortcut                         | What it costs you                                               |
+| ------------------------------------ | --------------------------------------------------------------- |
+| Re-run until it passes               | The failure is now invisible, and the rate is unknown           |
+| Retry on failure                     | A product defect is hidden by the retry that "fixed" it         |
+| Let a model read logs and explain    | A fluent explanation with no way to check whether it is true    |
+| "It failed, so the app is broken"    | A broken step in your own script is counted as a product defect |
+| Eyeball two runs and spot the change | Works for three runs, not thirty                                |
 
-| The shortcut                             | What it costs you                                                           |
-| ---------------------------------------- | --------------------------------------------------------------------------- |
-| Re-run until it passes                   | The failure is now invisible, and the rate is unknown                       |
-| Retry on failure                         | A product defect gets hidden by the retry that "fixed" it                   |
-| Let a model look at logs and explain     | A fluent explanation with no way to check whether it is true                |
-| "It failed, so the app is broken"        | A broken selector in your own script counted as a defect in the application |
-| Eyeball two runs and spot the difference | Works for three runs, not thirty                                            |
+ReproAgent runs the same sequence N times and records each run. It separates runs that never got
+as far as the bug from runs that reached it, and counts only the second kind.
 
-ReproAgent is the opposite of each of those. It runs the same approved sequence N times, captures
-a fixed evidence set from every run, classifies each run by an ordered rule set, and then answers
-_"what is different about the runs that failed?"_ **by arithmetic**. A model is used only to
-interpret that measurement, and only where every claim it makes can be checked against it.
-
-## What it actually does
+## What happens, end to end
 
 ```
-  a human's bug report
+  your bug report (prose, a URL, test-account details, the platform — in any order)
           │
           ▼
-   ① intake ──────────► stored verbatim, redacted, content-hashed
-          │              (deterministic — no model reads it; the browser session reads it later)
+   ① plan ────────────► the authoring model writes a numbered plan, with NO browser tools,
+          │              naming every value it would type and every gap it can't fill
           ▼
-   ② author ──────────► your own `claude` CLI writes a PLAN, with no browser tools at all
-          │              on that turn, and asks about what only you can answer
-          ▼
-   ③ you approve the plan
+   ② you read it ─────► "Looks right — go", or a correction
           │
           ▼
-   ④ author --approve-plan
-          │           ──► a fresh session, now with Playwright MCP, drives a real browser
-          │               until the reported behaviour is reached. Two artifacts fall out
-          │               of the session record, both rendered from the same statements:
-          │                 • suite/ ................ a standalone spec for a developer
-          │                 • experiment-proposal.json  the same flow in the closed
-          │                                             action vocabulary, so it can be
-          │                                             MEASURED
+   ③ author ──────────► a real Chrome, driven through Playwright MCP, on the platform you named
+          │              (desktop, Android Chrome emulation, throttled low-end Android).
+          │              You watch it live. It stops and asks when only you know the answer.
           ▼
-   ⑤ plan --from <that proposal>
-          │           ──► the gate-1 document: the flow, its falsifier, its repetition
-          │               count, and the exact statement behind every action
+   ④ script ──────────► every browser call it made is recorded as a Playwright statement and
+          │              assembled into a standalone suite — not rewritten from a description
           ▼
-   ⑥ approve ─────────► a HUMAN decision, SHA-256-bound to the exact bytes they read
-          │              (nothing below this line can happen without it)
+   ⑤ replay check ────► the agent runs the script twice by itself
+          │                 reached the final check both times? ──► ⑦
+          │                 stopped early?                      ──► ⑥
           ▼
-   ⑦ run ─────────────► N deterministic Chromium runs, fresh context each,
-          │              full evidence capture, redacted before it is stored,
-          │              no model anywhere near it
+   ⑥ repair ──────────► the same session is resumed with where the replay stopped, what it
+          │              was waiting for and what the page showed; it records the flow again.
+          │              At most twice, then back to ⑤
           ▼
-   ⑧ analyze ─────────► what separates failing runs from passing ones — computed
-          │                   └─ optional: DeepSeek reads that contrast and proposes causes
-          ▼
-   ⑨ suite generate ──► a standalone Playwright spec you hand to a developer
+   ⑦ run it N× ───────► you pick the count; the agent runs it and reports
+                           reached the check · failed at the check (the bug) · stopped early
 ```
 
-Steps ② through ④ are the **authoring loop** (ADR-0027) — the one place a model drives a
-browser. It produces no evidence, no outcome and no statistic. Steps ⑥ onward are
-**measurement**, and they are deterministic.
+Alongside the suite, a session also writes the same flow as an **experiment proposal**. That feeds
+the measured path, where a human approves a checksum-bound proposal before anything runs. Runs
+there get full evidence capture, and afterwards the agent computes what separates failing runs
+from passing ones. See [The measured path](#the-measured-path).
 
-`plan --ai` can still draft a gate-1 proposal with DeepSeek instead of authoring one, for an
-investigation where nobody has driven the browser yet. It is the older path and it reaches a
-model before anything has been observed; the authored proposal above is the one produced by a
-flow a human watched work.
+## Setup
 
-Every arrow is auditable afterwards: `investigate lineage <runId>` walks an append-only,
-hash-chained graph and tells you which human decision authorised each step, and which flow and
-prompt bytes produced each interpretation.
+### Prerequisites
 
-## Status
+| Need                  | Why                                                                                  |
+| --------------------- | ------------------------------------------------------------------------------------ |
+| **Node 22.5+**        | Storage uses `node:sqlite`, which does not exist before 22.5 (ADR-0021)              |
+| **Chrome / Chromium** | Installed by Playwright below                                                        |
+| **`claude` CLI**      | Runs the authoring session. On `PATH`                                                |
+| **A DeepSeek key**    | The authoring model runs on DeepSeek; the optional `--ai` analysis steps also use it |
 
-| Milestone                                                  | State                                                     |
-| ---------------------------------------------------------- | --------------------------------------------------------- |
-| M0 — architecture, ADRs, schemas                           | Accepted with recorded corrections (`docs/FREEZE-M0.md`)  |
-| M1 — deterministic execution and evidence core             | Implemented; 100/100 runs, zero retries                   |
-| M2 — lineage, the three approval gates, CLI workflow       | Implemented                                               |
-| M3 — AI gateway, flows, read-only tools, eval harness      | Implemented; `intake --ai` verified against live DeepSeek |
-| Chat UI (`apps/web`)                                       | Implemented; drives the CLI, holds no pipeline logic      |
-| M4–M8 — classification, frequency, minimization, reporting | **Not implemented, and not planned**                      |
-| Authoring loop (ADR-0027)                                  | Implemented as `investigate author`; proven end to end    |
+There is no database server, no Docker and no native build toolchain. A workspace is a directory.
 
-**What you can do today:** run a full investigation end to end against a local fixture or a real
-target, with human approval, full evidence capture, provenance, an exported Playwright
-reproduction, and a measured contrast between failing and passing runs.
-
-**What you cannot:** get a failure-rate statistic with a confidence interval, automatic run
-clustering, minimization of a reproduction down to its essential steps, or a Jira-ready report.
-
-Those were M4–M8, and they are **not being built**. The partial groundwork that had been written
-for them was removed rather than left in place: Wilson score intervals and ordering-inversion
-counts for M5, capture-status aggregation and the overclaiming lint for M7, independent outcome
-recomputation for M4, and around thirty other exported symbols with no caller anywhere, tests
-included. Scaffolding for work that is not coming is not an asset — it is code every later reader
-has to evaluate and every refactor has to carry.
-
-Anything reinstating those milestones starts from the ADRs, which are unchanged and still record
-the decisions. One consequence to note if M7 ever returns: `lintForOverclaiming` enforced this
-project's language-discipline rule against generated report prose, and it went with the rest.
-
-Every unimplemented command is still registered and exits 1 naming its milestone, rather than
-silently doing nothing:
-
-```bash
-node apps/cli/dist/bin.js classify      # -> NOT_IMPLEMENTED, "Arrives in M4"
-```
-
-**Fixed, and worth recording because it hid three separate bugs.** `plan --ai` previously failed
-with `AI_CAPABILITY_MISSING`. Behind that were:
-
-1. **A circular capability probe.** The adapter refused to send `tools` unless capabilities already
-   reported tool calling as supported, but the only way to observe that is to send tools. The
-   probe's own request was refused, the refusal was recorded as evidence of non-support, and
-   `toolCalls` could never leave `unknown`. A request may now declare itself a probe.
-2. **The probe's answer was discarded.** `apps/cli/src/ai.ts` ran the probe but never gave the
-   result to the provider — `capabilityLookup` was never set, so `complete()` kept reading the
-   "unknown" defaults. It is now wired back per alias.
-3. **A malformed tool history.** The runner appended tool results without the assistant message
-   that had requested them, and then appended a fabricated assistant turn after them. The provider
-   rejected it: _"Messages with role 'tool' must be a response to a preceding message with
-   'tool_calls'"_. The assistant turn is now replayed with its `tool_calls`, and the fabricated
-   one is gone.
-
-The budget was then raised (`propose_experiments` 1.1.0) because it had been sized when no tool
-call ever reached the provider: a real run refused before dispatch at a worst case of 29372 tokens
-against a 26000 ceiling.
-
-With those fixed the tool loop runs: the model calls all three read-only tools in parallel, the
-results come back, and it reasons over them. **It still needs a configured target to produce
-experiments** — without one, `get_application_constraints` returns `NOT_FOUND` and the model
-correctly refuses to propose anything, which the output schema reports as a partial result. That is
-the agent working as designed, not a defect. See [Pointing it at a real site](#8-pointing-it-at-a-real-site).
-
-A fourth cause was then found and fixed: the outline of the required output shape sent to the
-model (`requiredShape` in `packages/ai-flows/src/runner.ts`) followed only `$ref`s ending in
-`.json` and never looked at `allOf`/`if`/`then`. So the model was told _"action requires actionId,
-type"_ and nothing about the conditional shapes — that a `goto` also requires `url`, that an
-`assert` requires an `assertion` **object**. Three separate live failures came from that one gap.
-It now emits lines like `when type=goto: also requires url (may be null)`.
-
-A fifth cause, confirmed by capturing the raw turns: **reasoning tokens are billed against the
-same completion budget as the answer**, and `inferenceMode` was never sent to the provider. An
-alias could declare `non-thinking` while the model reasoned anyway, because nothing put that on
-the wire. A live `intake_to_flow` run spent all 7000 of its `max_tokens` on `reasoning_tokens` and
-returned an empty `content`, which surfaced as "response is not parseable JSON" — a message that
-says nothing about the cause.
-
-`inferenceMode: non-thinking` now sends `thinking: {"type": "disabled"}`, verified against the
-provider to remove reasoning entirely (`enable_thinking: false` was also tried and does nothing;
-`unspecified` sends nothing and leaves the provider's default). The effect on the same report that
-had been failing:
-
-|                     | before              | after        |
-| ------------------- | ------------------- | ------------ |
-| `completion_tokens` | 7000                | 845          |
-| `reasoning_tokens`  | 7000                | 0            |
-| `content`           | empty               | 3571 chars   |
-| result              | failed after repair | a valid flow |
-
-`REASONING_MODEL` still thinks, which is the point of it, so `propose_experiments` is 1.2.0 with
-`maxOutputTokens: 16000` — sized to leave the answer room after the model has finished thinking.
-
-**Fixed.** With the budget raised, the flow completes and returns valid JSON explaining itself:
-
-> "No experiments can be proposed. The flow targets the 99acres site, but the only allowed origin
-> is http://127.0.0.1:8099. … none of these unknowns can be filled without inventing values, so
-> there is no runnable experiment."
-
-That is the correct answer, and the schema could not express it: `items` carried `minItems: 1`, so
-an empty list failed validation, the flow spent its one repair attempt re-deriving the same answer,
-and the extra turn exceeded the 120s wall clock — a correct result surfacing as a timeout. Raising
-the wall clock would have treated the symptom.
-
-`items` is now `minItems: 0`, and an empty list **must** carry a `summary` saying why (a schema
-conditional, so the model is told: `when items is empty: also requires summary`). An empty list
-with no reason is not an answer at all. `plan` reports it as `proposalRendered: false` with the
-reason rather than failing, and writes no proposal triple — there is nothing to approve, and a
-checksum over an empty bundle would let someone approve nothing.
-
-A proposal can still only be grounded against a target whose origin matches the report: pointing
-an investigation of a live site at a local fixture correctly produces no experiments, and now says
-so.
-
-A target is bound to an investigation **at intake**, not by existing in `config.yaml`. An
-investigation opened before its target was recorded reads `target (none)` and the constraints tool
-has nothing to answer with, so the chat UI re-opens the investigation after recording one.
-
-Note also that `deriveRequestId` is content-addressed, so re-running a flow that failed _after_ the
-ledger row was written collides on `ai_calls.request_id`. A retry needs a fresh investigation until
-that is resolved.
-
-## Authoring a reproduction, instead of guessing one
-
-Interpreting a bug report into a Flow happens **without ever seeing the application**. That is why
-a first run so often returns `AUTOMATION_FAILED`: whether "Delete Account" is a button or a link,
-which of four inputs is "the phone field", and that login redirects through an interstitial nobody
-mentioned are all facts that exist only on the page.
-
-So there is a second kind of session, decided in [ADR-0027](docs/adrs/ADR-0027-authoring-loop-separate-from-measurement.md).
-
-**Authoring** drives a real browser until the reported behaviour is reached. The operator's own
-`claude` CLI runs it — `claude-sonnet-5` at `medium` effort, using whoever is logged in, so there
-is no second credential to configure — with [Playwright MCP](https://www.npmjs.com/package/@playwright/mcp)
-as its browser tools. It navigates, recovers, and asks the operator whenever the page cannot tell
-it something only they know.
-
-**Measurement** is unchanged: the approved script runs N times with no model anywhere near it.
-
-Between them is a human watching a video of the one run that worked.
-
-### From an authored session to a measured one
-
-A session emits two things, both rendered from the same recorded statements:
-
-| Artifact                                       | For                                                                      |
-| ---------------------------------------------- | ------------------------------------------------------------------------ |
-| `<session>/authoring/suite/`                   | a developer — ordinary Playwright, `npx playwright test --repeat-each=N` |
-| `<session>/authoring/experiment-proposal.json` | measurement — the same flow in the `action.v1` vocabulary                |
-
-The suite records video and a trace. Only the proposal reaches the evidence pipeline: console,
-exceptions, network metadata, actions, navigation, video and trace, redacted and normalized, which
-is what `analyze` contrasts and what DeepSeek is then allowed to interpret. Hand it to the gate
-with `plan --from`; nothing new is needed, because the gate does not care who drafted a proposal.
-
-**The statements are parsed, not executed.** ADR-0006 forbids running model-authored source, so
-each statement is reduced to declared vocabulary — `getByRole(...)` becomes a `role` selector,
-`.filter({ hasText })` and `.nth()` become fields on it — and anything the vocabulary cannot
-express is **refused by name** rather than approximated. A mistranslated selector would not fail
-loudly; it would silently measure a different flow than the one the human approved and report a
-pass rate for it.
-
-What makes that trustworthy is a **round trip**: every action is rendered back into a Playwright
-statement by a separate function and compared with the one it came from. A mismatch refuses the
-whole translation, because a proposal missing one step from the middle is not a shorter version
-of the flow, it is a different flow.
-
-A value typed into a field that matches a credential you supplied becomes a `secretRef` naming the
-variable, never the value — the proposal is written to disk, content-hashed and read back at the
-gate, so a password in it would be a password at rest.
-
-### Why the script is a by-product rather than a reconstruction
-
-Playwright MCP records the exact Playwright statement for every call it makes:
-
-```
-await page.getByRole('textbox', { name: 'Search widgets' }).fill('bolt');
-await page.getByRole('button', { name: 'Search' }).click();
-```
-
-Those are the same calls, in the same order, with the same selectors as the run that worked — so
-the suite is assembled from the session rather than rebuilt from a description of it.
-Reconstruction is where drift lives: the run passes, the rebuilt script does not, and whoever
-trusts it next is the one who finds out. Selectors arrive as role plus accessible name, which
-survives a CSS refactor — and this script is run N times, unattended, possibly weeks later.
-
-### What the operator supplies, and what survives
-
-A bug report is the only place some facts exist: which account to sign in as, which order to open,
-which profile shows the problem. So `report.body` is deliberately **not** subject to the PII rules
-that govern every other scope.
-
-That is a distinction in kind, not a relaxation. Every other scope holds bytes captured **from** a
-live application, where an email or a phone number belongs to a real customer and masking it
-protects them. A report body is what an operator typed about a system they control.
-
-Treating them alike had it backwards, demonstrably. A realistic report came through as:
-
-> On /orders/AB-99321 the QA account `[redacted]` (test user `[redacted]`) cannot see order
-> `[redacted]` after paying. Login OTP was **483920**.
-
-Unreproducible — every identifier needed to reach the bug was gone — while the login OTP beside
-them survived untouched, because no rule happened to match six bare digits.
-
-What a report still loses: bearer tokens, JWTs, private keys, AWS-shaped keys, and secrets pasted
-inside a URL's query. None of those is ever how a bug is reproduced. A credential the operator
-wants _used_ goes to the credential store by name, so its value reaches the browser without
-passing through the report, a prompt, or an artifact.
-
-`packages/evidence/src/report-body-scope.spec.ts` asserts all three directions: what a report
-keeps, what it still loses, and that captured evidence is unchanged.
-
-### Running it
-
-It runs in two phases, and the first one has no browser.
-
-```bash
-investigate author --investigation INV-001            # writes the plan, opens nothing
-```
-
-The planning turn is spawned with **no MCP config and no tool allowlist**, so it cannot navigate,
-click or submit while it is deciding what to do. It writes a numbered plan naming every value it
-would have to type, and marks the ones nobody gave it rather than inventing them. You read that
-before your application is touched:
-
-```
-2. Sign in — this flow requires an authenticated session. No credentials were supplied.
-4. Fill "New Password" field with ??? — not given, need a value to type.
-7. Check: finish the script with browser_wait_for on the confirmation text.
-```
-
-Approving it starts a fresh session that does have the browser, seeded with the plan:
-
-```bash
-investigate author --investigation INV-001 --approve-plan              # headless
-investigate author --investigation INV-001 --approve-plan --headed     # watch it
-investigate author --investigation INV-001 --approve-plan --answer "sign in as the QA account"
-```
-
-This exists because the version without it drove straight to a live site: one session filled in a
-change-password form while signed out, with a password it invented, and reported success. All of
-it was legible in five lines of plan.
-
-It also pauses to ask whenever the page cannot tell it something only you know. The session keeps its
-browser and everything it has already done, so answering resumes rather than restarts:
-
-```bash
-investigate author --investigation INV-001 --resume <sessionId> --answer "the one in the dialog"
-```
-
-A session that reaches the behaviour writes a self-contained suite to
-`<investigation>/authoring/suite/` — spec, config and `package.json`. A session that does not
-writes nothing, deliberately: a partial reproduction looks complete, and the next person runs it.
-
-**Prerequisite:** a logged-in `claude` CLI. Authoring uses the account already on the machine, so
-there is no second credential to configure — but an expired login fails as
-`Failed to authenticate: OAuth session expired`, which the command surfaces verbatim rather than
-dressing up. Run `claude` once interactively to sign in again.
-
-### What is proven, and what is not
-
-Verified against an application with a **deliberately seeded intermittent defect** — a search that
-drops its results on every third request — because a bug that always happens proves nothing about
-a tool built for bugs that do not.
-
-From this report, and nothing else. No URL path, no selectors, no steps:
-
-> On the Parts Catalogue page I type "bearing" into the search box and press Search. Most of the
-> time it lists three bearings. But every so often — maybe one time in three — it says "No parts
-> found" instead.
-
-The session worked out that clicking repeatedly was how to catch an intermittent fault, caught it
-on the third click, and reported what it saw rather than why: _"the Results region shows 'No parts
-found' with the exact same search text that returned 3 parts on the two prior clicks."_ It then
-emitted this:
-
-```ts
-test("Search sometimes shows no parts", async ({ page }) => {
-  await page.goto("http://localhost:8877");
-  await page.getByRole("textbox", { name: "Search parts" }).fill("bearing");
-  await page.getByRole("button", { name: "Search" }).click();
-  await page.getByText("3 parts found").first().waitFor({ state: "visible" });
-});
-```
-
-Run 30 times: **10 failed, 20 passed — 33%**, against a defect seeded at exactly one in three.
-Thirty videos. Reproduced on a second 30-run.
-
-Two things that only came out by running it, both now fixed in the brief:
-
-- The first session emitted **five clicks and no assertion**. It reproduced the bug perfectly and
-  produced a worthless script — one that passes 100 times out of 100 and measures nothing. The
-  brief now separates _exploring_ from _the sequence you finish on_, and says plainly that the
-  repetition is the harness's job: one attempt, checked, run N times.
-- The brief contradicted itself. It said "stop the moment you reproduce it", which is exactly when
-  the page is broken — so any assertion added at that moment would fail. Verifying the state
-  from when it WORKED is now explicit.
-
-Two things that verification found, which no amount of reading would have:
-
-- The ambient environment **breaks the Claude CLI silently.** This workspace keeps the DeepSeek
-  key in `ANTHROPIC_AUTH_TOKEN` and a DeepSeek model id in `ANTHROPIC_MODEL`, so an inherited
-  environment sends `claude` to Anthropic's endpoint with the wrong key asking for the wrong
-  model. It fails as `terminal_reason: api_error` with an empty result, which reads like a broken
-  CLI. `claudeCliEnv` strips those variables so the CLI falls back to the operator's own login.
-- An emitted suite **must declare its own dependency.** A folder holding only a spec and a config
-  fails with `MODULE_NOT_FOUND`, or worse resolves a mismatched `@playwright/test` from a parent
-  directory and reports `No tests found`.
-
-**Built, and verified only as far as stated.** An authoring session now emits
-`experiment-proposal.json` beside the suite, so the authored flow can be measured by
-`investigate run` with full evidence capture and then analysed. That path was exercised end to
-end with a proposal generated from the statements of real captured sessions: `plan --from`
-accepted it and minted a checksum. What has **not** happened is a live authoring session against
-a real production site producing that proposal itself — every completed authoring run so far has
-been against local test servers, so the join between the two halves is proven from real
-statements but not yet from a real session.
-
-**Not built:** nothing consumes an authored batch automatically. You run the four commands.
-
-## Setup and first run
-
-Everything below was walked from a fresh clone on a clean machine. If a step here does not work,
-that is a bug in this document.
-
-### 1. Prerequisites
-
-| Need             | Why                                                                                                           |
-| ---------------- | ------------------------------------------------------------------------------------------------------------- |
-| **Node 22.5+**   | The storage layer is built on `node:sqlite`, which does not exist before 22.5 (ADR-0021). Verified on Node 24 |
-| **~400 MB disk** | The Chromium download                                                                                         |
-| Git              | To clone                                                                                                      |
-| A DeepSeek key   | **Optional.** Only the three `--ai` steps need one; nothing else does                                         |
-
-No database to install, no native build toolchain, no Docker. SQLite is in-process and the
-workspace is a directory.
-
-### 2. Install
+### Install
 
 ```bash
 git clone <repo-url> reproagent
@@ -435,516 +92,316 @@ npm run build
 npx playwright install chromium chromium-headless-shell
 ```
 
-`npm ci` reports some advisories from transitive dev dependencies; they do not affect the CLI.
-
-### 3. Check it works — 40 seconds, no key needed
+### Check the install — no key needed
 
 ```bash
 npm run demo
 ```
 
-This is the fastest proof the install is good. It creates a throwaway workspace, runs the whole
-story against a local fixture app, and deletes it afterwards. You should see a **refused** run, an
-approval, four real Chromium runs, and `lineage 14 records, chain verified`.
+This creates a throwaway workspace and runs the deterministic pipeline against a local fixture
+app: a refused run, an approval, four real Chromium runs, and a verified lineage chain.
 
-If that works, everything deterministic works.
+### Configure the authoring model
 
-### 4. The easy path: answer questions
+The authoring session spawns `claude` with `deepseek-v4-flash` at `medium` effort, through
+DeepSeek's Anthropic-compatible endpoint. It resolves its settings in this order:
+
+1. `ANTHROPIC_MODEL`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` in the environment
+2. the `env` block of `~/.claude/settings.json`
+3. `deepseek.json` in the working directory or your home directory
+4. for a `deepseek-*` model with no base URL, `https://api.deepseek.com/anthropic`, and
+   `DEEPSEEK_API_KEY` as the token
+
+Variables that would redirect the CLI to another provider (Bedrock, Vertex and similar) are
+stripped. `investigate doctor` shows the model, effort, endpoint host and whether a token is set.
+
+### Configure the analysis steps (optional)
+
+Only `intake --ai`, `plan --ai` and `analyze --ai` need this:
 
 ```bash
-npm run reproduce
+cp .env.example .env      # gitignored
 ```
 
-Describe a bug in prose and it walks you through the rest: storing the report, showing where your
-account points, asking about gaps, rendering a proposal, taking your approval, running it, showing
-the recording, exporting a Playwright script, measuring more runs, and reporting what separates
-the failures.
-
-Choose **option 1 (a local fixture)** the first time. It touches nothing real and takes two
-minutes, and you will then recognise every prompt when you point it at something that matters.
-
-If you would rather click than type, `npm run web` gives the same workflow as a chat page —
-see [The chat UI](#the-chat-ui).
-
-### 5. The manual path, command by command
-
-Same workflow, one command at a time. `$CLI` is just shorthand.
-
 ```bash
-CLI="node apps/cli/dist/bin.js"
-WS=./demo-ws
-
-# 1. Create a workspace: SQLite database, config.yaml, redaction policy, directories.
-$CLI init --workspace $WS
-
-# 2. Open an investigation from a bug report.
-$CLI intake --workspace $WS --from docs/examples/intake/blank-results.md
-#    -> INV-001
-
-# 3. Render the gate-1 proposal, and READ it. It leads with what would DISPROVE each hypothesis.
-$CLI plan --workspace $WS --investigation INV-001 \
-  --from docs/examples/proposals/gate-1.input.json
-
-# 4. Try to run. This is REFUSED: exit 2, GATE_REQUIRED, and nothing is enqueued.
-$CLI run --workspace $WS --investigation INV-001 --fixture-app product-failing-intermittent
-
-# 5. Scaffold an approval file. This approves NOTHING; it prints the exact command for step 6.
-$CLI approve experiment_selection --workspace $WS --investigation INV-001 \
-  --scaffold --approver "Your Name"
-
-# 6. Edit the scaffold if you want, then record the decision.
-#    Easiest: copy the command step 5 printed — it already has the right checksum.
-#    Or read the checksum from disk:
-CK=$(cut -d' ' -f1 $WS/.investigator/investigations/INV-001/manifests/gate-1.experiment_selection.proposal.json.sha256)
-APPROVAL=$WS/.investigator/investigations/INV-001/approvals/gate-1.experiment_selection.approval.yaml
-$CLI approve experiment_selection --workspace $WS --investigation INV-001 \
-  --from "$APPROVAL" --checksum "$CK"
-
-# 7. Now it runs, and runs only what you approved.
-$CLI run --workspace $WS --investigation INV-001 --fixture-app product-failing-intermittent
-
-# 8. Read what the runs show. Deterministic; add --ai for an interpretation.
-$CLI analyze --workspace $WS --investigation INV-001
-
-# 9. Ask what authorised any of it, and check integrity.
-$CLI lineage --workspace $WS --investigation INV-001 RUN-001
-$CLI status  --workspace $WS --investigation INV-001
-$CLI doctor  --workspace $WS --verify-lineage
-```
-
-Things worth understanding rather than just running:
-
-**Step 4 is the product.** A proposal exists and a fixture app is available, and it still refuses
-and enqueues nothing.
-
-**Step 7 reporting `PRODUCT_FAILED` is success.** The agent observed a product defect. Exit code
-is 0 and the failure is never retried away.
-
-**Step 8 needs both groups to say anything.** With every run failing there is no control group, so
-it says so and refuses to present anything as discriminating. Approving both experiments (as
-above) gives a mix and a real contrast.
-
-**Edit the approval to see the point of it.** Change `/repetitions` and step 7 runs the edited
-count, because execution consumes the _effective_ proposal. Remove an item from `approvedItemIds`
-and only the remaining one runs.
-
-### 6. The one gotcha that will catch you
-
-**Re-running `plan` invalidates any approval you already made**, even if the proposal content is
-identical. The rendered proposal embeds `renderedAt`, so every render produces different bytes and
-therefore a different checksum.
-
-If you re-render, recover like this:
-
-```bash
-rm $WS/.investigator/investigations/INV-001/approvals/gate-1.experiment_selection.approval.yaml
-$CLI approve experiment_selection --workspace $WS --investigation INV-001 --scaffold --approver "Your Name"
-# then approve again with the NEW checksum
-```
-
-Scaffolding refuses to overwrite an existing approval file, which is why the `rm` comes first. The
-error message says so when it happens.
-
-### 7. Optional: turn on the AI steps
-
-Only `intake --ai`, `plan --ai` and `analyze --ai` need this. Everything above works without it.
-
-```bash
-cp .env.example .env      # .env is gitignored
-```
-
-Fill in four values. Get your model ids from the provider rather than guessing — the CLI never
-substitutes a model id it was not given:
-
-```bash
-DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_API_KEY=...
+DEEPSEEK_BASE_URL=https://api.deepseek.com      # the OpenAI-compatible base
 DEEPSEEK_FAST_MODEL=<id>
 DEEPSEEK_REASONING_MODEL=<id>
 DEEPSEEK_FALLBACK_MODEL=<id>
 ```
 
-Use the **OpenAI-compatible** base URL. The provider adapter calls `${baseUrl}/chat/completions`;
-an Anthropic-compatible endpoint takes a different request shape and will reject every call.
+Model ids are never guessed or substituted. The real environment always wins over `.env`, and
+`REPROAGENT_NO_ENV_FILE=1` ignores the file. If the key already lives in another variable, name it
+in `config.yaml` instead of copying it: `llm.apiKeyEnv: MY_EXISTING_VARIABLE`.
 
-For the key, either set `DEEPSEEK_API_KEY`, or — if the key already lives in another variable —
-name that variable in your workspace's `.investigator/config.yaml` so it is not copied into a
-second place:
-
-```yaml
-llm:
-  apiKeyEnv: MY_EXISTING_VARIABLE
-```
-
-Then confirm:
+### Start it
 
 ```bash
-$CLI doctor --workspace $WS
-# Provider  deepseek  host=api.deepseek.com  key(DEEPSEEK_API_KEY)=configured  ai=configured
+node apps/cli/dist/bin.js init --workspace ./repro-workspace    # once
+npm run serve
 ```
 
-`ai=missing` names exactly which variables are unset. The real environment always wins over
-`.env`, and `REPROAGENT_NO_ENV_FILE=1` ignores the file entirely.
+Open **http://127.0.0.1:9999/**. `npm run serve` supervises the server: if it exits it comes back
+on the same port, backs off on repeated failures, and logs to `.logs/web-<port>.log`. It takes
+`--port` and `--workspace`. `npm run web` runs the same server in the foreground, unsupervised.
 
-### 8. Pointing it at a real site
+After changing the agent's code, rebuild and restart the server, then reload the page.
 
-The fixtures are local and disposable. A real target needs three deliberate decisions, and the
-system will refuse until you make them.
-
-In `$WS/.investigator/config.yaml`:
-
-```yaml
-execution:
-  targets:
-    my-target:
-      baseUrl: https://staging.example.com
-      classification: test # fixture | test | staging. There is deliberately no "production"
-      resetStrategy: per-run-tenant
-      correlationHeaderAllowed: false
-
-safety:
-  allowedOrigins:
-    - https://staging.example.com # this origin and its subdomains; other sites are refused
-```
-
-Then run against it with `--target my-target` instead of `--fixture-app`.
-
-Three things that will stop you, by design:
-
-1. **There is no `production` classification.** Declaring a target `test` is you asserting it is
-   an environment you are authorised to act on.
-2. **Destructive actions.** A click whose label matches `delete`, `remove`, `deactivate` and
-   similar is classified destructive automatically. `safety.blockDestructiveActions` decides what
-   happens next, and it is **off by default**, because the product is deployed to in-house QA
-   servers whose whole job is running such a flow repeatedly against disposable accounts. Turn it
-   on for an environment where an unintended write would matter: it then requires a per-action
-   justification in `safetyAcknowledgements`, and refuses outright on a `staging` target. It never
-   affects the approval gates — a human authorises the batch either way.
-
-   The flag governs **three** checkpoints: enqueue, the approval acknowledgement, and the executor
-   itself. It governed only the first two for a while, so turning it off unblocked enqueue and
-   then threw `EXEC_DESTRUCTIVE_BLOCKED` on the first delete anyway. A flag that governs some of
-   its checkpoints governs none of them.
-
-3. **Selectors.** An interpretation will not invent a `css` or `testid` selector. What it emits
-   instead is a `described` selector carrying your words, and the executor RESOLVES that by role
-   and accessible name — the same information a person reading the page acts on. "the delete
-   button" becomes `getByRole("button", { name: /delete/i })`. If you have real selectors,
-   `npx playwright codegen --device="Pixel 7" <your url>` and put them in the proposal; they are
-   more precise and are used as written.
-
-A first run against a real site commonly returns `AUTOMATION_FAILED` rather than a product
-failure. That is the system working: rule 3 fires before rule 4, so a selector that did not match
-is never miscounted as a defect in your application.
-
-### 9. If something goes wrong
-
-| Symptom                                        | Cause and fix                                                                                               |
-| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `Build first: npm run build`                   | `npm run build`                                                                                             |
-| Chromium fails to launch                       | `npx playwright install chromium chromium-headless-shell`                                                   |
-| `GATE_REQUIRED`, exit 2                        | Working as intended. Approve gate 1 first                                                                   |
-| `GATE_CHECKSUM_MISMATCH`                       | You re-ran `plan`. See the gotcha above                                                                     |
-| `An approval file already exists`              | Delete it to scaffold afresh                                                                                |
-| `Runs completed: 0 of N`                       | Those repetitions already ran. Repetitions are keyed by index; raise `--repeat` or approve a new experiment |
-| `EXEC_VALUE_UNRESOLVED`                        | A selector or URL was never resolved from prose. Fix it in the proposal and re-approve                      |
-| `AI_PROVIDER_UNAVAILABLE`                      | An `--ai` step with no configuration. It names the missing variables                                        |
-| `EXEC_ORIGIN_NOT_ALLOWED`                      | Navigation left `safety.allowedOrigins`. Subdomains of a listed origin are allowed; other sites are not     |
-| `No runs with normalized evidence`             | `analyze` before anything ran. Do step 7 first                                                              |
-| Reliability suite fails on **wall clock only** | Machine contention. Run it on an otherwise idle machine                                                     |
-
-## The chat UI
-
-```bash
-npm run build
-npm run serve                                    # supervised, port 9999, restarts itself
-```
-
-Then open **http://127.0.0.1:9999/**. `npm run serve` supervises the server: if it exits, it comes
-back on the same port, so a link you have open keeps working. It backs off on repeated failures
-rather than spinning, logs to `.logs/web-<port>.log`, and takes `--port` and `--workspace`.
-
-`npm run web` is the same server in the foreground, unsupervised, for when you want to watch it
-die:
-
-```bash
-npm run web -- --workspace ./my-workspace --port 9999
-```
-
-A local page that walks the same pipeline as a conversation: describe the bug, see the flow it
-inferred and where it thinks the break is, answer what it could not infer, approve a proposal,
-watch the batch run, play the recording, and read the contrast.
-
-The pipeline is shown against the loader rather than as a permanent strip across the top. A rail
-you have already read is scenery; the moment you are waiting is exactly when "where am I, and what
-is it doing?" is a real question. So while anything is in flight the page shows what it is doing
-in words, which step is live, and how long it has been going — the last of those being the
-difference between "it is thinking" and "it has hung", which a spinner alone cannot tell you. The recording is why this is a
-browser page rather than a terminal UI — a video is the artefact the second gate asks you to
-judge, and a terminal cannot show one.
-
-**One column, one scroll.** Nothing on the page draws a scrollbar and nothing scrolls inside
-anything else. Cards, the live run log, the composer and the step rail all sit on the same left
-gutter and the same right edge, so the column reads as one line down the page; the page itself is
-the only thing that scrolls, by wheel, trackpad, keys or touch. Two things followed from that: a
-scrollbar gutter appearing as content grew used to shift the layout by its own width, and the run
-log used to be a 260px box with a second scrollbar inside a card. The log is now a **tail** — the
-last 200 lines, sized to its content. The full output is in the job record and the artifacts
-either way, so what is dropped is what a tail drops, not evidence.
-
-**It contains no part of the pipeline.** Every action spawns the same `investigate` command you
-would type, with `--json`, and renders the answer. That is a safety property rather than a
-shortcut: the approval gates, the redaction boundary and the API key all live inside that child
-process, so a bug in the web layer cannot approve a gate the CLI would refuse, write an
-unredacted byte, or read the key. `tests/e2e/web-actions.test.ts` asserts an unapproved batch is
-still refused when driven from the UI.
-
-Because it starts processes on your machine, it is treated as a privileged local surface:
-
-| Control              | What it does                                                                       |
-| -------------------- | ---------------------------------------------------------------------------------- |
-| Loopback bind        | Listens on `127.0.0.1` only; never reachable from the network                      |
-| Token                | Stored with the workspace, injected into the page, required on every call          |
-| Origin check         | A request from another origin is refused                                           |
-| Action allowlist     | The browser sends an action id and typed parameters, never a command line          |
-| Parameter validators | Ids, gates, checksums and paths must match narrow patterns or the call is refused  |
-| Path containment     | Workspace-relative paths are resolved and re-checked; anything escaping is refused |
-
-The allowlist in `apps/web/src/actions.ts` is the boundary: without it, a page open in your
-browser would be a shell. `apps/web/src/actions.spec.ts` covers what must not get through.
-
-### The interview
-
-The agent asks for what it could not infer, rather than reporting it and stopping. After the
-report is interpreted, every entry in the flow's `unknowns` is put back to you as a question —
-the URL it was not given, the selector it refused to invent, the account it will not fabricate.
-Answers are folded into the **report** and the report is re-interpreted, not patched into the
-flow: the report is the grounded source, and a flow edited behind the reporter's back is an
-invention with their name on it. You can skip any question, and it stays recorded as an unknown.
-
-It then asks where to run, because it cannot plan without a target: `get_application_constraints`
-returns `NOT_FOUND` and the model correctly declines to propose experiments it cannot ground. The
-page records the target into `config.yaml` for you, and the decisions the design insists a human
-makes are asked, never defaulted:
-
-- **Classification** — `fixture`, `test` or `staging`. There is deliberately no `production`, and
-  the page refuses it by name with the reason, not a schema error.
-- **Allowed origins** — the target's origin is added because every target origin must appear
-  there; nothing else is.
-- **Destructive actions.** `safety.blockDestructiveActions` now defaults to `false`, because this
-  runs against in-house QA targets where a delete flow is the thing being investigated, not an
-  accident. The page neither sets nor clears the flag — an absent key means "take the default" —
-  and the three approval gates still apply. What is gone is being asked to re-justify each
-  `delete` inside a proposal you have already read.
-
-### Credentials the reporter supplies
-
-Most intermittent bugs only happen while signed in, so "use this test account" is the normal case.
-It used to be the one thing the agent could not accept: an answer typed into the interview was
-folded into the report, and the report is a durable artifact, so the redaction policy masked the
-phone number or email inside it — correctly. The operator supplied the data and the agent then
-reported it as missing.
-
-An answer that is a credential now takes a different road. The value goes to this session's
-credential store (`<session>/.investigator/.credentials.json`); the **report records only the
-name**. The flow references it as `{ "kind": "secretRef", "envVar": "ACCOUNT_PHONE" }` and the
-value is resolved inside the executor at run time.
-
-What that indirection buys, and why supplying a credential is safe rather than something to
-refuse:
-
-- **No model ever sees a value.** Only names are sent, as
-  `constraints.declaredCredentialEnvVarNames`.
-- **No value reaches an artifact.** Every stored value is registered with the redactor before a
-  batch starts, so an OTP that surfaces in a DOM snapshot or a console line is masked by identity
-  — exact, where a pattern could only guess. `packages/evidence/src/masked-values.spec.ts`.
-- **No value reaches argv.** The page writes through the local server directly, never by spawning
-  a command with the value on a command line where any process could read it.
-- **`DEEPSEEK_API_KEY` does not live here and cannot.** That stays environment-only, read by
-  `EnvSecretStore`, which is still its only reader.
-
-The store is a local convenience for throwaway test accounts on the machine that is already
-driving the browser those values are typed into. It is not a vault, and nothing that matters
-belongs in it. `packages/storage/src/credential-store.spec.ts` covers it.
-
-`config.yaml` is edited in place rather than rewritten, so comments, ordering and quoting survive
-— including `video: "on"`, which is quoted because bare `on` is boolean `true` under YAML 1.1.
-`apps/web/src/target.spec.ts` asserts all of that.
-
-### Approving from the page
-
-The page records the approval itself, in one click. That is not an auto-approval: you read the
-proposal card, you pressed the button, and what is recorded is bound to the SHA-256 of the exact
-bytes you read — the CLI recomputes it and refuses on any mismatch. There is no path in the
-allowlist that approves without a checksum, and `apps/web/src/actions.spec.ts` asserts it.
-
-What has gone is the round trip. The page previously scaffolded a file and told you to open the
-workspace and type the word "approve" into a document the scaffold had already filled in, which
-was friction rather than a decision.
-
-**The checksum crosses the boundary in the CLI's own spelling**, `sha256:<64 hex>`, and is never
-reformatted on the way. That sounds like a detail and was a total failure: the allowlist pattern
-accepted only bare hex, so the page stripped the prefix to satisfy it, and `approve` — which
-compares the flag against `checksumOfBytes`, a prefixed value — rejected every single approval
-with `GATE_CHECKSUM_MISMATCH`. The refusal read as a tampered proposal when the two values were
-the same hash spelled two ways. An artifact `sha` IS bare, because it is addressed that way on
-disk; the two patterns are now separate and named for what they are.
-
-The test that missed it is worth naming too. `tests/e2e/web-actions.test.ts` spawned the real
-binary for every action but deliberately did not assert success, since most actions correctly fail
-on a precondition — and it passed a dummy checksum, so the mismatch looked like one of those. It
-now also runs plan → scaffold → approve with the checksum the CLI itself printed and requires exit 0. Verified against the running agent: gate 1 approved, `APPR-001`, two experiments bound to
-`sha256:d3daa040…`.
-
-### Sessions
-
-Refreshing the page does not lose your place. The transcript and where you got to are held server
-side against a session cookie, so a reload resumes the conversation. Restored messages are history
-and their buttons are not live — a resume card offers the action that is actually next instead.
+## Using the chat page
 
 ### Describing the bug
 
-Paste whatever you have. There is no form and no required shape — a paragraph, a list of steps, a
-half-remembered sequence. The page stores it and opens the browser.
+Paste whatever you have: a paragraph, steps, a URL, the test account, the device. There is no form.
+Everything you send, in the first message or any later one, is treated as information. The agent
+works out what each piece is and asks only when something is genuinely ambiguous.
 
-There used to be an interview here: the report was read into a structured Flow, and every gap the
-interpretation could not fill was put back to you as a question **before anything had been looked
-at**. That asked the wrong questions at the wrong moment. Half of them the page itself answers —
-which control, which field, which URL — and the half worth asking only becomes obvious once you
-are standing on the page that is missing something.
+- **Where to run.** The first `http(s)` URL in the report becomes the target, named after its host.
+  You are asked for a URL only when the report has none and no target is configured.
+- **Which platform.** "mobile web", "Android Chrome", "on a slow phone" and similar pick an emulation
+  profile (`desktop-chrome-1440`, `pixel-7-chrome-mobile`, `low-end-android-throttled`). The plan
+  says which one it chose and why, and the browser is launched with it.
+- **Test accounts.** A phone number, OTP, email or password you mention goes to this session's
+  credential store. The model is only ever told its name, e.g. `ACCOUNT_PHONE`. See
+  [Credentials](#credentials).
 
-So the session asks in context instead. It navigates, it looks, and when it meets something only
-you know it stops and says so, in the conversation. You answer in the same box you described the
-bug in, and it resumes with the browser and everything it had already done still in place.
+### Watching it work
 
-An answer that IS a credential does not travel as text. It goes to this session's credential store
-and the session is told the NAME — `ACCOUNT_PHONE` — which Playwright MCP resolves from a secrets
-file at the moment it types it into the page. The value never reaches the model, the transcript,
-or an artifact.
+While the session drives the browser, a **live viewport** stays pinned at the top of the
+conversation and refreshes about once a second. The step log scrolls underneath it, so the page
+and the latest steps are visible together. Mobile profiles are shown in portrait.
 
-**Sessions run concurrently.** Open as many tabs as you like; each gets its own session, its own
-folder and its own investigation numbering, and they do not interfere.
+When the agent offers choices, such as "Looks right — go", "Change something" or "Watch the
+browser", the input box is disabled until you pick one. When it asks a free-text question, the
+box is live and your answer resumes the same session. The browser profile and the steps already
+done are kept.
 
-This used to be one session per client address, and the reason given was that "two tabs would
-issue commands into the same workspace database and the same investigation, and each transcript
-would be missing half of what happened". That was true while every session shared one workspace.
-It stopped being true when each session got its own — so the guard was protecting against a
-collision that can no longer happen, and since the server is loopback-only and every connection
-resolves to one address, what it actually did was make a second tab wait up to a minute. It is
-gone.
+The **variables** pill in the header opens a side panel listing the credential names and
+descriptions this session holds. You can add or delete one there. Values are always masked.
 
-The page heartbeats while it is open and releases its session as it unloads. A session that stops
-heartbeating expires after 60 seconds. Expiry still matters, for a different reason than before: a
-request arriving without a live session is refused rather than written into the shared root
-workspace. `apps/web/src/sessions.spec.ts` asserts both directions — a live session is never
-disturbed by a newcomer, and an abandoned one always expires.
+### When the script is ready
 
-Users and sessions are written to the host's own disk, two files under `<workspace>/.web/`, so a
-session survives restarting the server and not just refreshing the page. They sit outside
-`.investigator/`, which is the schema-governed evidence tree — chat state is not evidence and must
-not look like it to anything walking that directory. Writes are atomic, because a half-written
-transcript read back at startup would be presented as a real one.
+The ready card shows the steps, the script, and any screens marked as appearing only on some runs.
+Then, without another click:
 
-The API token lives beside them, for the same reason. Minting a fresh one per start meant every
-supervised restart silently invalidated whatever page was open: the next action came back
-`FORBIDDEN: bad or missing token`, in the middle of typing a report. Restarts are routine by
-design here, so a token that cannot survive one is the wrong default. The trade, stated plainly:
-the token rests on disk rather than only in memory, inside a gitignored workspace, guarding a
-loopback-only service on the operator's own machine — anyone who can read that file can already
-run the CLI directly. Delete `<workspace>/.web/token` to rotate it.
+1. The agent replays the script twice.
+2. If a replay stops before the final check, the agent says where and sends that back to the
+   authoring session to record the flow again. This happens at most twice.
+3. Once both replays reach the final check, the card offers **Run it N×**, with 30× and 100×
+   shortcuts.
 
-If a page does end up holding a stale token it says so and puts the unsent message back in the
-box, rather than showing a raw `FORBIDDEN` where an answer should be.
+The results card splits the runs:
 
-Commands that are registered but unimplemented (M4–M8) are exposed on purpose — the UI shows
-the typed `NOT_IMPLEMENTED` answer and the milestone that brings each one, rather than hiding a
-step and implying the pipeline is shorter than it is.
+| Line                    | Means                                                                      |
+| ----------------------- | -------------------------------------------------------------------------- |
+| **Reached the check**   | The flow got to the point where the bug shows or doesn't                   |
+| **Failed at the check** | The bug happened. The failure rate is this over _reached the check_        |
+| **Stopped before it**   | The script or the site, not the bug. Listed by line and what it waited for |
 
-## How it works
+A failure at the final check is never sent to repair, because it may be the bug itself.
 
-### The one rule everything follows
+### Sessions
 
-Five kinds of work, kept strictly apart, because mixing them is how an investigation tool starts
-lying:
+Each browser tab gets its own session and its own folder. A reload resumes the conversation, and
+sessions survive a server restart. Sessions run concurrently without interfering. A page that
+stops heartbeating releases its session after 60 seconds. A request without a live session is
+refused rather than written into the shared workspace.
 
-| Who                    | Does                                                                                                        | Never does                                                           |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| **Playwright**         | Drives a browser, produces raw evidence                                                                     | Decides what the evidence means                                      |
-| **Your `claude` CLI**  | Authors a reproduction: asks you what only you know, drives a real browser until the behaviour appears      | Produces evidence, an outcome or a statistic; touches a measured run |
-| **Deterministic code** | Normalizes, redacts, measures, classifies; translates an authored session into the closed action vocabulary | Guesses, or asks a model                                             |
-| **DeepSeek**           | Interprets, ranks, hypothesises, explains                                                                   | Touches a browser, or decides an outcome                             |
-| **A human**            | Authorizes every consequential transition                                                                   | Gets bypassed by a `--yes` flag — there isn't one                    |
+## Authoring
 
-Five kinds, not four: the authoring model is separate from DeepSeek and separate from the
-deterministic core. It is the only model that drives a browser, it does so in a session that
-records nothing anyone measures, and a human approves its output before anything runs.
+### Two phases, and the first has no browser
 
-The import graph enforces the second and third rows rather than trusting them.
-`packages/execution`, `packages/evidence` and `packages/test-fixtures` **cannot** import
-`ai-gateway` or `ai-flows`; `tests/docs/import-boundary.spec.ts` walks the resolved module graph
-and fails if they ever do.
-
-### Layering
-
-```
-core ← storage ← execution ← evidence ← lineage ← ai-gateway ← tools ← ai-flows ← reporting
-                     ↑                                                       |
-                     └───────────────────── approvals ───────────────────────┘
-
-apps/cli depends on everything. Nothing depends on apps/cli.
+```bash
+investigate author --investigation INV-001                         # writes the plan, opens nothing
+investigate author --investigation INV-001 --approve-plan          # drives the browser (headless)
+investigate author --investigation INV-001 --approve-plan --headed # watch it
 ```
 
-| Package         | Responsibility                                                                   |
-| --------------- | -------------------------------------------------------------------------------- |
-| `core`          | Vocabulary, ids, config, errors, schema registry, `Secret`, clock and seeded RNG |
-| `storage`       | SQLite metadata store, durable job queue, content-hashed artifact store          |
-| `execution`     | The Playwright worker, action interpreter, collector, destructive classifier     |
-| `evidence`      | Redaction, the normalization plane, capture status, the outcome rules            |
-| `lineage`       | The append-only, hash-chained provenance graph                                   |
-| `approvals`     | Gate state, the edit surface, checksum binding, the nine approval checks         |
-| `ai-gateway`    | Provider adapter, retry and circuit breaker, budgets, cost ledger, validation    |
-| `tools`         | Read-only projections over normalized evidence, and `contrastRuns`               |
-| `ai-flows`      | Flow loading, `flowHash`, the turn loop with double allowlist enforcement        |
-| `test-fixtures` | Deterministic local applications that fail in specified ways                     |
-| `reporting`     | M7. A placeholder today                                                          |
+The planning turn is spawned with no MCP config and no tool allowlist, so it cannot navigate,
+click or submit while deciding what to do. Its plan names every value it would type and marks the
+ones nobody supplied instead of inventing them:
 
-### Determinism
+```
+PLATFORM: pixel-7-chrome-mobile — the report says "on my Android phone"
+2. Sign in with ACCOUNT_PHONE and the OTP ACCOUNT_OTP.
+4. Fill "New Password" with ??? — not given, need a value to type.
+7. Check: wait for the confirmation text.
+```
 
-Reproducibility is the whole product, so it is a constraint on the code, not an aspiration:
+When the session meets something only you know, it pauses and asks. Answering resumes it:
 
-- No `Math.random()`, `Date.now()` or ambient locale/timezone in execution or normalization. A
-  seeded `Rng` and an injected `Clock` are passed in.
-- Normalization is a **pure function** of `(raw artifacts, redaction policy version, normalizer
-version)`. The same inputs produce byte-identical output, and a session can be rebuilt offline
-  from stored artifacts with the network and browser unavailable — asserted by
-  `tests/reliability/offline_session_reconstruction.spec.ts`.
-- Every artifact is SHA-256 content-hashed at write time. Manifests are immutable once sealed;
-  SQLite triggers reject any update or delete.
-- One browser per batch, a **fresh `BrowserContext` per run** (ADR-0025). Runs cannot leak state
-  into each other.
+```bash
+investigate author --investigation INV-001 --resume <sessionId> --answer "the one in the dialog"
+```
 
-### Evidence, and being honest about it
+Each resumed turn starts a fresh page on the same browser profile, and the session is told so.
+Steps it already recorded stay in the script.
 
-Twelve categories are captured: `actions`, `navigation`, `console`, `exceptions`,
-`networkMetadata`, `responseBodies`, `domSnapshots`, `storage`, `screenshots`, `video`, `trace`,
-`webSocketFrames`.
+### What the brief asks of the session
 
-Each carries a status, every run, for every category — there are no absent keys, because an
-omitted key is indistinguishable from a forgotten one:
+The authoring brief (`ai/authoring/brief.md`) is versioned and shapes the script the session
+leaves behind:
 
-`complete` · `partial` · `missing` · `redacted` · `unsupported` · `corrupted` · `disabled`
+- **Finish on a check.** The script ends by waiting for the outcome the report describes, right
+  when it is on screen. A script with no check passes every time and measures nothing, so it is
+  refused at emit time.
+- **Wait for what you submit to finish.** After a sign-in, sign-up, save or delete, wait for
+  on-screen proof it went through before the next step. Without that, replays race the page.
+- **Declare screens that only appear on some runs.** A sign-up form that shows for a new account
+  but not an existing one is declared as `OPTIONAL: "Full Name" | 5`. The script handles it when it
+  appears and carries on when it doesn't.
+- **Spend turns on the flow.** No progress screenshots and no digging through saved files.
 
-This matters more than it sounds. **An absent signal in a `missing` category means "not
-captured", never "did not happen"**, and a finding that leans on it is capped accordingly. The
-human-readable limitations are generated from the machine-readable reasons, so the prose and the
-data cannot drift apart.
+### What a session emits
 
-Redaction happens **before persistence**, and fails closed: a store call arriving without a
-`RedactionStamp` raises `REDACTION_NOT_APPLIED`. There is no code path that writes evidence
-without one.
+A session that reaches the behaviour writes to `<investigation>/authoring/`:
 
-The one deliberate exception is **video**, which is raw pixels no text rule can mask. It is
-written only when explicitly enabled, and stamped `video-raw-unredactable` rather than inheriting
-a stamp implying the bytes were cleaned.
+| Artifact                     | For                                                                       |
+| ---------------------------- | ------------------------------------------------------------------------- |
+| `suite/tests/repro.spec.ts`  | The reproduction as ordinary Playwright                                   |
+| `suite/playwright.config.ts` | The emulation profile, video and trace, and time limits sized to the flow |
+| `suite/package.json`         | Its own `@playwright/test`, so it never resolves a mismatched copy        |
+| `experiment-proposal.json`   | The same flow in the closed action vocabulary, for the measured path      |
+
+A session that doesn't reach the behaviour writes nothing. A partial reproduction looks complete,
+and the next person would run it.
+
+**The script is assembled, not reconstructed.** Playwright MCP records the exact statement behind
+every browser call, so the suite uses the same calls, order and selectors as the run that worked.
+Selectors are role plus accessible name, which survive a CSS refactor.
+
+**Time limits fit the flow.** Each action gives up after 15 seconds. The whole run gets
+30 seconds plus 10 seconds per step, so a slow step fails on its own line instead of the run
+hitting a flat ceiling.
+
+**Optional screens are checked, not trusted.** A declaration becomes a block only if its trigger
+matches a recorded step and the block contains no navigation or check. Otherwise the step stays
+mandatory, and the ready card says why. The emitted block waits for whichever comes first, the
+optional screen or the next step:
+
+```ts
+const optional1 = page.getByRole("textbox", { name: "Full Name" });
+if (
+  await optional1
+    .or(NEXT)
+    .first()
+    .waitFor({ state: "visible" })
+    .then(
+      () => optional1.isVisible(),
+      () => false
+    )
+) {
+  // the recorded steps for that screen
+}
+```
+
+A suite with optional blocks is not translated into an experiment proposal, because the action
+vocabulary has no conditional. The card says so.
+
+### Replaying and repairing
+
+```bash
+investigate rerun --investigation INV-001 --repeat 30
+```
+
+`rerun` installs the suite's own dependencies on first use, then runs
+`playwright test --repeat-each=N` with stored credentials in the child environment. It writes:
+
+- `suite/artifacts/last-run.report.json`, Playwright's JSON report
+- `suite/artifacts/last-run.evidence.json`, the breakdown below plus, for each place a run stopped,
+  the line, the statement, what it was waiting for, how many runs stopped there, and the page
+  snapshot Playwright saved
+
+It reports `reachedCheck`, `failedAtCheck`, `stoppedEarly` and
+`failureRate = failedAtCheck / reachedCheck`.
+
+```bash
+investigate author --investigation INV-001 --resume <sessionId> --repair
+```
+
+`--repair` reads that evidence and resumes the authoring session with it. Every stored credential
+value is replaced by its name first. The session is told the browser restarted in the state the
+replay left, and is asked to record the whole flow again from the start. That includes the
+post-submit waits and declaring any screen the replay met that the first recording never saw. It
+refuses when there is no evidence, or when nothing stopped early.
+
+## Credentials
+
+Most intermittent bugs happen only while signed in, so "use this test account" is the normal
+case. A value you supply takes its own road:
+
+- It is written by the local server straight into `<session>/.investigator/.credentials.json`, and
+  never passed on a command line. Each authoring run copies them into the `.secrets.env` file it
+  hands to Playwright MCP.
+- The report, the transcript and every prompt carry only its **name**. Playwright MCP resolves the
+  name from a secrets file at the moment it types the value.
+- Every stored value is registered with the redactor before a batch runs, so a value that surfaces
+  in a DOM snapshot or console line is masked by identity.
+- A repair prompt replaces every stored value with its name before it is sent.
+- `DEEPSEEK_API_KEY` never lives in the store.
+
+The store is for throwaway test accounts on the machine already driving the browser. It is not a
+vault.
+
+Values stay out of text, but **video is raw pixels**. A credential visible on screen is visible in
+the recording. On the measured path, videos are stamped `video-raw-unredactable` for that reason.
+
+## The measured path
+
+The authored suite answers "how often does this happen?". The measured path answers "what is
+different about the runs that failed?", with full evidence and human approval.
+
+```bash
+CLI="node apps/cli/dist/bin.js"; WS=./repro-workspace
+
+$CLI plan    --workspace $WS --investigation INV-001 --from <investigation>/authoring/experiment-proposal.json
+$CLI approve experiment_selection --workspace $WS --investigation INV-001 --scaffold --approver "Your Name"
+$CLI approve experiment_selection --workspace $WS --investigation INV-001 --from <approval.yaml> --checksum <sha256:...>
+$CLI run     --workspace $WS --investigation INV-001 --target my-target
+$CLI analyze --workspace $WS --investigation INV-001            # add --ai for an interpretation
+$CLI lineage --workspace $WS --investigation INV-001 RUN-001
+```
+
+### Translation, not execution
+
+Model-authored source is never run on the measured path. Each recorded statement is reduced to the
+declared vocabulary: `getByRole(...)` becomes a `role` selector, and `.filter({ hasText })` and
+`.nth()` become fields on it. Anything the vocabulary cannot express is refused by name.
+
+Every translated action is then rendered back into a Playwright statement and compared with the
+original. One mismatch refuses the whole translation. A proposal missing a step from the middle is
+not a shorter flow, it is a different one. A typed value matching a supplied credential becomes a
+`secretRef`.
+
+### Approvals
+
+There are three gates: `experiment_selection`, `target_failure` and `final_reproduction`. Each is
+file-based and SHA-256-bound to the exact proposal bytes a human read.
+
+- Scaffolding approves nothing.
+- Edits are allowed inside a gate's edit surface, and **execution consumes the edited proposal**.
+- Removing an item from `approvedItemIds` rejects it.
+- There is no `--yes`, `--force-approve` or `--auto`, and a test asserts their absence.
+- The chat page approves in one click, bound to the checksum of the card you read. The CLI
+  recomputes it and refuses any mismatch.
+
+Re-running `plan` re-renders the proposal with a new timestamp, so an existing approval no longer
+matches. Delete the approval file, scaffold again and approve with the new checksum.
+
+### Runs and evidence
+
+One browser per batch, a fresh `BrowserContext` per run. Execution and normalization take a
+seeded RNG and an injected clock, and normalization is a pure function, so a session can be
+rebuilt byte-identically offline.
+
+Twelve evidence categories are captured: actions, navigation, console, exceptions, network
+metadata, response bodies, DOM snapshots, storage, screenshots, video, trace and WebSocket frames.
+Every run gives every category a status:
+`complete` · `partial` · `missing` · `redacted` · `unsupported` · `corrupted` · `disabled`.
+A signal absent from a `missing` category means "not captured", never "did not happen".
+
+Redaction happens before persistence and fails closed. A store call without a redaction stamp
+raises `REDACTION_NOT_APPLIED`. Every artifact is content-hashed at write time.
 
 ### How a run is classified
 
@@ -952,489 +409,63 @@ Six ordered rules. The order is the design:
 
 | #   | Outcome                 | When                                                                  |
 | --- | ----------------------- | --------------------------------------------------------------------- |
-| 1   | `INTERRUPTED`           | The run was cut short. Nothing else about it is trustworthy           |
-| 2   | `INFRASTRUCTURE_FAILED` | The harness or environment failed — not the product                   |
+| 1   | `INTERRUPTED`           | The run was cut short                                                 |
+| 2   | `INFRASTRUCTURE_FAILED` | The harness or environment failed, not the product                    |
 | 3   | `AUTOMATION_FAILED`     | Our instructions were wrong: a selector missed, an origin was refused |
 | 4   | `PRODUCT_FAILED`        | A declared assertion failed, or a failure predicate matched           |
 | 5   | `VALID_COMPLETED`       | Everything declared passed **and** required evidence is usable        |
 | 6   | `INCONCLUSIVE`          | Green, but a required evidence category is missing                    |
 
-**Rule 3 precedes rule 4** so a broken script is never reported as a product defect — the single
-most damaging mistake this tool could make. **Rule 6 follows rule 5** so a green run with missing
-evidence is not counted as proof of correctness.
+Rule 3 comes before rule 4, so a broken script is never reported as a product defect. Only
+`INFRASTRUCTURE_FAILED` and `INTERRUPTED` are retried, so a retry can never hide a product failure.
 
-Queue state and run outcome are separate dimensions (ADR-0005) and are never conflated:
-`JobState` (`PENDING`/`CLAIMED`/`RUNNING`/`TERMINAL`), `JobTerminalReason`
-(`COMPLETED`/`INTERRUPTED`/`WORKER_ERROR`), and `RunOutcome` above. The legal combinations are
-enforced by SQLite CHECK constraints, so an illegal pair cannot be written even by buggy code.
+### Analysis
 
-**Retries cannot hide a product failure.** Only `INFRASTRUCTURE_FAILED` and `INTERRUPTED` are
-retryable. `AUTOMATION_FAILED` is deliberately not: it means the approved sequence is wrong, which
-is a human decision, not something to paper over with another attempt.
+`analyze` first computes a contrast with `contrastRuns`, a pure function. It finds which console
+fingerprints appear only in failing runs, which request orderings separate the groups, and how
+timings differ. With `--ai`, DeepSeek then reads that contrast and proposes what it means:
 
-### Approvals
+- Output is schema-validated, and unknown fields are rejected.
+- A citation to a run the tools never returned is refused, not repaired.
+- A claim at `probable_trigger` or above needs a citation with a field and an expected value.
+- `confirmed_root_cause` is unreachable by design. It needs evidence from inside the application,
+  which a client-boundary tool cannot have.
 
-Three gates: `experiment_selection`, `target_failure`, `final_reproduction`. All file-based, all
-SHA-256-bound to the exact proposal bytes a human read.
-
-- Scaffolding approves nothing. It writes a schema-valid file with an empty decision.
-- Editing is allowed, but only inside that gate's **edit surface**. The result is the _effective_
-  proposal, and **execution consumes the effective proposal**, never the one merely proposed.
-- Removing an item from `approvedItemIds` rejects it by omission.
-- A destructive action requires a per-action acknowledgement with a written justification.
-- There is no `--yes`, no `--force-approve`, no `--auto`. A test asserts their absence, and
-  another walks the source to assert only the `approve` command can create an approval record.
+Claim levels: `observed` → `correlated` → `probable_trigger` → `high_confidence_trigger` →
+`confirmed_trigger` → `root_cause_hypothesis` → `confirmed_root_cause`.
 
 ### Lineage
 
-Every consequential step appends an edge to a per-investigation, append-only, hash-chained graph.
-Each record hashes its own content together with its predecessor's hash, so rewriting history
-means rewriting everything after it.
-
-It answers, offline: _what authorised this run?_ — and for an AI-produced node, which flow,
-version and `flowHash` produced it. `verifyChain` distinguishes a sequence gap from a broken link
-from an in-place edit, because those are different failures.
-
-It is tamper-**evident**, not tamper-proof. That is the honest guarantee for a local tool.
-
-### Where the AI boundary actually sits
-
-The most important line in the system: **`analyze` computes its contrast, then asks a model what
-it means.**
-
-`contrastRuns` is a pure function over measurements the extractor already produced — which console
-fingerprints appear only in failing runs, which request orderings separate the groups, how timings
-differ. It decides nothing, and it runs whether or not a provider is reachable.
-
-So the question an intermittent bug turns on is answered by arithmetic. The model reads that
-answer and proposes what it means, and then:
-
-- Output is parsed, schema-validated with unknown fields **rejected**, then reference-validated.
-- **Strictness applies to what the model decided, not to bookkeeping.** Before validation, any
-  required property the schema pins to a single value (`"const"`) is filled in if it is absent.
-  `schemaVersion: "1.0.0"` appears twice in an intake output, is fixed by the schema, and is
-  already known to the deterministic side — discarding a correct interpretation of a bug report
-  because the model did not restate a constant cost a provider call and protected nothing. For
-  the same reason `investigationId` is now SENT to the flow rather than invented by it and then
-  overwritten. Filling is deliberately narrow: only `const`, only where `required`, only into an
-  object that already exists. It never invents a missing object, never picks from an `enum`, and
-  never supplies a `default` — each of those is a choice, and a choice the model was supposed to
-  make is precisely what validation is for. `packages/ai-flows/src/shape.spec.ts` asserts both
-  halves.
-- A citation to a run the tools never returned is a fabrication — the output is refused, not
-  repaired into plausibility.
-- A claim at `probable_trigger` or above needs a citation carrying a **field and an expected
-  value**, because "see RUN-17" establishes only that RUN-17 exists.
-- `confirmed_root_cause` is unreachable by design: it requires approved direct evidence from
-  inside the application, which a client-boundary tool cannot have.
-
-Claims use a level ladder, and the level is a promise about the evidence behind it:
-
-`observed` → `correlated` → `probable_trigger` → `high_confidence_trigger` → `confirmed_trigger` →
-`root_cause_hypothesis` → `confirmed_root_cause`
-
-An interpretation must also be able to say _"the reporter never told me this."_ A selector may use
-the `described` strategy to carry the reporter's own words, and a `goto` may have a null URL paired
-with the `unknownRef` naming the gap. Without this, a flow had to invent a selector or a URL just
-to be schema-valid.
-
-The two are **not** treated alike, and that distinction was got wrong once and corrected:
-
-- A **null URL** is still unexecutable. There is no reading of "no URL" that names a page, and
-  defaulting to the target root would run something nobody chose. `EXEC_VALUE_UNRESOLVED`.
-- A **described selector** is now resolved, by role and accessible name. It was unexecutable by
-  design, on the reasoning that treating a phrase as a selector would sometimes work and that was
-  the danger. The reasoning was wrong about where the risk sits: what made the refusal feel safe
-  was not that it avoided a wrong click but that it avoided all clicks, and an investigator that
-  stops at every control it was not handed a CSS selector for cannot investigate anything a
-  reporter described in words — which is every real bug report. What is kept is the part that
-  mattered: an unmatched phrase fails as `AUTOMATION_FAILED` under rule 3, never as a product
-  defect, and the suite generator emits the same locator the run used rather than refusing.
-
-## Tech stack, and why
-
-| Choice                        | Why                                                                                | ADR        |
-| ----------------------------- | ---------------------------------------------------------------------------------- | ---------- |
-| TypeScript, npm workspaces    | One toolchain; workspaces after pnpm/Turborepo proved unnecessary overhead         | 0019, 0023 |
-| **Playwright** (Chromium)     | The only thing that touches a browser                                              | 0001       |
-| **`node:sqlite`** WAL         | No native module, no node-gyp, no prebuild matrix, no Windows install pain         | 0021, 0002 |
-| Content-hashed artifact store | Integrity is verifiable rather than assumed                                        | 0004       |
-| **Ajv** strict, 28 schemas    | Every persisted and AI-produced document is validated at its boundary              | 0015       |
-| **Vitest**, four projects     | `unit`, `docs`, `e2e`, `reliability` — one runner, separated by cost               | 0024       |
-| **DeepSeek** via an adapter   | Provider shapes never leak past `ai-gateway`; capabilities are probed, not assumed | 0009       |
-| Flows as filesystem artifacts | Prompts are versioned files hashed into every call, never string literals          | 0010       |
-
-No database server, no message broker, no container, no cloud dependency. A workspace is a
-directory; the queue is a SQLite table.
-
-## Vocabulary
-
-The words below appear in output and in every document here. They are not interchangeable, and
-most of the design exists to keep them apart.
-
-| Term                   | Means                                                                                                 |
-| ---------------------- | ----------------------------------------------------------------------------------------------------- |
-| **Investigation**      | One reported issue, start to finish. `INV-001`. Owns everything below it                              |
-| **Flow**               | The structured reading of a human's report: steps, actions, and what the report did not say           |
-| **Experiment**         | One hypothesis made executable: an ordered action list, assertions, and a repetition count. `EXP-001` |
-| **Repetition**         | One requested execution of an experiment. Keyed by index, so re-requesting it does not re-execute it  |
-| **Run**                | One actual browser execution. `RUN-001`. A repetition may have several if infrastructure failed       |
-| **Job**                | The queue row that schedules a repetition. Has a `JobState`, separate from the run's outcome          |
-| **Proposal**           | The document a human decides on at a gate. Canonical bytes, SHA-256 checksummed                       |
-| **Effective proposal** | The proposal plus the human's edits. **This is what executes**                                        |
-| **Gate**               | A point where a human must decide. Three of them, all file-based and checksum-bound                   |
-| **Artifact**           | Any durable byte: evidence, manifest, proposal, approval. Content-hashed, immutable                   |
-| **Manifest**           | The per-run record: inputs, outcome, rule id, capture status, artifact digests. Sealed and immutable  |
-| **Lineage**            | The append-only hash-chained graph of what produced or authorised what                                |
-| **Finding**            | A claim about the evidence, carrying a level and validated citations                                  |
-| **Falsifier**          | What would disprove a hypothesis. Every proposed experiment must state one                            |
-
-### The enums you will see in output
-
-| Set                   | Values                                                                                                                                              |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `RunOutcome`          | `VALID_COMPLETED` · `PRODUCT_FAILED` · `AUTOMATION_FAILED` · `INFRASTRUCTURE_FAILED` · `INTERRUPTED` · `INCONCLUSIVE`                               |
-| `JobState`            | `PENDING` · `CLAIMED` · `RUNNING` · `TERMINAL`                                                                                                      |
-| `JobTerminalReason`   | `COMPLETED` · `INTERRUPTED` · `WORKER_ERROR`                                                                                                        |
-| Capture status        | `complete` · `partial` · `missing` · `redacted` · `unsupported` · `corrupted` · `disabled`                                                          |
-| Gates                 | `experiment_selection` · `target_failure` · `final_reproduction`                                                                                    |
-| Target classification | `fixture` · `test` · `staging` — there is deliberately **no `production`**                                                                          |
-| Finding level         | `observed` · `correlated` · `probable_trigger` · `high_confidence_trigger` · `confirmed_trigger` · `root_cause_hypothesis` · `confirmed_root_cause` |
-| Side-effect class     | `read` · `local-write` · `remote-write` · `destructive`                                                                                             |
+Every consequential step appends to a per-investigation, append-only, hash-chained graph.
+`investigate lineage <id>` answers offline which human decision authorised a run, and which flow
+and prompt bytes produced an interpretation. It is tamper-evident, not tamper-proof.
 
 ## Command reference
 
-Every command in the frozen contract is registered. The ones not yet implemented exit 1 naming
-their milestone rather than silently doing nothing.
-
-| Command                   | Does                                                                                                                                                       | AI?    |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| `init`                    | Create a workspace: database, `config.yaml`, redaction policy, directories                                                                                 | no     |
-| `intake`                  | Open an investigation from a report file                                                                                                                   | `--ai` |
-| `author`                  | Write the plan for reproducing the bug; with `--approve-plan`, drive a real browser with your own `claude` login until it reproduces, then emit the script | Claude |
-| `plan`                    | Render the gate-1 proposal a human decides on                                                                                                              | `--ai` |
-| `approve <gate>`          | Record a checksum-bound human approval. `--scaffold` writes a blank one                                                                                    | no     |
-| `run`                     | Execute approved experiments. Makes **no** provider calls, ever                                                                                            | no     |
-| `analyze`                 | Report what separates failing runs from passing ones                                                                                                       | `--ai` |
-| `suite generate`          | Emit a standalone Playwright spec for approved experiments                                                                                                 | no     |
-| `status`                  | Gate states, run outcomes, queue and lineage health                                                                                                        | no     |
-| `show <what>`             | Print a rendered proposal, or an artifact's contents                                                                                                       | no     |
-| `lineage <nodeId>`        | Ancestors and descendants of a node, with the actor on every hop                                                                                           | no     |
-| `doctor`                  | Workspace, config, queue, integrity and safety state. `--verify-lineage`                                                                                   | no     |
-| `retention apply`         | Tombstone artifacts past their retention age. Dry run without `--confirm`                                                                                  | no     |
-| `classify`                | Cluster runs, render gate 2                                                                                                                                | **M4** |
-| `frequency run`           | Execute N times and compute failure-rate statistics                                                                                                        | **M5** |
-| `minimize` / `revalidate` | Reduce a reproduction; re-execute it and its control                                                                                                       | **M6** |
-| `report` / `export`       | Jira-ready report; package reproducer and artifacts                                                                                                        | **M7** |
+| Command                                                                   | Does                                                                                           | Model     |
+| ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | --------- |
+| `init`                                                                    | Create a workspace: database, `config.yaml`, redaction policy, directories                     | no        |
+| `intake`                                                                  | Open an investigation from a report file                                                       | `--ai`    |
+| `author`                                                                  | Write the plan; `--approve-plan` drives the browser; `--resume` answers; `--repair` re-records | authoring |
+| `rerun`                                                                   | Run the authored suite `--repeat N` times (1–500) and break down where runs ended              | no        |
+| `plan`                                                                    | Render the gate-1 proposal a human decides on                                                  | `--ai`    |
+| `approve <gate>`                                                          | Record a checksum-bound approval; `--scaffold` writes a blank one                              | no        |
+| `run`                                                                     | Execute approved experiments. Never calls a provider                                           | no        |
+| `analyze`                                                                 | Report what separates failing runs from passing ones                                           | `--ai`    |
+| `suite generate`                                                          | Emit a standalone Playwright spec for approved experiments                                     | no        |
+| `status`                                                                  | Gate states, run outcomes, queue and lineage health                                            | no        |
+| `show <what>`                                                             | Print a rendered proposal or an artifact                                                       | no        |
+| `lineage <nodeId>`                                                        | Ancestors and descendants of a node, with the actor on every hop                               | no        |
+| `doctor`                                                                  | Workspace, config, queue, integrity, provider and authoring setup; `--verify-lineage`          | no        |
+| `retention apply`                                                         | Tombstone artifacts past their retention age; dry run without `--confirm`                      | no        |
+| `classify`, `frequency run`, `minimize`, `revalidate`, `report`, `export` | Registered but not implemented; exit 1 with `NOT_IMPLEMENTED`                                  | —         |
 
 Global flags: `--workspace <dir>`, `--investigation <id>`, `--json`, `--verbose`, `--seed <int>`,
-`--no-color`, `--allow-unsafe-debug`.
+`--no-color`. `--json` puts machine-readable output on stdout and human text on stderr.
 
-`--json` puts machine-readable output on stdout and human text on stderr, so it composes.
+Other `author` options: `--headed`, `--max-turns <n>` (default 60), `--env <name>`.
 
-There is deliberately no `--yes`, `--force-approve`, or `--auto`.
-
-## Repository layout
-
-```
-apps/cli/               The `investigate` binary. Parses, dispatches, formats. No business logic
-apps/web/               Local chat UI. Spawns the CLI; imports no workspace package
-packages/               One package per responsibility — see the layering table above
-ai/flows/<flow-id>/     Versioned prompt artifacts: flow.yaml, system.md, examples.jsonl
-schemas/                28 versioned JSON schemas. The wire contract for every document
-eval/                   Replay datasets and the deterministic scorer that gates model behaviour
-tests/
-  docs/                 Governing principle, schemas, import boundaries, flow examples
-  e2e/                  The CLI, against the built binary
-  reliability/          Browser-backed behavioural gates, including the 100-run gate
-docs/
-  adrs/                 26 architecture decision records
-  architecture/         Component, evidence, queue, approval, evidence-reference models
-  milestones/           Authoritative scope per milestone
-  security/             Security model and redaction policy
-  operations/           Runbook and Windows runner provisioning
-  prompt-a.txt          The frozen originating brief, with a SHA-256 checksum
-scripts/                demo.mjs, reproduce.mjs, verify.ps1, and build tooling
-policies/default.yaml   The default redaction policy
-```
-
-## Workspace layout
-
-A workspace is a plain directory. There is no server, and nothing lives outside it.
-
-```
-<workspace>/.investigator/
-  config.yaml                        Everything configurable. Created by `init`
-  investigator.db                    SQLite (WAL): investigations, jobs, runs, lineage, approvals,
-                                     artifact refs, AI call ledger
-  policies/default.yaml              The redaction policy, seeded on init
-  prompts/                           Operator prompt overrides
-  investigations/INV-001/
-    manifests/                       Rendered proposals (.json, .json.sha256, .md) and run manifests
-    approvals/                       The approval files a human edits and signs
-    artifacts/<kind>/<shard>/        Content-addressed evidence, sharded by hash prefix
-    normalized/                      Normalized evidence
-    reports/                         M7 output
-    reproducer/                      M6/M7 output
-```
-
-Artifacts are addressed by SHA-256 and sharded two characters deep, so identical bytes are stored
-once and every reference is verifiable.
-
-### One folder per chat session
-
-A session driven from the page does not write into the root workspace above. It gets its own
-folder, and that folder **is** a workspace:
-
-```
-<workspace>/sessions/2026-09-12T17-06-07Z-586218/
-  .investigator/
-    config.yaml                      Machine settings from the parent; targets deliberately NOT
-    investigator.db                  This session's investigations, jobs, runs, lineage
-    .credentials.json                Test-account values the operator supplied, this session only
-    investigations/INV-001/          Manifests, approvals, artifacts, normalized evidence, video
-  reports/report.md                  The operator's own words, as the CLI reads them
-  reports/versions/<stamp>-<name>    Every version they submitted, kept
-  session.jsonl                      What happened, appended as it happened
-```
-
-Every `investigate` command the page runs is given `--workspace <that folder>`, so the output
-lands there because the CLI was told to put it there — nothing is moved or copied afterwards,
-which is what makes "everything this session produced is in one folder" true rather than
-maintained. The folder name leads with the timestamp, so `sessions/` sorts chronologically.
-
-**Nothing about what is being investigated crosses a session.** A session inherits how this
-machine talks to the world — the provider, model aliases, storage, the redaction policy, budgets,
-logging. Those are identical for everyone, tedious to restate, and carry no trace of anyone's work.
-
-It inherits no target. `execution.targets` and `safety.allowedOrigins` are stripped from the
-seeded config, so every session starts with none and asks. Without that, a target one person added
-would arrive pre-configured for the next person to open the page, and their session would begin by
-announcing "using the configured target X" for an X nobody in that session named.
-
-The stripping uses `parseDocument`, so the operator's comments, ordering and quoting survive into
-the copy — including `video: "on"`, which must stay quoted because bare `on` is boolean `true`
-under YAML 1.1.
-
-Verified against the running agent in both directions: a fresh session reports `targets: []` while
-the parent workspace has one configured, and a target plus a credential recorded in one session are
-invisible to another started seconds later.
-
-Two consequences, stated because they are trade-offs and not free:
-
-- **Sessions do not share a database.** `investigate status` inside one session cannot see
-  another's investigations. The folder, not the database, is now the unit you keep or delete.
-- **Deleting a session folder deletes its evidence.** There is no second copy.
-
-A request arriving without a live session is **refused**, not redirected to the root. An earlier
-version fell back, and a report written after a 60-second idle gap silently landed in the shared
-root along with the investigation it opened. Nothing failed and nothing said so. Refusal is the
-honest answer: the page re-acquires a session and resends.
-
-## Configuration reference
-
-`config.yaml` has six blocks. Anything may use `env:NAME` to read from the environment; an unset
-variable is an error naming the variable, never a silent default.
-
-| Block       | Controls                                                                                                                                                                                             |
-| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `llm`       | Provider, base URL, **`apiKeyEnv`** (a variable NAME, never a value), the three model aliases, capability cache TTL, and per-investigation cost and per-call token budgets                           |
-| `storage`   | Metadata/artifact/queue backends, and which redaction policy file to use                                                                                                                             |
-| `execution` | Browser and channel, worker and parallelism limits, timeouts and leases, the deterministic `seed`, infra retry ceiling, `video`, `trace`, the `capture` block, emulation profiles, and **`targets`** |
-| `approvals` | Which gates are required, the approval directory, and expiry                                                                                                                                         |
-| `safety`    | **`allowedOrigins`**, `productionGuard`, `blockDestructiveActions` (off by default), `destructivePatterns`, `maxRepetitionsPerRun` (100), and per-investigation run and wall-clock ceilings          |
-| `logging`   | Level                                                                                                                                                                                                |
-
-The three you will actually edit:
-
-```yaml
-execution:
-  video: "on" # quote it — bare `on` is boolean true in YAML
-  targets:
-    my-target:
-      baseUrl: https://staging.example.com
-      classification: test
-      resetStrategy: per-run-tenant
-      correlationHeaderAllowed: false
-
-safety:
-  allowedOrigins:
-    - https://staging.example.com
-  blockDestructiveActions: true # opt IN to the per-action justification; off by default
-  maxRepetitionsPerRun: 100 # most a single run request may enqueue
-  maxRunsPerInvestigation: 10000 # total across every batch in one investigation
-
-llm:
-  apiKeyEnv: MY_EXISTING_VARIABLE # name the variable; never paste the key
-```
-
-Emulation profiles ship built in, including `desktop-chrome-1440`, `pixel-7-chrome-mobile` (a
-concrete pinned Android user agent, not a small viewport) and `low-end-android-throttled`. Set one
-per experiment with `emulationProfile`.
-
-## Extending it
-
-**Add an AI flow.** Create `ai/flows/<id>/` with `flow.yaml`, `system.md` and `examples.jsonl`.
-Register the id and any new tool names in `schemas/flow-artifact.v1.json` — both are closed enums,
-so an unregistered flow fails to load rather than running unnoticed. Give it an output schema in
-`schemas/`. `tests/docs/flow-examples.spec.ts` will then assert your examples actually satisfy
-that schema, which is the failure mode to expect.
-
-**Add a tool.** Implement it in `packages/tools/src/` taking a _reader function_, never a store —
-that is what keeps the package unable to reach a browser or a provider, and what lets the contract
-test run every tool with the network stubbed to throw. Supply the reader in
-`apps/cli/src/tool-registry.ts`. It must satisfy the eight contract invariants in
-`packages/tools/src/tools.spec.ts`.
-
-**Add a fixture.** Add the application to `packages/test-fixtures/src/fixture-server.ts` and the
-experiment to `experiments/`. Keep it **seeded, never random**: a fixture that fails randomly
-cannot be used to test a system whose purpose is reproducibility.
-
-**Add a schema.** Drop it in `schemas/`. It is auto-registered by filename and must compile under
-Ajv strict (`strictTypes`, `strictRequired`) — `tests/docs` fails otherwise. Add any new vocabulary
-to `packages/core/src/types.ts` as well; a test asserts the code enums and the JSON schemas agree
-bidirectionally, so neither can drift.
-
-**Add an error code.** Add it to `ERROR_CODES` and `SPEC` in `packages/core/src/errors.ts`, and
-document it in `docs/architecture/error-taxonomy.md`. A test asserts the two agree.
-
-## The AI path in practice
-
-Three versioned flows live under `ai/flows/`, each a directory — `flow.yaml`, `system.md`,
-`examples.jsonl` — hashed together into a `flowHash` recorded on every call, so the exact prompt
-bytes behind any output are recoverable later.
-
-| Command        | Flow                  | What it produces                                                     |
-| -------------- | --------------------- | -------------------------------------------------------------------- |
-| `intake --ai`  | `intake_to_flow`      | Steps, unknowns, and the point in the flow the **report** implicates |
-| `plan --ai`    | `propose_experiments` | Ranked experiments, each with what would disprove it                 |
-| `analyze --ai` | `analyze_failures`    | Findings with checked citations, and reproduction steps              |
-
-Each has a six-dimension budget — turns, tool calls, tokens, cost, wall clock, repairs — checked
-**before** dispatch, so a ceiling is never discovered by exceeding it. Budget exhaustion returns a
-typed partial or inconclusive result, never a silently truncated answer.
-
-### What is verified, and what is not
-
-`intake --ai` has run against live DeepSeek end to end, in both directions.
-
-Given a report naming no URL and no selector, it named the failure point with a supporting quote,
-emitted `url: null` with an `unknownRef`, used a `described` selector, and recorded four unknowns
-— refusing to invent any of it.
-
-Given a report that DID name things, it used every one of them. From "I sign in at
-`https://www.99acres.com/login` by typing my phone number into the phone field and pressing
-Continue, then go to `/profile/editProfile` and click Delete Account", against a workspace whose
-target is `https://www.99acres.com` with `ACCOUNT_PHONE` declared, it produced:
-
-| The reporter said                      | The flow emitted                                             |
-| -------------------------------------- | ------------------------------------------------------------ |
-| a full URL on the target               | `goto /login`, `goto /profile/editProfile` — target-relative |
-| "my phone number"                      | `{ "kind": "secretRef", "envVar": "ACCOUNT_PHONE" }`         |
-| "pressing Continue"                    | `{ "strategy": "text", "value": "Continue" }` — executable   |
-| "click Delete Account"                 | `{ "strategy": "text", "value": "Delete Account" }`          |
-| "the phone field"                      | `described` + an unknown — a description, not a label        |
-| nothing about the confirmation wording | a `screenshot`, not an invented `textEquals`                 |
-
-The last two rows are the point as much as the first four. A control the reporter **quoted the
-label of** is data they supplied, and turning it into a non-executable `described` threw it away.
-A control they merely **described** is still a gap, and guessing there produces a click that lands
-somewhere they never pointed — reported afterwards as a defect in the product.
-
-`plan --ai` and `analyze --ai` have **not** been run against a live provider. They share the same
-runner, examples and validation, but that is inference rather than evidence, and their token
-budgets may need the same raise `intake_to_flow` required once few-shot examples were included.
-
-The replay eval harness (`eval/`) runs from recorded outputs and needs no credential, which is the
-only way a gate on model behaviour can honestly block CI.
-
-## What the fixtures demonstrate
-
-| File in `packages/test-fixtures/experiments/` | Outcome                                                             |
-| --------------------------------------------- | ------------------------------------------------------------------- |
-| `passing.json`                                | `VALID_COMPLETED` (rule 5)                                          |
-| `product-failing-deterministic.json`          | `PRODUCT_FAILED` (rule 4) on every repetition                       |
-| `product-failing-intermittent.json`           | `PRODUCT_FAILED`, pinned to a failing seed                          |
-| `automation-failing.json`                     | `AUTOMATION_FAILED` (rule 3), never misreported as a product defect |
-
-The intermittent fixture is **seeded, not random**. Whether a run fails is a pure function of the
-seed, so the same seed produces the same verdict on any machine — which is what makes an
-intermittent issue reproducible instead of merely frequent. Failing seeds below 40 are 7, 8, 9,
-19, 23, 35 and 39.
-
-## Verify
-
-```bash
-npm run build && npm run lint && npm run format:check && npm run typecheck
-npm run test:docs        # governing principle, schemas, import boundaries, flow examples
-npm test                 # unit
-npm run test:e2e         # the CLI, against the built binary
-npm run test:reliability # browser-backed behavioural gates
-npm run gate:twice       # the M1 reliability gate, twice sequentially (~13 min)
-```
-
-On Windows, one command runs the same sequence:
-
-```powershell
-pwsh -File scripts/verify.ps1 -Gate
-```
-
-Current counts: **382** unit and docs tests, **64** e2e, **48** reliability. The 100-run gate
-completes 100/100 `VALID_COMPLETED` with zero retries and zero infrastructure failures in roughly
-130 seconds.
-
-Run the reliability project on an otherwise idle machine. It asserts a wall-clock budget, and
-running other suites alongside it fails that assertion on contention rather than on correctness.
-
-No CI pipeline is configured in this repository. `.gitlab-ci.yml` and the non-authoritative
-`.github/workflows/gate.yml` mirror have been removed; every number above was produced locally via
-`scripts/verify.ps1` and the `npm run` scripts it wraps. `docs/operations/windows-runner.md`
-documents the Windows-runner setup that pipeline once required, kept as reference should a CI
-pipeline be reintroduced.
-
-CI/CD is also disabled at the GitLab project level (`builds_access_level: disabled`, with Auto
-DevOps off), so restoring a `.gitlab-ci.yml` alone will not make pipelines run — that project
-setting has to be turned back on as well. Pipeline history from before the retirement is retained
-server-side and is not visible while CI/CD is disabled; deleting it requires project Owner rights.
-
-## Key guarantees, and where to check them
-
-| Guarantee                                                                                                           | Enforced by                                                                                                                                                                                    |
-| ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| An authored statement is never mistranslated into a different flow                                                  | Round trip in `apps/cli/src/authoring-actions.spec.ts`: every action renders back to the statement it came from, and any statement the vocabulary cannot express refuses the whole translation |
-| An authored proposal is one `plan --from` will actually accept                                                      | `apps/cli/src/authoring-proposal.spec.ts` asserts it against `gate-proposal.v1.json`, the same schema the command asserts                                                                      |
-| A supplied credential never reaches a persisted proposal                                                            | `apps/cli/src/authoring-proposal.spec.ts`; the value becomes a `secretRef` and the originating statement is redacted                                                                           |
-| A reviewer at gate 1 can tell which element an action picks                                                         | `packages/approvals/src/approvals.spec.ts` renders role, name, filter and `nth`, plus the statement each action came from                                                                      |
-| DeepSeek is never reachable from execution, evidence, or fixtures                                                   | `tests/docs/import-boundary.spec.ts` walks the resolved module graph                                                                                                                           |
-| Nothing reaches a browser without a recorded human decision                                                         | `tests/e2e/m2-gates.test.ts`; `run` exits 2 and enqueues zero jobs                                                                                                                             |
-| The chat UI cannot bypass a gate or run an arbitrary command                                                        | `tests/e2e/web-actions.test.ts` drives every action against the built binary; `apps/web/src/actions.spec.ts` covers the allowlist                                                              |
-| Sensitive evidence is redacted before it is persisted                                                               | `tests/reliability/redaction_before_persistence.spec.ts`; a store call without a `RedactionStamp` raises `REDACTION_NOT_APPLIED`                                                               |
-| Normalization is a pure function; a session rebuilds byte-identically offline                                       | `tests/reliability/offline_session_reconstruction.spec.ts`, with network and browser unavailable                                                                                               |
-| A product failure is never hidden by a retry                                                                        | `tests/reliability/no_retry_hides_product_failure.spec.ts`                                                                                                                                     |
-| A broken script is never reported as a product defect                                                               | Rule 3 before rule 4 in `packages/evidence/src/outcome.ts`; `tests/e2e/described-selector.test.ts`                                                                                             |
-| Queue state and run outcome are separate concepts                                                                   | `JobState` / `JobTerminalReason` / `RunOutcome` in `packages/core/src/types.ts`, plus SQLite CHECK constraints                                                                                 |
-| The 100-run fixture completes with zero retries and zero infrastructure failures                                    | `tests/reliability/same_test_100_runs.spec.ts`                                                                                                                                                 |
-| Every artifact is content-hashed and verifiable                                                                     | `tests/reliability/artifact_integrity_hashes.spec.ts`                                                                                                                                          |
-| Mobile runs are Chromium **emulation**, recorded as read back from the browser                                      | `tests/reliability/mobile_emulation.spec.ts`                                                                                                                                                   |
-| The API key never reaches a log, artifact, or error                                                                 | `packages/core/src/secret.spec.ts`, plus a canary assertion in the CLI e2e suite                                                                                                               |
-| An AI finding cannot cite evidence it was never shown                                                               | `apps/cli/src/commands/analyze.ts` validates every reference against only the runs the tools returned                                                                                          |
-| What differs between failing and passing runs is computed, not inferred                                             | `contrastRuns` is pure; `packages/tools/src/analysis-tools.spec.ts` covers what it refuses to claim as well as what it finds                                                                   |
-| A persisted video is never presented as redacted                                                                    | stamped `video-raw-unredactable`; `packages/evidence/src/capture-status.spec.ts` asserts the wording a reader actually sees                                                                    |
-| A URL the reporter never gave is never defaulted to the target root                                                 | `EXEC_VALUE_UNRESOLVED`, at both execution and export; a described SELECTOR is resolved by role and name instead — `packages/execution/src/described-resolution.spec.ts`                       |
-| Relaxing the origin allowlist to subdomains did not open it to other sites                                          | `packages/execution/src/described-resolution.spec.ts` covers suffix-smuggling, protocol downgrade and port changes                                                                             |
-| Each investigation keeps its own provenance chain                                                                   | `packages/lineage/src/lineage.spec.ts`; the lineage primary key is scoped per investigation                                                                                                    |
-| A flow's few-shot examples satisfy the schema its output is validated against                                       | `tests/docs/flow-examples.spec.ts`, over every shipped flow                                                                                                                                    |
-| An authoring session is never denied a browser tool it should have, nor offered one that cannot fake a reproduction | `tests/e2e/playwright-mcp-tools.test.ts` boots the pinned MCP server and diffs `ALLOWED_PLAYWRIGHT_TOOLS` against its real `tools/list`, in both directions                                    |
-| No browser opens before a human has read the plan                                                                   | the planning phase is spawned with no `--mcp-config` and no `--allowed-tools`; `apps/cli/src/claude-cli.spec.ts` asserts the argv contains neither                                             |
-| An authored suite that cannot fail is never offered for measurement                                                 | `whyStepsCannotMeasure` in `apps/cli/src/authoring-script.ts` refuses at emit time; `apps/cli/src/authoring-script.spec.ts` uses the script that actually shipped as the fixture               |
-| A supplied credential is usable but never lands in a prompt, an artifact, or argv                                   | `packages/storage/src/credential-store.spec.ts`; `packages/evidence/src/masked-values.spec.ts` masks registered values in every scope                                                          |
-| The shape outline a model is shown describes the schema it is judged against                                        | `packages/ai-flows/src/shape.spec.ts` asserts the actual generated outline, including `oneOf` variants and closed enums                                                                        |
-| A closed vocabulary the CLI sends matches the enum the validator enforces                                           | `tests/docs/vocabulary-drift.spec.ts` compares `ACTION_TYPES` and `ASSERTION_KINDS` against the schemas                                                                                        |
-| A session writes only inside its own folder, or the request is refused                                              | `apps/web/src/session-workspace.spec.ts`; a lapsed session returns `SESSION_EXPIRED` rather than falling back to the root                                                                      |
-
-## Exit codes
-
-Scriptable, and distinct on purpose — a refusal is not a crash.
+### Exit codes
 
 | Code | Meaning                | Code | Meaning              |
 | ---- | ---------------------- | ---- | -------------------- |
@@ -1447,84 +478,122 @@ Scriptable, and distinct on purpose — a refusal is not a crash.
 
 A run that observes a product defect exits **0**. Finding the bug is the job.
 
-## Scope boundary
+## Configuration
 
-Chrome desktop and Chrome mobile-**emulated** web, reproducible at least occasionally, observable
-from the browser and client boundary, in authorized test environments.
+`<workspace>/.investigator/config.yaml` has six blocks: `llm`, `storage`, `execution`, `approvals`,
+`safety` and `logging`. Any value may use `env:NAME`, and an unset variable is an error naming it.
 
-ReproAgent does not claim to reproduce real-device Android Chrome behaviour, and does not claim to
-capture all browser-visible data. What it captures is "the configured, technically accessible,
-authorized, and successfully collected client-observable evidence" — and where a category is
-missing, partial, redacted, unsupported or corrupted, it says so explicitly rather than implying
-completeness.
+```yaml
+execution:
+  video: "on" # quote it — bare `on` is boolean true in YAML 1.1
+  targets:
+    my-target:
+      baseUrl: https://staging.example.com
+      classification: test # fixture | test | staging — there is no "production"
+      resetStrategy: per-run-tenant
+      correlationHeaderAllowed: false
 
-Not a generic test generator. Not a log viewer. Not a session recorder. Not a replacement for QA,
-developers, or observability tooling.
+safety:
+  allowedOrigins:
+    - https://staging.example.com # this origin and its subdomains
+  blockDestructiveActions: false # true requires a written justification per destructive action
+  maxRepetitionsPerRun: 100
+  maxRunsPerInvestigation: 10000
 
-## Documentation
+llm:
+  apiKeyEnv: DEEPSEEK_API_KEY # a variable NAME, never a value
+```
 
-| Path                                | Contents                                                                                                                                 |
-| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `DEMO.md`                           | Running the demo for an audience: what each chapter proves, and the questions people ask                                                 |
-| `docs/prompt-a.txt`                 | The frozen originating brief, byte-for-byte, with a SHA-256 checksum                                                                     |
-| `docs/m0-decisions.md`              | Human decisions, adapter choices, and what supersedes the brief                                                                          |
-| `docs/FREEZE-M0.md`                 | M0 sign-off and the amendment log                                                                                                        |
-| `docs/adrs/`                        | 28 architecture decision records                                                                                                         |
-| `docs/architecture/`                | Component, evidence, queue, approval and evidence-reference models                                                                       |
-| `docs/milestones/`                  | Authoritative scope per milestone                                                                                                        |
-| `docs/security/`                    | The security model and the redaction policy                                                                                              |
-| `docs/operations/runbook.md`        | Operating, troubleshooting and incident procedures                                                                                       |
-| `docs/operations/windows-runner.md` | Provisioning a Windows GitLab runner (reference only; no pipeline is currently configured)                                               |
-| `ai/flows/`                         | Versioned prompt artifacts, hashed into every AI call's `flowHash`                                                                       |
-| `eval/`                             | Replay datasets and the scorer that gates model behaviour in CI                                                                          |
-| `schemas/`                          | 28 versioned JSON schemas                                                                                                                |
-| `CLAUDE.md`                         | Repo-wide rules for AI coding agents. **Not committed** — `.gitignore` excludes it by project convention, so a clone will not contain it |
+- **No `production` classification.** Declaring a target `test` asserts you are authorised to act on
+  it.
+- **Destructive actions.** Clicks labelled delete, remove, deactivate and similar are classified
+  destructive. `blockDestructiveActions` is off by default, because deleting a disposable QA account
+  is often the flow under investigation. When it is on, it applies at enqueue, at approval and in
+  the executor, and it refuses outright on a `staging` target.
+- **Emulation profiles.** `desktop-chrome-1440`, `pixel-7-chrome-mobile` (a pinned Android user
+  agent, touch and device scale, not just a small viewport) and `low-end-android-throttled`. The
+  chat page picks one from the report. On the measured path, set `emulationProfile` per experiment.
+
+## Workspace layout
+
+```
+<workspace>/
+  .investigator/                     The root workspace: config.yaml, investigator.db, policies/
+  .web/                              Chat users, sessions and the API token (not evidence)
+  sessions/<timestamp>-<id>/         One folder per chat session, itself a workspace
+    .investigator/
+      config.yaml                    Machine settings from the root; targets deliberately NOT copied
+      investigator.db
+      .credentials.json              Test-account values supplied in this session
+      investigations/INV-001/
+        manifests/  approvals/  artifacts/  normalized/
+        authoring/
+          plan.md, platform.json, attempt.json, browser-config.json, mcp-config.json,
+          .secrets.env, live/ (the live-view frame)
+          suite/                     tests/repro.spec.ts, playwright.config.ts, package.json,
+                                     artifacts/last-run.report.json, last-run.evidence.json
+          experiment-proposal.json
+    reports/report.md                The report as the CLI reads it; reports/versions/ keeps each edit
+    session.jsonl                    What happened, appended as it happened
+```
+
+Nothing about what is being investigated crosses sessions. A new session inherits the provider,
+storage, redaction policy and budgets, but no target and no credentials. Deleting a session folder
+deletes its evidence; there is no second copy.
 
 ## Security posture
 
-The API key is read from the **environment only**, through a name allowlist, and is wrapped in a
-`Secret` that refuses to serialise itself. It is never logged, persisted, written to an artifact,
-included in an error message, or echoed by any command. `doctor` reports the variable **name** and
-whether it is set, never its value. `llm.apiKeyEnv` in `config.yaml` chooses which variable holds
-it, so an existing credential can be named rather than copied.
+- **The web page is a privileged local surface**, because it starts processes. It binds `127.0.0.1`
+  only, requires a token on every call, and refuses cross-origin requests. It accepts an action id
+  with typed parameters, never a command line. The allowlist in `apps/web/src/actions.ts` is that
+  boundary, and `apps/web/src/actions.spec.ts` covers what must not get through.
+- **The page contains no pipeline logic.** Every action spawns the same `investigate` command you
+  would type. Gates, redaction and the API key all live in that child process, so a web bug cannot
+  approve a gate the CLI would refuse.
+- **The API key is read from the environment only**, through a name allowlist, and wrapped in a
+  `Secret` that refuses to serialise itself. It is never logged, persisted or put in an error.
+- **The authoring session's browser tools are an allowlist**, checked against the pinned Playwright
+  MCP server's real tool list in both directions. Tools that could fake a reproduction are refused.
+- **Model output is untrusted.** It is validated before use and never overwrites a recorded fact,
+  a measurement or an approval.
+- **Video is not redacted**, and is labelled so. It is written only when `execution.video` is `on`.
 
-A gitignored `.env` may supply the non-secret settings. It never overrides a variable already set
-in the real environment, so a stale file cannot shadow a deliberate export — the one dotenv
-failure mode that would matter here, because the shadowed value would be a credential.
+## Scope
 
-Raw sensitive evidence exists only in bounded process memory during collection and transformation.
-It is redacted before durable persistence, provider transmission, normalized indexing, diagnostic
-logging, report generation, and any export. The agent disables its own crash-dump and
-heap-snapshot paths. OS-level paging is documented as residual risk in
-`docs/security/security-model.md`.
+Chrome desktop and Chrome mobile **emulation**, for issues that reproduce at least occasionally and
+are observable from the browser, in environments you are authorised to test.
 
-Approvals are file-based and SHA-256-bound to the exact proposal bytes. There is no `--yes`, no
-`--force-approve`, and no `--auto` flag — a test asserts their absence.
+It does not claim to reproduce real-device Android behaviour or to capture everything a browser
+can see. Where an evidence category is missing, partial, redacted or unsupported, it says so. It is
+not a generic test generator, a log viewer, a session recorder, or a replacement for QA.
 
-The chat UI (`apps/web`) is a privileged local surface, because it starts processes. It binds
-loopback only, requires a token on every API call, refuses cross-origin requests, and accepts an
-action id with typed parameters rather than a command line. The token is persisted under
-`<workspace>/.web/`, not minted per start: supervised restarts are routine here, and a token that
-could not survive one invalidated whatever page was open mid-report. It never reads the API key —
-the CLI child process reads it from its own environment, exactly as it does at a terminal. Bug
-reports it writes go under the workspace, which is gitignored, because a report routinely carries
-test-account credentials.
+## Development
 
-Those credentials now have a channel of their own rather than living in the report prose. A value
-the operator supplies is written by the server straight into the session's credential store, never
-onto a command line where any process on the machine could read it. Only the **name** is sent to a
-model, only the name is written to the session log, and every stored value is registered with the
-redactor before a batch starts so it is masked out of artifacts by identity. The store holds
-throwaway test accounts on the machine already driving the browser those values are typed into; it
-is not a vault, and `DEEPSEEK_API_KEY` neither lives there nor can.
+```bash
+npm run build && npm run lint && npm run format:check && npm run typecheck
+npm test                  # unit
+npm run test:docs         # governing principle, schemas, import boundaries, flow examples
+npm run test:e2e          # the CLI against the built binary, including every web action
+npm run test:reliability  # browser-backed behavioural gates; run on an idle machine
+```
 
-**One artifact is deliberately not redacted: video.** A recording is raw pixels, and no text rule
-can mask a credential that was visible on screen. It is written only when `execution.video` is
-explicitly set to `on`, and is stamped `video-raw-unredactable` rather than inheriting a stamp
-that would imply the bytes had been cleaned. The capture status says so in words a reader will
-understand, because that warning is the only thing standing between a convenience and a leak.
+```
+apps/cli/            The `investigate` binary, authoring, rerun and repair
+apps/web/            The chat page and its local server; spawns the CLI
+packages/            core · storage · execution · evidence · lineage · approvals ·
+                     ai-gateway · tools · ai-flows · test-fixtures · reporting
+ai/authoring/        The authoring brief
+ai/flows/            Versioned prompts for the DeepSeek analysis steps
+schemas/             Versioned JSON schemas for every persisted and model-produced document
+docs/adrs/           Architecture decision records
+docs/architecture/   Component, evidence, queue and approval models
+docs/security/       Security model and redaction policy
+docs/operations/     Runbook
+```
+
+`packages/execution`, `packages/evidence` and `packages/test-fixtures` cannot import the AI
+packages. `tests/docs/import-boundary.spec.ts` walks the module graph to enforce it.
 
 ## License
 
-`UNLICENSED` / private. Internal Info Edge project; not published to a registry and not licensed
-for redistribution.
+`UNLICENSED` / private. Not published to a registry and not licensed for redistribution.

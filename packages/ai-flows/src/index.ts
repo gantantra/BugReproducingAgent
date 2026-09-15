@@ -8,5 +8,6 @@
  */
 export * from "./loader.js";
 export * from "./runner.js";
+export * from "./credential-extractor.js";
 
 export const PACKAGE_NAME = "@investigator/ai-flows";

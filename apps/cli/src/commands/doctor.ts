@@ -1,6 +1,7 @@
 import { detectUnsafeDiagnostics, llmConfigStatus } from "@investigator/core";
 import { verifyManifest } from "@investigator/execution";
 import { verifyChain } from "@investigator/lineage";
+import { AUTHORING_EFFORT, AUTHORING_MODEL, claudeCliEnv } from "../claude-cli.js";
 import type { Runtime } from "../runtime.js";
 
 /**
@@ -30,6 +31,19 @@ export async function doctorCommand(rt: Runtime, opts: DoctorOptions): Promise<D
   const llm = llmConfigStatus(rt.config);
   const baseUrlHost = llm.baseUrlHost ?? "unset";
   const keyConfigured = llm.apiKeyConfigured;
+
+  const authoringEnv = claudeCliEnv(process.env);
+  const authoringAuthTokenSet = Boolean(authoringEnv.ANTHROPIC_AUTH_TOKEN);
+  const authoringBaseUrlHost = authoringEnv.ANTHROPIC_BASE_URL
+    ? (() => {
+        try {
+          return new URL(authoringEnv.ANTHROPIC_BASE_URL).host;
+        } catch {
+          return "invalid-url";
+        }
+      })()
+    : "unset";
+  const authoringModel = authoringEnv.ANTHROPIC_MODEL ?? AUTHORING_MODEL;
 
   const perInvestigation: Array<{
     investigationId: string;
@@ -117,6 +131,14 @@ export async function doctorCommand(rt: Runtime, opts: DoctorOptions): Promise<D
       mode: rt.redactor.policy.mode,
       rules: rt.redactor.policy.rules.length,
     },
+    authoring: {
+      model: authoringModel,
+      effort: AUTHORING_EFFORT,
+      tokenConfigured: authoringAuthTokenSet,
+      tokenPrefix: authoringEnv.ANTHROPIC_AUTH_TOKEN ? authoringEnv.ANTHROPIC_AUTH_TOKEN.slice(0, 10) : null,
+      tokenSuffix: authoringEnv.ANTHROPIC_AUTH_TOKEN ? authoringEnv.ANTHROPIC_AUTH_TOKEN.slice(-4) : null,
+      baseUrlHost: authoringBaseUrlHost,
+    },
     safety: {
       unsafeDiagnostics: diagnostics.unsafe,
       findings: diagnostics.findings,
@@ -135,6 +157,9 @@ export async function doctorCommand(rt: Runtime, opts: DoctorOptions): Promise<D
       );
       l.push(
         `Provider       ${rt.config.llm.provider} host=${baseUrlHost} key(${rt.config.llm.apiKeyEnv})=${keyConfigured ? "configured" : "not set"} ai=${llm.state}${llm.missingVars.length ? ` missing=${llm.missingVars.join(",")}` : ""}`
+      );
+      l.push(
+        `Authoring      model=${authoringModel} effort=${AUTHORING_EFFORT} proxy=${authoringBaseUrlHost} token=${authoringAuthTokenSet ? "configured" : "not set"}`
       );
       l.push(
         `Redaction      ${rt.redactor.policy.policyId} v${rt.redactor.policy.policyVersion} mode=${rt.redactor.policy.mode} rules=${rt.redactor.policy.rules.length}`

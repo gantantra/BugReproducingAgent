@@ -206,6 +206,12 @@ export const ACTIONS: readonly ActionDef[] = [
     const resume = optionalStr(p, "resume", SESSION_ID, "a session id");
     if (resume) {
       argv.push("--resume", resume);
+      // Re-record the script from where its last replay stopped. The evidence is on disk, so
+      // nothing typed goes with it.
+      if (flag(p, "repair")) {
+        argv.push("--repair");
+        return argv;
+      }
       argv.push("--answer", str(p, "answer", FREE_TEXT, "the answer you typed"));
       return argv;
     }
@@ -220,6 +226,20 @@ export const ACTIONS: readonly ActionDef[] = [
     }
     return argv;
   }),
+
+  /**
+   * Run the authored suite N times.
+   *
+   * The operator pressed a button with the count on it: that is the decision, and what runs is
+   * their own emitted script against the target they named. Long-running by nature — thirty runs
+   * of a real flow take minutes — so it streams.
+   */
+  def("rerun", "run the authored Playwright suite N times", true, (p) => [
+    "rerun",
+    ...inv(p),
+    "--repeat",
+    String(int(p, "repeat", 1, 500)),
+  ]),
 
   def("run", "execute approved experiments in Chromium", true, (p) => {
     const argv = ["run", ...inv(p), "--repeat", String(int(p, "repeat", 1, 100))];

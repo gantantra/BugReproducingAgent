@@ -18,23 +18,27 @@ import {
  */
 
 describe("the environment handed to the CLI", () => {
-  it("removes every variable that would redirect it", () => {
+  it("preserves DeepSeek proxy configuration while stripping unwanted model and cloud overrides", () => {
     const env = claudeCliEnv({
       ANTHROPIC_AUTH_TOKEN: "sk-a-deepseek-key",
       ANTHROPIC_MODEL: "deepseek-v4-flash",
-      ANTHROPIC_BASE_URL: "https://api.anthropic.com",
+      ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic",
+      ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-4-5",
+      CLAUDE_CODE_USE_BEDROCK: "1",
       PATH: "/usr/bin",
     });
-    expect(env["ANTHROPIC_AUTH_TOKEN"]).toBeUndefined();
-    expect(env["ANTHROPIC_MODEL"]).toBeUndefined();
-    expect(env["ANTHROPIC_BASE_URL"]).toBeUndefined();
+    expect(env["ANTHROPIC_AUTH_TOKEN"]).toBe("sk-a-deepseek-key");
+    expect(env["ANTHROPIC_MODEL"]).toBe("deepseek-v4-flash");
+    expect(env["ANTHROPIC_BASE_URL"]).toBe("https://api.deepseek.com/anthropic");
+    expect(env["ANTHROPIC_DEFAULT_SONNET_MODEL"]).toBeUndefined();
+    expect(env["CLAUDE_CODE_USE_BEDROCK"]).toBeUndefined();
   });
 
   it("deletes rather than blanks them", () => {
     // "" is read as a deliberate override by some tools and as unset by others, and the
     // difference is not worth depending on.
-    const env = claudeCliEnv({ ANTHROPIC_API_KEY: "x" });
-    expect("ANTHROPIC_API_KEY" in env).toBe(false);
+    const env = claudeCliEnv({ CLAUDE_CODE_USE_BEDROCK: "1" });
+    expect("CLAUDE_CODE_USE_BEDROCK" in env).toBe(false);
   });
 
   it("keeps everything else, because the CLI needs a real environment", () => {
@@ -56,6 +60,21 @@ describe("the environment handed to the CLI", () => {
     expect(HIJACKING_ENV_VARS).toContain("CLAUDE_CODE_USE_BEDROCK");
     expect(HIJACKING_ENV_VARS).toContain("CLAUDE_CODE_USE_VERTEX");
   });
+
+  it("redirects anthropic.com base URL to DeepSeek proxy when authoring with DeepSeek", () => {
+    const env = claudeCliEnv({
+      ANTHROPIC_MODEL: "deepseek-v4-flash",
+      ANTHROPIC_BASE_URL: "https://api.anthropic.com",
+    });
+    expect(env["ANTHROPIC_BASE_URL"]).toBe("https://api.deepseek.com/anthropic");
+  });
+
+  it("defaults base URL to DeepSeek proxy when unset with DeepSeek model", () => {
+    const env = claudeCliEnv({
+      ANTHROPIC_MODEL: "deepseek-v4-flash",
+    });
+    expect(env["ANTHROPIC_BASE_URL"]).toBe("https://api.deepseek.com/anthropic");
+  });
 });
 
 describe("the command line", () => {
@@ -68,7 +87,7 @@ describe("the command line", () => {
     expect(claudeCliArgs({ maxTurns: 3, mcpConfigPath: "/ws/mcp.json" })).toEqual([
       "--print",
       "--model",
-      "claude-sonnet-5",
+      AUTHORING_MODEL,
       "--effort",
       "medium",
       "--output-format",
@@ -88,7 +107,7 @@ describe("the command line", () => {
     expect(args).toContain("--model");
     expect(args[args.indexOf("--model") + 1]).toBe(AUTHORING_MODEL);
     expect(args[args.indexOf("--effort") + 1]).toBe(AUTHORING_EFFORT);
-    expect(AUTHORING_MODEL).toBe("claude-sonnet-5");
+    expect(AUTHORING_MODEL).toBe(process.env.ANTHROPIC_MODEL || "deepseek-v4-flash");
     expect(AUTHORING_EFFORT).toBe("medium");
   });
 
@@ -112,9 +131,17 @@ describe("the command line", () => {
     expect(args).toContain("mcp__playwright__browser_click");
   });
 
+  it("passes strict-mcp-config and tools options when given", () => {
+    const args = claudeCliArgs({
+      strictMcpConfig: true,
+      tools: "",
+    });
+    expect(args).toContain("--strict-mcp-config");
+    expect(args[args.indexOf("--tools") + 1]).toBe("");
+  });
   it("omits optional flags that were not supplied", () => {
     const args = claudeCliArgs({});
-    for (const flag of ["--mcp-config", "--allowed-tools", "--resume", "--max-turns"]) {
+    for (const flag of ["--mcp-config", "--allowed-tools", "--resume", "--max-turns", "--strict-mcp-config", "--tools"]) {
       expect(args, flag).not.toContain(flag);
     }
   });
@@ -137,6 +164,12 @@ describe("the Playwright MCP server config", () => {
     expect(cfg().mcpServers.playwright.args).toContain("--isolated");
   });
 
+  it("uses persistent user data dir when provided instead of isolated", () => {
+    const args = cfg({ userDataDir: "/ws/browser-profile" }).mcpServers.playwright.args;
+    expect(args).not.toContain("--isolated");
+    expect(args[args.indexOf("--user-data-dir") + 1]).toBe("/ws/browser-profile");
+  });
+
   it("passes credentials by file, never on the command line", () => {
     // A value in argv is readable by every process on the machine.
     const args = cfg({ secretsPath: "/ws/.secrets.env" }).mcpServers.playwright.args;
@@ -155,6 +188,18 @@ describe("the Playwright MCP server config", () => {
     expect(args.join(" ")).not.toContain("b.example");
   });
 
+  it("launches the browser from the platform's config file only when given one", () => {
+    const args = cfg({ browserConfigPath: "/ws/author/browser-config.json" }).mcpServers.playwright.args;
+    expect(args[args.indexOf("--config") + 1]).toBe("/ws/author/browser-config.json");
+    expect(cfg().mcpServers.playwright.args).not.toContain("--config");
+  });
+
+  it("loads the live-view hook into every tab only when given one", () => {
+    const args = cfg({ initPage: "/ws/author/live-view.cjs" }).mcpServers.playwright.args;
+    expect(args[args.indexOf("--init-page") + 1]).toBe("/ws/author/live-view.cjs");
+    expect(cfg().mcpServers.playwright.args).not.toContain("--init-page");
+  });
+
   it("runs headless by default and shows the browser only when asked", () => {
     expect(cfg().mcpServers.playwright.args).toContain("--headless");
     expect(cfg({ headless: false }).mcpServers.playwright.args).not.toContain("--headless");
@@ -162,21 +207,29 @@ describe("the Playwright MCP server config", () => {
 });
 
 describe("the planning phase has no browser, structurally", () => {
-  it("omits the MCP server and the tool allowlist entirely", () => {
+  it("omits the MCP server and the tool allowlist entirely, and disables built-in tools", () => {
     // The enforcement, in one assertion. The planning turn is not asked to refrain from browsing
     // -- it is spawned with no browser to reach for. Instruction alone has already failed here
     // once: brief 1.5.0 told every session to end with a check and one did not, so a rule that
     // matters is structural or it is not a rule.
-    const args = claudeCliArgs({ appendSystemPrompt: "brief", maxTurns: 4, outputFormat: "json" });
+    const args = claudeCliArgs({
+      appendSystemPrompt: "brief",
+      strictMcpConfig: true,
+      tools: "",
+      maxTurns: 2,
+      outputFormat: "json",
+    });
 
     expect(args).not.toContain("--mcp-config");
     expect(args).not.toContain("--allowed-tools");
+    expect(args).toContain("--strict-mcp-config");
+    expect(args[args.indexOf("--tools") + 1]).toBe("");
     expect(args.join(" ")).not.toContain("playwright");
   });
 
-  it("still runs as the operator's own sonnet 5 medium login", () => {
+  it("still runs as the operator's deepseek medium login", () => {
     const args = claudeCliArgs({ appendSystemPrompt: "brief", outputFormat: "json" });
-    expect(args.join(" ")).toContain("--model claude-sonnet-5");
+    expect(args.join(" ")).toContain(`--model ${AUTHORING_MODEL}`);
     expect(args.join(" ")).toContain("--effort medium");
   });
 });

@@ -1,46 +1,23 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 
 /**
- * Spawning the Claude CLI that the operator is already logged into (ADR-0027).
+ * Spawning the Claude CLI configured for DeepSeek authoring (ADR-0027).
  *
- * Two models do two different jobs in this product, and they are not interchangeable:
+ * The authoring session drives Playwright MCP until one run reproduces the bug,
+ * powered by DeepSeek (`deepseek-v4-flash` via the Anthropic-compatible proxy) at `medium` effort.
  *
- *  - **Claude, `claude-sonnet-5` at `medium` effort**, drives the authoring session — talking to
- *    the operator about the report, and driving Playwright MCP until one run reproduces the bug.
- *    It uses the operator's own logged-in session, so there is no second credential to configure.
- *  - **DeepSeek** analyses the failed runs AFTER an approved batch has produced a report. That is
- *    a measurement question over evidence that already exists, which is what it is for.
- *
- * ## The environment sabotages this, and silently
- *
- * This workspace points `llm.apiKeyEnv` at `ANTHROPIC_AUTH_TOKEN` and keeps the DeepSeek key
- * there, because that is where the key already lived. `ANTHROPIC_MODEL` is likewise set to a
- * DeepSeek model id. Both are correct for the DeepSeek path and both are poison for this one: an
- * inherited environment sends the Claude CLI to Anthropic's endpoint carrying a DeepSeek key and
- * asking for a DeepSeek model.
- *
- * The failure is not a clear "wrong credential" — it comes back as
- * `terminal_reason: "api_error"` with an empty result, which reads like the CLI is broken or the
- * operator is not logged in. Verified on this machine: with the three variables removed the same
- * command returns normally and reports `claude-sonnet-5` in `modelUsage`.
- *
- * So the variables are stripped rather than overridden. Stripping makes the CLI fall back to the
- * operator's own credentials, which is exactly the ask — "whoever is logged into the env".
+ * It uses the operator's DeepSeek proxy settings (ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN),
+ * passing them through to the spawned CLI while stripping provider redirects (Bedrock, Vertex, etc.).
  */
 
 /**
  * Variables that must not reach the spawned CLI.
  *
- * Each one individually redirects it somewhere it should not go. They are removed, never set to
- * an empty string: some tools treat "" as a deliberate override and others as unset, and the
- * difference is not worth depending on.
+ * Cloud provider redirects and unwanted model defaults are stripped.
  */
 export const HIJACKING_ENV_VARS: readonly string[] = [
-  "ANTHROPIC_AUTH_TOKEN",
-  "ANTHROPIC_API_KEY",
-  "ANTHROPIC_MODEL",
-  "ANTHROPIC_BASE_URL",
   "ANTHROPIC_SMALL_FAST_MODEL",
   "ANTHROPIC_DEFAULT_SONNET_MODEL",
   "ANTHROPIC_DEFAULT_OPUS_MODEL",
@@ -49,18 +26,103 @@ export const HIJACKING_ENV_VARS: readonly string[] = [
   "CLAUDE_CODE_USE_VERTEX",
 ];
 
-/** The model and effort this product uses for authoring. Not configurable by accident. */
-export const AUTHORING_MODEL = "claude-sonnet-5";
+/** The model and effort this product uses for authoring. Defaults to deepseek-v4-flash. */
+export const AUTHORING_MODEL = process.env.ANTHROPIC_MODEL || "deepseek-v4-flash";
 export const AUTHORING_EFFORT = "medium";
 
 /**
- * The environment for a spawned `claude`, with everything that would redirect it removed.
+ * The environment for a spawned `claude`, preserving DeepSeek configuration
+ * and falling back to ~/.claude/settings.json if unset.
  *
  * Takes and returns a plain object so it can be tested without touching `process.env`.
  */
 export function claudeCliEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...source };
   for (const name of HIJACKING_ENV_VARS) delete env[name];
+
+  if (!env.ANTHROPIC_MODEL) {
+    env.ANTHROPIC_MODEL = AUTHORING_MODEL;
+  }
+
+  const isAnthropicKey = (token?: string) => Boolean(token?.startsWith("sk-ant-"));
+  const isDeepSeek = Boolean(env.ANTHROPIC_MODEL?.startsWith("deepseek-"));
+
+  // If DeepSeek Anthropic proxy variables are not in source, attempt to load them from ~/.claude/settings.json
+  try {
+    const settingsPath = join(homedir(), ".claude", "settings.json");
+    if (existsSync(settingsPath)) {
+      const parsed = JSON.parse(readFileSync(settingsPath, "utf8"));
+      if (parsed?.env) {
+        if (
+          (!env.ANTHROPIC_AUTH_TOKEN || (isDeepSeek && isAnthropicKey(env.ANTHROPIC_AUTH_TOKEN))) &&
+          parsed.env.ANTHROPIC_AUTH_TOKEN
+        ) {
+          env.ANTHROPIC_AUTH_TOKEN = parsed.env.ANTHROPIC_AUTH_TOKEN;
+        }
+        if (
+          (!env.ANTHROPIC_BASE_URL || env.ANTHROPIC_BASE_URL.includes("api.anthropic.com")) &&
+          parsed.env.ANTHROPIC_BASE_URL
+        ) {
+          env.ANTHROPIC_BASE_URL = parsed.env.ANTHROPIC_BASE_URL;
+        }
+        if (!env.ANTHROPIC_MODEL && parsed.env.ANTHROPIC_MODEL) {
+          env.ANTHROPIC_MODEL = parsed.env.ANTHROPIC_MODEL;
+        }
+      }
+    }
+  } catch {
+    // Ignore reading/parsing errors
+  }
+
+  // Fallback to ~/deepseek.json or ./deepseek.json if token or base URL still missing or pointing to Anthropic
+  if (
+    !env.ANTHROPIC_AUTH_TOKEN ||
+    (isDeepSeek && isAnthropicKey(env.ANTHROPIC_AUTH_TOKEN)) ||
+    !env.ANTHROPIC_BASE_URL ||
+    env.ANTHROPIC_BASE_URL.includes("api.anthropic.com")
+  ) {
+    try {
+      const candidates = [join(process.cwd(), "deepseek.json"), join(homedir(), "deepseek.json")];
+      for (const p of candidates) {
+        if (existsSync(p)) {
+          const parsed = JSON.parse(readFileSync(p, "utf8"));
+          if (!env.ANTHROPIC_AUTH_TOKEN || (isDeepSeek && isAnthropicKey(env.ANTHROPIC_AUTH_TOKEN))) {
+            const token =
+              parsed.ANTHROPIC_AUTH_TOKEN ||
+              parsed.claude_code_anthropic_compatible?.ANTHROPIC_AUTH_TOKEN ||
+              parsed.api_key ||
+              parsed.standard_openai_compatible?.DEEPSEEK_API_KEY;
+            if (token) env.ANTHROPIC_AUTH_TOKEN = token;
+          }
+          if (!env.ANTHROPIC_BASE_URL || env.ANTHROPIC_BASE_URL.includes("api.anthropic.com")) {
+            const candidate =
+              parsed.ANTHROPIC_BASE_URL ||
+              parsed.claude_code_anthropic_compatible?.ANTHROPIC_BASE_URL;
+            if (candidate) {
+              env.ANTHROPIC_BASE_URL = candidate;
+            }
+          }
+          break;
+        }
+      }
+    } catch {
+      // Ignore reading/parsing errors
+    }
+  }
+
+  // When authoring with a DeepSeek model, guarantee the base URL points to DeepSeek's Anthropic proxy
+  if (env.ANTHROPIC_MODEL?.startsWith("deepseek-")) {
+    if (!env.ANTHROPIC_BASE_URL || env.ANTHROPIC_BASE_URL.includes("api.anthropic.com")) {
+      env.ANTHROPIC_BASE_URL = "https://api.deepseek.com/anthropic";
+    }
+    if ((!env.ANTHROPIC_AUTH_TOKEN || isAnthropicKey(env.ANTHROPIC_AUTH_TOKEN)) && env.DEEPSEEK_API_KEY) {
+      env.ANTHROPIC_AUTH_TOKEN = env.DEEPSEEK_API_KEY;
+    }
+    if (env.ANTHROPIC_AUTH_TOKEN && !isAnthropicKey(env.ANTHROPIC_AUTH_TOKEN)) {
+      env.ANTHROPIC_API_KEY = env.ANTHROPIC_AUTH_TOKEN;
+    }
+  }
+
   return env;
 }
 
@@ -69,6 +131,8 @@ export interface ClaudeCliArgsOptions {
   mcpConfigPath?: string;
   /** Exact tool names the session may use. Omitted means the CLI's own defaults apply. */
   allowedTools?: readonly string[];
+  /** Built-in tools list or "" to disable built-in tools. */
+  tools?: string;
   /** Appended to the CLI's system prompt: the authoring instructions. */
   appendSystemPrompt?: string;
   /** Hard ceiling on agent turns, so a confused session ends rather than circling. */
@@ -77,6 +141,8 @@ export interface ClaudeCliArgsOptions {
   outputFormat?: "json" | "stream-json";
   /** Resume a session by id, for answering a question mid-authoring. */
   resume?: string;
+  /** Restrict MCP servers strictly to --mcp-config, ignoring global ~/.claude.json */
+  strictMcpConfig?: boolean;
 }
 
 /**
@@ -108,8 +174,10 @@ export function claudeCliArgs(opts: ClaudeCliArgsOptions): string[] {
   // stream-json output is only meaningful as it arrives; without this the CLI refuses the combination.
   if ((opts.outputFormat ?? "stream-json") === "stream-json") args.push("--verbose");
   if (opts.resume) args.push("--resume", opts.resume);
+  if (opts.strictMcpConfig) args.push("--strict-mcp-config");
   if (opts.mcpConfigPath) args.push("--mcp-config", opts.mcpConfigPath);
   if (opts.allowedTools?.length) args.push("--allowed-tools", ...opts.allowedTools);
+  if (opts.tools !== undefined) args.push("--tools", opts.tools);
   if (opts.appendSystemPrompt) args.push("--append-system-prompt", opts.appendSystemPrompt);
   if (opts.maxTurns !== undefined) args.push("--max-turns", String(opts.maxTurns));
 
@@ -133,19 +201,29 @@ export function playwrightMcpConfig(opts: {
   secretsPath?: string;
   allowedOrigins?: readonly string[];
   headless?: boolean;
+  userDataDir?: string;
+  /** A hook MCP loads into every tab; authoring passes the live-view frame writer. */
+  initPage?: string;
+  /** An MCP config file carrying the browser context options of the chosen platform. */
+  browserConfigPath?: string;
 }): unknown {
-  const args = [
-    "-y",
-    "@playwright/mcp@0.0.80",
-    "--isolated",
+  const args = ["-y", "@playwright/mcp@0.0.80"];
+  if (opts.userDataDir) {
+    args.push("--user-data-dir", opts.userDataDir);
+  } else {
+    args.push("--isolated");
+  }
+  args.push(
     "--codegen",
     "typescript",
     "--save-session",
     "--output-dir",
-    opts.outputDir,
-  ];
+    opts.outputDir
+  );
   if (opts.headless !== false) args.push("--headless");
   if (opts.secretsPath) args.push("--secrets", opts.secretsPath);
+  if (opts.initPage) args.push("--init-page", opts.initPage);
+  if (opts.browserConfigPath) args.push("--config", opts.browserConfigPath);
 
   /* `--allowed-origins` is deliberately NOT passed, and `allowedOrigins` is kept on the options
    * only so callers need not know that.
@@ -230,7 +308,6 @@ export const ALLOWED_PLAYWRIGHT_TOOLS: readonly string[] = [
   "browser_navigate",
   "browser_navigate_back",
   "browser_tabs",
-  "browser_resize",
   "browser_close",
   // Looking
   "browser_snapshot",
@@ -255,10 +332,17 @@ export const ALLOWED_PLAYWRIGHT_TOOLS: readonly string[] = [
 ].map((t) => `mcp__playwright__${t}`);
 
 /**
- * The two tools deliberately withheld, named so a test can assert the allowlist is the server's
- * full surface minus exactly these — rather than re-listing 22 names in two places.
+ * The tools deliberately withheld, named so a test can assert the allowlist is the server's
+ * full surface minus exactly these — rather than re-listing every name in two places.
+ *
+ * `browser_resize` is withheld because the browser is launched AS a platform (authoring-platform.ts).
+ * A session told the reporter was on Android Chrome resized a desktop window to 412×915 instead:
+ * the window was narrow, the user agent still said desktop, and the site served its desktop page.
+ * Resizing an emulated mobile browser would equally break the profile it was launched with. A
+ * different platform is asked for with `AUTHORING: PLATFORM`, and the harness relaunches.
  */
 export const REFUSED_PLAYWRIGHT_TOOLS: readonly string[] = [
   "browser_evaluate",
   "browser_run_code_unsafe",
+  "browser_resize",
 ];

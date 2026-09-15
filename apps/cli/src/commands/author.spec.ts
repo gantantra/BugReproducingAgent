@@ -1,10 +1,117 @@
 import { describe, it, expect } from "vitest";
-import { deriveTitleForTest, readAuthoringOutcome } from "./author.js";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import type { Runtime } from "../runtime.js";
+import { extractAuthoredSteps, whyStepsCannotMeasure } from "../authoring-script.js";
+import {
+  attemptSessionMarkdowns,
+  deriveTitleForTest,
+  formatToolUse,
+  readAuthoringOutcome,
+  buildPrompt,
+  runClaudeForTest,
+  screenshotLine,
+} from "./author.js";
+
+describe("the script is built from every browser run of the attempt", () => {
+  /** A saved MCP session in the shape MCP writes: a tool heading, then a JSON result with `code`. */
+  const sessionMd = (...calls: Array<[tool: string, code: string]>) =>
+    calls
+      .map(([tool, code]) => `### Tool call: ${tool}\n- Result\n\`\`\`json\n${JSON.stringify({ code })}\n\`\`\`\n`)
+      .join("\n");
+
+  it("takes the sign-in run and the resumed run that reached the flow, in the order they ran", () => {
+    // Observed: a resume starts a new MCP server and a new session folder. Only the first folder
+    // was read, which held the sign-in, while the run that deleted the account sat in the second.
+    const outputDir = mkdtempSync(join(tmpdir(), "author-attempt-"));
+    try {
+      const write = (name: string, body: string) => {
+        mkdirSync(join(outputDir, name), { recursive: true });
+        writeFileSync(join(outputDir, name, "session.md"), body);
+      };
+      // Created out of order, so the answer cannot come from the order readdir happens to list.
+      write(
+        "session-3000",
+        sessionMd(
+          ["browser_click", "await page.getByRole('button', { name: 'Yes, Please continue to delete' }).click();"],
+          ["browser_wait_for", "await page.getByText(\"Account has been deleted successfully!\").first().waitFor({ state: 'visible' });"]
+        )
+      );
+      write("session-1000", sessionMd(["browser_navigate", "await page.goto('https://www.99acres.com');"]));
+      write("session-500", sessionMd(["browser_navigate", "await page.goto('https://an-earlier-attempt.example');"]));
+      mkdirSync(join(outputDir, "live"));
+
+      const paths = attemptSessionMarkdowns(outputDir, 1000);
+      expect(paths.map((p) => p.split(/[\\/]/).slice(-2)[0])).toEqual(["session-1000", "session-3000"]);
+
+      const steps = paths.flatMap((p) => extractAuthoredSteps(readFileSync(p, "utf8")));
+      expect(steps.map((s) => s.tool)).toEqual(["browser_navigate", "browser_click", "browser_wait_for"]);
+      expect(whyStepsCannotMeasure(steps)).toBeNull();
+    } finally {
+      rmSync(outputDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("the directory the CLI was launched from is not the session's to tidy", () => {
+  it("leaves an image the operator already had there exactly where it was", async () => {
+    // The web UI runs the CLI with cwd set to the operator's launch directory, often the repo
+    // root. A session used to move every image found there into its own folder and delete the
+    // original, once at start and again every second.
+    const launchDir = mkdtempSync(join(tmpdir(), "author-launch-"));
+    const sessionDir = mkdtempSync(join(tmpdir(), "author-session-"));
+    const original = Buffer.from("the operator's own screenshot");
+    writeFileSync(join(launchDir, "keep.png"), original);
+    const previous = process.cwd();
+    process.chdir(launchDir);
+    try {
+      // A stand-in for `claude`: reads the prompt, then stays up past the one-second image poll.
+      await runClaudeForTest(
+        process.execPath,
+        ["-e", "process.stdin.resume(); process.stdin.on('end', () => setTimeout(() => {}, 1500));"],
+        "prompt",
+        { logger: { debug: () => {} } } as unknown as Runtime,
+        sessionDir,
+        sessionDir
+      );
+      expect(readFileSync(join(launchDir, "keep.png"))).toEqual(original);
+      expect(existsSync(join(sessionDir, "keep.png"))).toBe(false);
+    } finally {
+      process.chdir(previous);
+      rmSync(launchDir, { recursive: true, force: true });
+      rmSync(sessionDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("pointing the live viewport at a screenshot", () => {
+  it("names the image relative to the --workspace folder, which the server resolves against", () => {
+    // The layout a web session really has: the CLI's workspace root is `.investigator` INSIDE the
+    // folder the server passed. A path relative to that root dropped `.investigator/`, and the
+    // server answered 404 for every frame.
+    const sessionFolder = resolve("sessions", "2026-09-15T07-57-20Z-96307f");
+    const image = join(
+      sessionFolder,
+      ".investigator",
+      "investigations",
+      "INV-002",
+      "authoring",
+      "mcp",
+      "page-1.png"
+    );
+    expect(screenshotLine(sessionFolder, image)).toBe(
+      `[SCREENSHOT:/api/session-image?file=${encodeURIComponent(
+        ".investigator/investigations/INV-002/authoring/mcp/page-1.png"
+      )}]`
+    );
+  });
+});
 
 /**
  * Reading how an authoring session ended (ADR-0027).
  *
- * A single sentinel line rather than a schema, because Sonnet driving a browser does not need a
+ * A single sentinel line rather than a schema, because DeepSeek driving a browser does not need a
  * validator adjudicating each step — the harness only needs to know which of three things
  * happened. The parsing still has to be strict about one thing: never reading an unrecognised
  * ending as success, because "done" is what causes a script to be emitted.
@@ -13,6 +120,13 @@ import { deriveTitleForTest, readAuthoringOutcome } from "./author.js";
 describe("recognising the ending", () => {
   it("reads DONE", () => {
     expect(readAuthoringOutcome("I reproduced it.\n\nAUTHORING: DONE")).toEqual({ kind: "done" });
+  });
+
+  it("reads a request to relaunch the browser as another platform", () => {
+    // The operator said "mobile web only" after the browser was already open as desktop.
+    expect(
+      readAuthoringOutcome("They want the mobile site.\n\nAUTHORING: PLATFORM pixel-7-chrome-mobile")
+    ).toEqual({ kind: "platform", profile: "pixel-7-chrome-mobile" });
   });
 
   it("reads a question and keeps its text", () => {
@@ -153,5 +267,113 @@ describe("reading the plan sentinel", () => {
     // The distinction that matters: "done" emits a script, "plan" must not.
     expect(readAuthoringOutcome("steps\n\nAUTHORING: PLAN").kind).toBe("plan");
     expect(readAuthoringOutcome("steps\n\nAUTHORING: DONE").kind).toBe("done");
+  });
+});
+
+describe("formatting browser tool calls for live chat streaming", () => {
+  it("formats navigation", () => {
+    expect(
+      formatToolUse("mcp__playwright__browser_navigate", { url: "http://localhost:3000/app" })
+    ).toBe("🌐 Navigating to http://localhost:3000/app");
+  });
+
+  it("formats clicking with element description or selector", () => {
+    expect(
+      formatToolUse("mcp__playwright__browser_click", { element: "Submit button" })
+    ).toBe("👆 Clicking: Submit button");
+    expect(
+      formatToolUse("mcp__playwright__browser_click", { selector: "#submit" })
+    ).toBe("👆 Clicking: #submit");
+  });
+
+  it("formats typing input", () => {
+    expect(
+      formatToolUse("mcp__playwright__browser_type", { text: "hello world" })
+    ).toBe("⌨️ Typing text: hello world");
+  });
+
+  it("formats form filling", () => {
+    expect(
+      formatToolUse("mcp__playwright__browser_fill_form", { fields: { username: "admin", role: "qa" } })
+    ).toBe("📝 Filling form: username, role");
+  });
+
+  it("formats waiting for elements / assertions", () => {
+    expect(
+      formatToolUse("mcp__playwright__browser_wait_for", { text: "Dashboard loaded" })
+    ).toBe("⏳ Waiting for: Dashboard loaded");
+  });
+
+  it("formats screenshots and snapshots", () => {
+    expect(formatToolUse("mcp__playwright__browser_take_screenshot", {})).toBe(
+      "📸 Capturing viewport screenshot..."
+    );
+    expect(formatToolUse("mcp__playwright__browser_snapshot", {})).toBe(
+      "👁️ Inspecting page DOM snapshot"
+    );
+  });
+
+  it("labels the session reading saved files as that, not as a browser action", () => {
+    expect(formatToolUse("Read", { file_path: "C:\\ws\\authoring\\mcp\\snap-home.md" })).toBe(
+      "📄 Reading saved file: snap-home.md"
+    );
+    expect(formatToolUse("Grep", { pattern: "Delete", path: "C:\\ws\\mcp" })).toBe(
+      "🔎 Searching saved files for: Delete"
+    );
+  });
+
+  it("formats unrecognised browser tools gracefully", () => {
+    expect(formatToolUse("mcp__playwright__browser_custom", {})).toBe(
+      "🤖 Browser action: browser_custom"
+    );
+  });
+});
+
+describe("max turns handling in outcome", () => {
+  it("recognises maximum number of turns reached as stuck", () => {
+    const out = readAuthoringOutcome("Error: Maximum number of turns (60) reached without stopping");
+    expect(out.kind).toBe("stuck");
+    if (out.kind === "stuck") {
+      expect(out.reason).toMatch(/turn limit/i);
+    }
+  });
+
+  it("recognises max_turns_reached indicator as stuck", () => {
+    const out = readAuthoringOutcome("Session ended with max_turns_reached");
+    expect(out.kind).toBe("stuck");
+  });
+});
+
+describe("buildPrompt credentials formatting", () => {
+  it("formats credential keys with descriptions", () => {
+    const prompt = buildPrompt({
+      report: "Login fails with wrong credentials",
+      targetName: "local",
+      baseUrl: "http://localhost:3000",
+      allowedOrigins: ["http://localhost:3000"],
+      credentialNames: ["ACCOUNT_PHONE", "ACCOUNT_OTP"],
+      credentialEntries: [
+        { name: "ACCOUNT_PHONE", description: "Test account phone number" },
+        { name: "ACCOUNT_OTP", description: "One-time verification code" },
+      ],
+    });
+
+    expect(prompt).toContain("## Session Credentials & Variables");
+    expect(prompt).toContain("- ACCOUNT_PHONE: Test account phone number");
+    expect(prompt).toContain("- ACCOUNT_OTP: One-time verification code");
+    expect(prompt).toContain("You MUST reference them strictly by their exact KEY NAME");
+    expect(prompt).not.toContain("1111111170"); // Never leaks values
+  });
+
+  it("handles empty credentials gracefully", () => {
+    const prompt = buildPrompt({
+      report: "No credentials test",
+      targetName: "local",
+      baseUrl: "http://localhost:3000",
+      allowedOrigins: [],
+      credentialNames: [],
+    });
+
+    expect(prompt).toContain("No credentials were supplied. Ask if the flow needs one.");
   });
 });

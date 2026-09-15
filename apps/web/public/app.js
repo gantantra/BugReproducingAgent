@@ -23,6 +23,10 @@
     ws: document.getElementById("ws"),
     provider: document.getElementById("provider"),
     inv: document.getElementById("inv"),
+    varsBtn: document.getElementById("varsBtn"),
+    varsPanel: document.getElementById("varsPanel"),
+    varsPanelBody: document.getElementById("varsPanelBody"),
+    varsPanelClose: document.getElementById("varsPanelClose"),
   };
 
   /* What the agent is doing while you wait on each step. The pipeline now appears only against
@@ -67,7 +71,27 @@
     targetName: null,
     // The paused authoring session, so a typed answer resumes it.
     authoringSession: null,
+    // A card is offering options and none has been chosen yet; see updateComposer.
+    choicePending: false,
+    // How many times this attempt's script has been sent back to be re-recorded after a replay.
+    repairAttempts: 0,
   };
+
+  /* `state.awaiting` is opened and closed from a dozen places, some of them AFTER the card's
+   * buttons are drawn. As an accessor, every one of those assignments keeps the composer right
+   * without each having to remember to. */
+  {
+    let awaiting = state.awaiting;
+    Object.defineProperty(state, "awaiting", {
+      get: () => awaiting,
+      set: (handler) => {
+        awaiting = handler;
+        updateComposer();
+      },
+      enumerable: true,
+      configurable: true,
+    });
+  }
 
   // Set while rebuilding a restored transcript, so replaying does not re-record it.
   let replaying = false;
@@ -256,34 +280,79 @@
     }, every);
   }
 
+  document.addEventListener("visibilitychange", async () => {
+    if (document.visibilityState === "visible") {
+      const r = await api("/api/session/heartbeat", { method: "POST" });
+      if (r.ok === false && r.code === "SESSION_EXPIRED") {
+        if (heartbeat) clearInterval(heartbeat);
+        heartbeat = null;
+        const c = card("Session expired", true);
+        c.appendChild(node("p", null, "This session lapsed. Refresh to start a new one."));
+        buttons(c, [
+          { label: "Refresh", kind: "primary", onClick: () => window.location.reload() },
+        ]);
+      }
+    }
+  });
+
   /* SSE over fetch. EventSource cannot send an Authorization-style header, and putting the token
    * in the URL would leak it into history; streaming the body by hand keeps it in a header. */
+  /* A stream that ends without its `done` event — the server restarted, the connection dropped, the
+   * job is no longer known — used to end silently. The spinner kept spinning, the page stayed busy,
+   * and a pinned live viewport was never released, so every card and log after it scrolled up
+   * behind it for the rest of the session. Every caller already renders a failed result, so a lost
+   * stream is reported as exactly that. */
   async function streamJob(jobId, onLog, onDone) {
-    const res = await fetch(`/api/job/${jobId}/events`, {
-      headers: { "x-investigator-token": TOKEN },
-    });
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const frames = buffer.split("\n\n");
-      buffer = frames.pop() || "";
-      for (const frame of frames) {
-        const evMatch = frame.match(/^event: (.+)$/m);
-        const dataMatch = frame.match(/^data: (.+)$/m);
-        if (!evMatch || !dataMatch) continue;
-        let payload;
-        try {
-          payload = JSON.parse(dataMatch[1]);
-        } catch {
-          continue;
+    let finished = false;
+    const finish = (payload) => {
+      if (finished) return;
+      finished = true;
+      onDone(payload);
+    };
+
+    try {
+      const res = await fetch(`/api/job/${jobId}/events`, {
+        headers: { "x-investigator-token": TOKEN },
+      });
+      if (!res.ok || !res.body) throw new Error(`the job stream was refused (${res.status})`);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const frames = buffer.split("\n\n");
+        buffer = frames.pop() || "";
+        for (const frame of frames) {
+          const evMatch = frame.match(/^event: (.+)$/m);
+          const dataMatch = frame.match(/^data: (.+)$/m);
+          if (!evMatch || !dataMatch) continue;
+          let payload;
+          try {
+            payload = JSON.parse(dataMatch[1]);
+          } catch {
+            continue;
+          }
+          if (evMatch[1] === "log") onLog(payload.line);
+          else if (evMatch[1] === "done") finish(payload);
         }
-        if (evMatch[1] === "log") onLog(payload.line);
-        else if (evMatch[1] === "done") onDone(payload);
       }
+    } catch (e) {
+      console.warn("Job stream ended abnormally:", e);
+    }
+
+    if (!finished) {
+      finish({
+        status: "failed",
+        exitCode: null,
+        result: {
+          ok: false,
+          code: "STREAM_LOST",
+          message:
+            "The connection to this run was lost before it finished, most likely because the server restarted. It may still have completed on the server, so check before starting it again.",
+        },
+      });
     }
   }
 
@@ -329,6 +398,8 @@
   function appendLogLine(log, line) {
     log.appendChild(document.createTextNode(line + "\n"));
     while (log.childNodes.length > LOG_TAIL_LINES) log.removeChild(log.firstChild);
+    // The log inside a live viewport has a fixed height, so it follows the newest line itself.
+    if (log.classList.contains("live-log")) log.scrollTop = log.scrollHeight;
     scroll();
   }
 
@@ -392,11 +463,19 @@
       const b = node("button", d.kind || "", d.label);
       b.addEventListener("click", async () => {
         [...row.querySelectorAll("button")].forEach((x) => (x.disabled = true));
+        // The choice is made. Any typed answer the card was also waiting for is superseded by it:
+        // left in place, the next thing typed went to a question that had already been answered.
+        // A handler that needs typing next ("Change something") sets its own afterwards.
+        state.choicePending = false;
+        state.awaiting = null;
         await d.onClick(row);
       });
       row.appendChild(b);
     }
     parent.appendChild(row);
+    // Options are on screen: the composer waits for one of them to be chosen.
+    state.choicePending = true;
+    updateComposer();
     return row;
   }
 
@@ -433,9 +512,32 @@
    * Busy is the only time the pipeline is shown. `label` overrides the step's default wording for
    * a wait that is not simply "the current step" — recording a target, say.
    */
+  /* The composer is open only when something is waiting for typed text.
+   *
+   * Closed while the agent is busy, and closed while a card is offering options that have not been
+   * chosen: typing past a "Looks right — go / Change something" card sent the text somewhere the
+   * operator did not intend — a re-submitted report — instead of the decision the card was asking
+   * for. A card that ALSO asks for a typed answer (a plan with a question in it, "I don't know")
+   * sets `state.awaiting`, and that keeps the composer open alongside its buttons. */
+  const CHOOSE_PLACEHOLDER = "Choose one of the options above.";
+  let placeholderBeforeChoice = null;
+
+  function updateComposer() {
+    const choosing = state.choicePending && !state.awaiting;
+    el.input.disabled = state.busy || choosing;
+    if (choosing) {
+      if (placeholderBeforeChoice === null) placeholderBeforeChoice = el.input.placeholder;
+      el.input.placeholder = CHOOSE_PLACEHOLDER;
+    } else if (placeholderBeforeChoice !== null) {
+      // Put back what was there, unless something has since set a placeholder of its own.
+      if (el.input.placeholder === CHOOSE_PLACEHOLDER) el.input.placeholder = placeholderBeforeChoice;
+      placeholderBeforeChoice = null;
+    }
+  }
+
   function setBusy(on, label) {
     state.busy = on;
-    el.input.disabled = on;
+    updateComposer();
 
     if (!on) {
       el.waiting.hidden = true;
@@ -533,6 +635,18 @@
 
   async function submitReport(text) {
     setBusy(true);
+    // The site comes from the report BEFORE intake, so the investigation is opened once, against it.
+    const resolved = await resolveTarget(text);
+    if (resolved === "auth") {
+      renderAuthLoss(text);
+      return;
+    }
+    if (!resolved) {
+      setBusy(false);
+      state.reportText = text;
+      await askForTarget();
+      return;
+    }
     const wrote = await api("/api/report", {
       method: "POST",
       body: JSON.stringify({ text, name: "report.md" }),
@@ -607,81 +721,169 @@
    * `{ kind: "secretRef", envVar: "ACCOUNT_PHONE" }`, and the value is resolved inside the
    * executor at run time — after every model call, and masked out of every artifact.
    */
-  const CREDENTIAL_FIELD =
-    /credential|password|passcode|\botp\b|\bpin\b|login|log in|sign.?in|account|phone|mobile|email|username|user.?id|token/i;
-
-  const PATTERNS = [
-    { name: "ACCOUNT_EMAIL", re: /[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,24}/ },
-    { name: "ACCOUNT_PHONE", re: /(?:\+\d{1,3}[- ]?)?[6-9]\d{9}\b/ },
-    { name: "ACCOUNT_OTP", re: /(?<!\d)\d{4,8}(?!\d)/ },
-  ];
-
-  /* Turn an answer that IS a credential into a NAME the session can reference.
-   *
-   * The authoring session asks for things in plain language — "what account should I sign in
-   * with?" — and the reply is typed into the same box as everything else. Sending that reply
-   * onward verbatim would put the value into a command line and into the model's context, which
-   * is exactly what the credential store exists to prevent.
-   *
-   * So the value goes to the store and the session is told `ACCOUNT_PHONE`. Playwright MCP reads
-   * the value from a secrets file at the moment it types it into the page. The model never learns
-   * it, and neither does the transcript.
-   *
-   * Returns the text to send onward: either the original answer, or a sentence naming what was
-   * stored. */
-  async function credentialsToNames(question, answer) {
-    const looksLikeCredential =
-      CREDENTIAL_FIELD.test(question || "") || CREDENTIAL_FIELD.test(answer);
-    if (!looksLikeCredential) return answer;
-
-    const found = [];
-    let rest = answer;
-    for (const p of PATTERNS) {
-      const m = rest.match(p.re);
-      if (m) {
-        found.push({ name: p.name, value: m[0] });
-        rest = rest.replace(m[0], " ");
+  async function updateVarsCount() {
+    if (!el.varsBtn) return;
+    try {
+      const res = await api("/api/credentials");
+      if (res && res.ok && Array.isArray(res.names)) {
+        el.varsBtn.textContent = `variables (${res.names.length})`;
       }
+    } catch {
+      // Ignore
     }
-    /* A password has no shape to match, so look for one by its label first -- "password Hunter2",
-     * "pwd: x" -- which is how people actually write them. */
-    const labelled = /\b(?:password|passcode|pwd|pass|pin|token|secret)\b\s*[:=]?\s*(\S+)/i.exec(
-      rest
+  }
+
+  /* Turn an answer that may contain credentials or parameters into session variables.
+   *
+   * The user might reply with a phone number (e.g. 1111111170), OTP (e.g. 7982), password,
+   * custom token, or key-value format.
+   *
+   * Instead of hardcoded rigid regexes, we invoke /api/credentials/extract which extracts
+   * clean UPPER_SNAKE_CASE keys with descriptions and stores them securely in the session's
+   * CredentialStore (.secrets.env). The model only ever references the KEY, never the raw value!
+   *
+   * What goes on is the operator's WHOLE reply, with only the values swapped for their names.
+   * It used to be replaced by a line listing the names, which threw away everything else they
+   * said: a reply may carry more than was asked, less, or a correction, and all of it matters. */
+  async function credentialsToNames(question, answer) {
+    if (!answer || !answer.trim()) return answer;
+    try {
+      const res = await api("/api/credentials/extract", {
+        method: "POST",
+        body: JSON.stringify({ text: answer, question }),
+      });
+      if (res && res.ok && Array.isArray(res.extracted) && res.extracted.length > 0) {
+        const storedNames = res.extracted.map((e) => e.name);
+        const storedDetails = res.extracted
+          .map((e) => `${e.name}${e.description ? ` (${e.description})` : ""}`)
+          .join(", ");
+        say(
+          `Stored session variable(s): ${storedDetails}. The raw value stays securely on this machine in .secrets.env and is resolved by Playwright MCP — it never reaches the model or transcript.`
+        );
+        void updateVarsCount();
+        const keys = `(Session variables: ${storedDetails}. Type them by key name; Playwright MCP will supply the value.)`;
+        // No text back means nothing safe to forward: the raw answer holds the values.
+        if (typeof res.referencedText !== "string" || !res.referencedText.trim()) {
+          return `Use the session variable(s): ${storedNames.join(", ")}. Reference them strictly by key name; Playwright MCP will supply the value.`;
+        }
+        return `${res.referencedText.trim()}\n\n${keys}`;
+      }
+    } catch (e) {
+      console.warn("Credential extraction failed, continuing with answer:", e);
+    }
+    return answer;
+  }
+
+  /* The variables open in the side panel, not as a card in the conversation.
+   *
+   * They are a list you work on — add one, delete one, check what is held — and a card pushed into
+   * the transcript freezes that list at the moment it was rendered, then scrolls away while the
+   * real one changes underneath it. Deleting from a stale card was the part that actually misled:
+   * the row vanished from a card halfway up the history, and the card below it still showed the
+   * variable as present. The panel is always the current list, and what it says about a change it
+   * says in the panel, where the change happened. */
+  function openVariablesPanel() {
+    if (!el.varsPanel) return;
+    el.varsPanel.hidden = false;
+    // The transcript and the composer move aside rather than sitting under the panel.
+    document.body.classList.add("panel-open");
+    void renderVariablesPanel();
+  }
+
+  function closeVariablesPanel() {
+    if (el.varsPanel) el.varsPanel.hidden = true;
+    document.body.classList.remove("panel-open");
+  }
+
+  async function renderVariablesPanel(status) {
+    const body = el.varsPanelBody;
+    if (!body) return;
+
+    const res = await api("/api/credentials");
+    const entries = res && res.ok && Array.isArray(res.entries) ? res.entries : [];
+    body.replaceChildren();
+
+    body.appendChild(
+      node(
+        "p",
+        "hint",
+        "Held on this machine in .secrets.env. The model is given the key name and description only; Playwright supplies the value when the browser types it."
+      )
     );
-    if (labelled) {
-      found.push({ name: "ACCOUNT_PASSWORD", value: labelled[1] });
-      rest = rest.replace(labelled[1], " ");
+
+    if (entries.length === 0) {
+      body.appendChild(
+        node(
+          "p",
+          "hint",
+          "Nothing stored yet. A value you give in an answer is picked up automatically, or add one below."
+        )
+      );
     }
 
-    /* And if the QUESTION was about credentials but nothing in the answer matched a shape, the
-     * whole answer is the credential. Erring the other way sends it onward in the clear, which is
-     * what happened: asked "what test account credentials should I use?", the reply's email was
-     * captured and its password travelled as text. In a credential context, unmatched means
-     * unrecognised, not harmless. */
-    if (found.length === 0) {
-      // Named after what was asked for, so the session referencing it can tell what it is.
-      const q = question || "";
-      const name = /password|passcode|pwd/i.test(q)
-        ? "ACCOUNT_PASSWORD"
-        : /otp|one.?time/i.test(q)
-          ? "ACCOUNT_OTP"
-          : /username|user name|login/i.test(q)
-            ? "ACCOUNT_USERNAME"
-            : "ACCOUNT_SECRET";
-      found.push({ name, value: answer.trim() });
+    for (const entry of entries) {
+      const row = node("div", "var-row");
+      const left = node("div");
+      left.appendChild(node("span", "var-name", entry.name));
+      if (entry.description) left.appendChild(node("div", "var-desc", entry.description));
+
+      const right = node("div");
+      right.style.display = "flex";
+      right.style.alignItems = "center";
+      right.appendChild(node("span", "var-value", "••••••••"));
+
+      const del = node("button", "danger", "Delete");
+      del.style.padding = "4px 9px";
+      del.addEventListener("click", async () => {
+        del.disabled = true;
+        await api(`/api/credentials?name=${encodeURIComponent(entry.name)}`, { method: "DELETE" });
+        void updateVarsCount();
+        // Re-read rather than just removing the row: the list on disk is the answer.
+        void renderVariablesPanel(`Removed ${entry.name}.`);
+      });
+      right.appendChild(del);
+
+      row.appendChild(left);
+      row.appendChild(right);
+      body.appendChild(row);
     }
 
-    const stored = [];
-    for (const c of found) {
-      const res = await api("/api/credentials", { method: "POST", body: JSON.stringify(c) });
-      if (res && res.ok) stored.push(res.name);
-    }
-    if (stored.length === 0) return answer; // Storing failed; do not silently drop what they typed.
+    const add = node("div", "var-add");
+    const nameInput = document.createElement("input");
+    nameInput.placeholder = "KEY_NAME (e.g. USER_PIN)";
+    const valInput = document.createElement("input");
+    valInput.type = "password";
+    valInput.placeholder = "Value";
+    const descInput = document.createElement("input");
+    descInput.placeholder = "What it is (e.g. test account PIN)";
 
-    say(
-      `Stored ${stored.join(", ")} for this session. The value stays on this machine and is typed straight into the page — it never reaches the model or the transcript.`
-    );
-    return `Use the credential named ${stored.join(" and ")}. Reference it by name; the browser tool will supply the value.`;
+    const addBtn = node("button", "primary", "Add variable");
+    addBtn.addEventListener("click", async () => {
+      const name = nameInput.value.trim().toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+      const value = valInput.value.trim();
+      const description = descInput.value.trim();
+      if (!name || !value) {
+        void renderVariablesPanel("A key name and a value are both needed.");
+        return;
+      }
+      addBtn.disabled = true;
+      const saved = await api("/api/credentials", {
+        method: "POST",
+        body: JSON.stringify({ name, value, description }),
+      });
+      void updateVarsCount();
+      void renderVariablesPanel(
+        saved && saved.ok ? `Added ${name}.` : saved?.message || "That variable could not be saved."
+      );
+    });
+
+    add.appendChild(nameInput);
+    add.appendChild(valInput);
+    add.appendChild(descInput);
+    add.appendChild(addBtn);
+    body.appendChild(add);
+
+    body.appendChild(node("div", "side-panel-status", status || ""));
   }
 
   const DEFAULT_PLACEHOLDER =
@@ -698,96 +900,107 @@
    * than here. */
   async function ensureTarget() {
     if (state.targetName) return true;
-    const existing = await api("/api/targets");
-    const targets = (existing && existing.targets) || [];
-    if (targets.length > 0) {
-      state.targetName = targets[0].name;
-      say(`Using the configured target “${targets[0].name}” (${targets[0].baseUrl}).`);
-      return true;
-    }
+    const resolved = await resolveTarget(state.reportText || "");
+    if (resolved === true) return true;
     await askForTarget();
     return false;
   }
 
-  async function askForTarget() {
-    if (state.targetName) {
-      offerAuthoring();
-      return;
+  /* The site to run on, without asking for what the operator already said.
+   *
+   * The web address in the report being sent wins: it is the most recent thing the operator said
+   * about where this happens. A target already configured for the session is the fallback for a
+   * report that names no address — checked second, because checked first it would run a new report
+   * about a different site against whatever site was recorded earlier in the session. Only a report
+   * with no address and no configured target leaves this unresolved, and then the page asks for the
+   * one thing missing — the address — and nothing else.
+   *
+   * It used to ask for the address even when the report contained it, then for an environment
+   * label that changed nothing the run does (`test` and `staging` are treated identically), and
+   * answering re-submitted the report, opening a second investigation for the same bug.
+   *
+   * Returns true when a target is set, false when one must be asked for, "auth" when the session
+   * token has been lost and the page must re-acquire it. */
+  async function resolveTarget(text) {
+    if (state.targetName) return true;
+
+    const derived = await api("/api/targets/from-report", {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    });
+    if (isAuthLoss(derived)) return "auth";
+    if (derived && derived.ok === true && derived.target) {
+      state.targetName = derived.target.name;
+      say(`Running it on ${derived.target.baseUrl} — the site in your report.`);
+      return true;
     }
+
     const existing = await api("/api/targets");
+    if (isAuthLoss(existing)) return "auth";
     const targets = (existing && existing.targets) || [];
     if (targets.length > 0) {
       state.targetName = targets[0].name;
-      say(`Using the configured target “${targets[0].name}” (${targets[0].baseUrl}).`);
-      offerAuthoring();
-      return;
+      say(`Running it on ${targets[0].baseUrl}.`);
+      return true;
     }
+    return false;
+  }
 
-    const c = card("Where should I run this?");
+  /* Reached only when the report names no web address: ask for that, and only that. */
+  async function askForTarget() {
+    const c = card("Which site should I run this on?");
     c.appendChild(
       node(
         "p",
         null,
-        "I have no target for this workspace and I will not guess one. Give me the base URL, then tell me what kind of environment it is."
+        "Your report doesn't include a web address. Paste the address of the site where this happens."
       )
     );
 
     const urlRow = node("div", "row");
     const url = document.createElement("input");
     url.type = "text";
-    url.placeholder = "https://staging.example.com";
+    url.placeholder = "https://www.example.com";
     url.style.flex = "1";
     url.style.minWidth = "260px";
     urlRow.appendChild(url);
     c.appendChild(urlRow);
 
-    c.appendChild(
-      node(
-        "p",
-        null,
-        "There is deliberately no “production”. Choosing one of these is you asserting you are authorised to act on it — the session will do on this site whatever the bug report describes, including deleting things, because that is what reproducing a delete bug means."
-      )
-    );
-
-    const choose = async (classification) => {
-      setBusy(true, "Recording the target…");
-      const written = await api("/api/targets", {
+    const use = async () => {
+      // Enter in the address box is a choice too; without this the composer stayed closed if
+      // recording the site then failed on that path.
+      state.choicePending = false;
+      setBusy(true, "Recording the site…");
+      // The same derivation as an address found in a report, so both are validated one way.
+      const written = await api("/api/targets/from-report", {
         method: "POST",
-        body: JSON.stringify({
-          name: `target-${classification}`,
-          baseUrl: url.value.trim(),
-          classification,
-        }),
+        body: JSON.stringify({ text: url.value.trim() }),
       });
       setBusy(false);
-      if (written.ok !== true) {
-        showFailure(written, "That target was refused");
+      if (!written || written.ok !== true || !written.target) {
+        showFailure(
+          written && written.ok === false
+            ? written
+            : { code: "BAD_PARAM", message: "That is not a web address. It needs to start with http:// or https://." },
+          "That address was not accepted"
+        );
         await askForTarget();
         return;
       }
       state.targetName = written.target.name;
-      const done = card("Target recorded");
-      kv(done, [
-        ["name", written.target.name],
-        ["base url", written.target.baseUrl],
-        ["classification", written.target.classification],
-        ["allowed origins", written.target.allowedOrigins.join(", ")],
-        // Reads the actual setting rather than asserting one. It said "blocked" long after
-        // `blockDestructiveActions` began defaulting to false, which is the kind of stale
-        // reassurance that is worse than saying nothing.
-        ["destructive actions", "allowed — this is an in-house QA target you named"],
-      ]);
-      // Re-open the investigation against the target. The binding happens at intake, so an
-      // investigation opened before the target existed would still plan against nothing.
-      say("Re-opening the investigation against this target…");
+      say(`Running it on ${written.target.baseUrl}.`);
+      // First intake, not a second one: submitReport stopped before opening anything to ask this.
       await submitReport(state.reportText);
     };
 
-    buttons(c, [
-      { label: "Test environment", kind: "primary", onClick: () => choose("test") },
-      { label: "Staging", onClick: () => choose("staging") },
-      { label: "Local fixture", onClick: () => choose("fixture") },
-    ]);
+    url.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        void use();
+      }
+    });
+    buttons(c, [{ label: "Use this site", kind: "primary", onClick: use }]);
+    url.focus();
   }
 
   function offerPropose() {
@@ -1057,7 +1270,7 @@
       c.appendChild(node("h4", null, "Recording")).style.margin = "12px 0 0";
       const v = document.createElement("video");
       v.controls = true;
-      v.src = `/api/artifact?investigation=${encodeURIComponent(state.investigation)}&kind=video&sha=${encodeURIComponent(video)}`;
+      v.src = `/api/artifact?investigation=${encodeURIComponent(state.investigation)}&kind=video&sha=${encodeURIComponent(video)}&token=${encodeURIComponent(TOKEN)}`;
       c.appendChild(v);
       say(
         "Review the recording above. If the steps are wrong, say what to change and I will re-interpret before running more."
@@ -1185,8 +1398,63 @@
     ]);
   }
 
+  /* The viewport stays pinned while its session runs and the steps scroll up behind it, so the
+   * browser and the latest steps are on screen together instead of one pushing the other away.
+   * `end()` unpins it once the job finishes, so the finished log reads normally. */
+  function createLiveViewport(inner) {
+    // `.card` clips with overflow:hidden, which would pin the viewport to the card, not the page.
+    inner.parentElement.classList.add("live");
+    const vp = node("div", "live-viewport");
+    const header = node("div", "live-viewport-header");
+    const badge = node("span", "live-badge");
+    badge.innerHTML = '<span class="live-dot"></span> LIVE BROWSER VIEWPORT';
+    const status = node("span", "live-status", "Initializing browser…");
+    header.appendChild(badge);
+    header.appendChild(status);
+    vp.appendChild(header);
+
+    const frame = node("div", "live-viewport-frame");
+    const img = node("img");
+    img.style.display = "none";
+    img.alt = "Browser Viewport";
+    const placeholder = node("div", "live-placeholder");
+    placeholder.innerHTML = '<span class="spin"></span> Waiting for page render…';
+    img.onload = () => {
+      img.style.display = "block";
+      placeholder.style.display = "none";
+      // A phone-shaped page puts the steps beside the frame rather than below it.
+      vp.classList.toggle("portrait", img.naturalHeight > img.naturalWidth);
+    };
+    img.onerror = () => {
+      placeholder.style.display = "flex";
+      placeholder.textContent = "Error rendering screenshot";
+    };
+    frame.appendChild(img);
+    frame.appendChild(placeholder);
+
+    // The steps live inside the pinned block, beside or below the browser — never behind it.
+    const body = node("div", "live-viewport-body");
+    body.appendChild(frame);
+    const log = node("div", "log live-log");
+    body.appendChild(log);
+    vp.appendChild(body);
+    return {
+      vp,
+      header,
+      badge,
+      status,
+      frame,
+      img,
+      placeholder,
+      log,
+      end: () => vp.classList.add("ended"),
+    };
+  }
+
   async function startAuthoring(extra) {
     setStep("reproduce");
+    // A new authoring run gets its own repair budget.
+    state.repairAttempts = 0;
     const planning = !extra || extra.approvePlan !== true;
     setBusy(
       true,
@@ -1210,14 +1478,34 @@
       '<span class="spin"></span> ' +
       (planning ? "no browser yet — writing the plan first…" : "driving the browser…");
     c.appendChild(spinner);
-    const log = node("div", "log");
-    c.appendChild(log);
+
+    const viewport = !planning ? createLiveViewport(c) : null;
+    if (viewport) c.appendChild(viewport.vp);
+
+    // With a browser, the steps are inside the pinned viewport; without one (planning), below.
+    const log = viewport ? viewport.log : node("div", "log");
+    if (!viewport) c.appendChild(log);
 
     await streamJob(
       started.jobId,
-      (line) => appendLogLine(log, line),
+      (line) => {
+        const m = line.match(/^\[SCREENSHOT:(.+)\]$/);
+        // A frame arrives about once a second. It replaces the picture only: the header keeps the
+        // current step, and the scroll position is left where the operator put it.
+        if (m && viewport) {
+          const imgUrl =
+            m[1] + (m[1].includes("?") ? "&" : "?") + "token=" + encodeURIComponent(TOKEN) + "&_t=" + Date.now();
+          viewport.img.src = imgUrl;
+          return;
+        }
+        if (viewport && (line.startsWith("🌐 ") || line.startsWith("👆 ") || line.startsWith("⌨️ ") || line.startsWith("⏳ ") || line.startsWith("🔍 ") || line.startsWith("📸 ") || line.startsWith("📝 "))) {
+          viewport.status.textContent = line;
+        }
+        appendLogLine(log, line);
+      },
       (payload) => {
         spinner.remove();
+        if (viewport) viewport.end();
         setBusy(false);
         handleAuthoringOutcome(payload.result || {});
       }
@@ -1289,6 +1577,21 @@
     const plan = node("pre", "plan");
     plan.textContent = (r.plan || r.message || "").trim() || "(the session returned no plan)";
     c.appendChild(plan);
+
+    // The browser is launched as this platform. Shown before approval, so a wrong reading of
+    // "android chrome" or "mobile web only" is caught before anything opens.
+    if (r.platform && r.platform.description) {
+      const why =
+        r.platform.note ||
+        (r.platform.source === "default" ? "The default, because nothing you said named a platform." : "");
+      c.appendChild(
+        node(
+          "p",
+          "hint",
+          `Browser: ${r.platform.description}. ${why} To use a different one, say so with "Change something".`
+        )
+      );
+    }
 
     /* A plan with gaps in it ends on a question rather than a bare sentinel, and that is the
      * normal case -- the first real planning run asked which account to sign in as and what
@@ -1364,7 +1667,7 @@
       node(
         "p",
         null,
-        "Type your answer below and press Enter. It keeps the browser open and picks up exactly where it stopped — nothing is repeated."
+        "Type your answer below and press Enter. It picks up where it stopped: the browser restarts on the same profile with sign-ins kept, and the steps so far stay in the script."
       )
     );
     buttons(c, [
@@ -1387,20 +1690,22 @@
     state.awaiting = handler;
   }
 
-  async function resumeAuthoring(answer) {
+  /* `repair`: re-record the script from where its replay stopped, instead of answering a question.
+   * The CLI reads that evidence itself, so there is no answer to send or echo. */
+  async function resumeAuthoring(answer, repair = false) {
     el.input.placeholder = DEFAULT_PLACEHOLDER;
     if (!state.authoringSession) {
       say("I lost track of that session. Starting a fresh one with what you have told me.");
       await startAuthoring({});
       return;
     }
-    say(answer, "you");
-    setBusy(true, "Picking up where it left off…");
+    if (!repair) say(answer, "you");
+    setBusy(true, repair ? "Recording the flow again from where the replay stopped…" : "Picking up where it left off…");
 
     const started = await act("author", {
       investigation: state.investigation,
       resume: state.authoringSession,
-      answer,
+      ...(repair ? { repair: true } : { answer }),
     });
     if (started.ok !== true || !started.jobId) {
       setBusy(false);
@@ -1412,14 +1717,30 @@
     const spinner = node("p");
     spinner.innerHTML = '<span class="spin"></span> back in the browser…';
     c.appendChild(spinner);
-    const log = node("div", "log");
-    c.appendChild(log);
+
+    const viewport = createLiveViewport(c);
+    c.appendChild(viewport.vp);
+
+    const log = viewport.log;
 
     await streamJob(
       started.jobId,
-      (line) => appendLogLine(log, line),
+      (line) => {
+        const m = line.match(/^\[SCREENSHOT:(.+)\]$/);
+        if (m) {
+          const imgUrl =
+            m[1] + (m[1].includes("?") ? "&" : "?") + "token=" + encodeURIComponent(TOKEN) + "&_t=" + Date.now();
+          viewport.img.src = imgUrl;
+          return;
+        }
+        if (line.startsWith("🌐 ") || line.startsWith("👆 ") || line.startsWith("⌨️ ") || line.startsWith("⏳ ") || line.startsWith("🔍 ") || line.startsWith("📸 ") || line.startsWith("📝 ")) {
+          viewport.status.textContent = line;
+        }
+        appendLogLine(log, line);
+      },
       (payload) => {
         spinner.remove();
+        if (viewport) viewport.end();
         setBusy(false);
         handleAuthoringOutcome(payload.result || {});
       }
@@ -1441,9 +1762,67 @@
 
   /* What a finished session hands over: a script that runs anywhere Playwright does, and the
    * repetitions that turn one reproduction into a failure rate. */
+  /* A finished session's script is replayed by the agent before anyone is offered N runs of it.
+   *
+   * Thirty runs of a script that could not get past its own sign-up screen reported "30 of 30
+   * failed", none of it the bug. Two replays catch that in a minute: a replay that stops BEFORE the
+   * final check goes back to the session with where it stopped and what the page showed, and the
+   * session records the flow again. A replay that reaches the check — pass or fail — means the
+   * script works, whatever the application then did, so it is never sent back: that failure may be
+   * the bug. */
+  const VERIFY_RUNS = 2;
+  const MAX_REPAIRS = 2;
+
   function renderAuthored(r) {
     setStep("approve");
     const c = card("Reproduction ready");
+    kv(c, [
+      ["steps", r.suite && r.suite.steps],
+      ["script", r.suite && r.suite.dir],
+      ["only on some runs", r.suite && r.suite.optionalScreens && r.suite.optionalScreens.join(", ")],
+    ]);
+    if (r.suite && r.suite.optionalRefused) {
+      c.appendChild(node("p", "hint", `Kept mandatory: ${r.suite.optionalRefused.join("; ")}`));
+    }
+    c.appendChild(
+      node("p", null, `Checking that it replays: the agent runs it ${VERIFY_RUNS} times before offering more.`)
+    );
+    void verifyScript(r);
+  }
+
+  function verifyScript(r) {
+    return runSuite(VERIFY_RUNS, (result) => {
+      if (!result || result.ok !== true) {
+        showFailure(result || {}, "The script could not be replayed");
+        renderRunControls(r, "It could not be replayed automatically, so it has not been checked.");
+        return;
+      }
+      if (!result.stoppedEarly) {
+        const atCheck = result.failedAtCheck
+          ? ` The final check failed in ${result.failedAtCheck} of them, which may already be the bug.`
+          : "";
+        renderRunControls(r, `Replayed ${VERIFY_RUNS} times and reached the final check every time.${atCheck}`);
+        return;
+      }
+      if (state.repairAttempts >= MAX_REPAIRS) {
+        renderRunControls(
+          r,
+          `After ${MAX_REPAIRS} repairs it still stops before the final check when replayed: ${result.summary}. Running it many times now would mostly measure that, not the bug.`
+        );
+        return;
+      }
+      state.repairAttempts += 1;
+      say(
+        `The replay stopped before the final check: ${result.summary}. Sending that back to the session to record the flow again (repair ${state.repairAttempts} of ${MAX_REPAIRS})…`
+      );
+      void resumeAuthoring(null, true);
+    });
+  }
+
+  function renderRunControls(r, note) {
+    setStep("approve");
+    const c = card("Ready to measure");
+    if (note) c.appendChild(node("p", null, note));
     kv(c, [
       ["steps", r.suite && r.suite.steps],
       ["script", r.suite && r.suite.dir],
@@ -1463,15 +1842,106 @@
         "Run it many times to find out how often it fails. One pass proves nothing about a bug that only shows up sometimes."
       )
     );
+    /* The count box and the button next to it. Pressing it runs the script here rather than
+     * printing a command to paste into a terminal: it is the operator's own script, against the
+     * target they named, and the count they chose is the decision. */
+    const row = node("div", "row");
+    const label = node("span", "mono", "run it");
+    label.style.alignSelf = "center";
+    const count = document.createElement("input");
+    count.type = "number";
+    count.min = "1";
+    count.max = "500";
+    count.value = "30";
+    count.style.width = "90px";
+    const times = node("span", "mono", "×");
+    times.style.alignSelf = "center";
+    row.appendChild(label);
+    row.appendChild(count);
+    row.appendChild(times);
+    c.appendChild(row);
+
+    const chosen = () => {
+      const n = Number.parseInt(count.value, 10);
+      return Number.isInteger(n) && n >= 1 && n <= 500 ? n : 30;
+    };
+
     buttons(c, [
-      { label: "Run it 30×", kind: "primary", onClick: () => say(rerunHint(r, 30)) },
-      { label: "Run it 100×", onClick: () => say(rerunHint(r, 100)) },
+      { label: "Run it", kind: "primary", onClick: () => runSuite(chosen()) },
+      { label: "Run it 30×", onClick: () => runSuite(30) },
+      { label: "Run it 100×", onClick: () => runSuite(100) },
     ]);
   }
 
-  function rerunHint(r, n) {
-    const dir = (r.suite && r.suite.dir) || "<the suite folder>";
-    return `In a terminal:\n\n  cd "${dir}"\n  npm i\n  npx playwright test --repeat-each=${n}\n\nYou get a pass/fail count and a video per run.`;
+  /** Run the authored suite N times here, streaming what the runner prints. */
+  /* `onResult` takes the finished result instead of the usual outcome card — used by the replay
+   * check that runs before anyone is offered N runs. */
+  async function runSuite(repetitions, onResult) {
+    setStep("record");
+    setBusy(true, onResult ? "Checking that the script replays…" : `Running the script ${repetitions}×…`);
+    const started = await act("rerun", { investigation: state.investigation, repeat: repetitions });
+    if (started.ok !== true || !started.jobId) {
+      setBusy(false);
+      showFailure(resultOf(started), "Could not start the runs");
+      return;
+    }
+
+    const c = card(onResult ? `Checking that the script replays (${repetitions} runs)` : `Running the script ${repetitions}×`);
+    const spinner = node("p");
+    spinner.innerHTML =
+      '<span class="spin"></span> the first run installs the suite&rsquo;s own Playwright, then it runs…';
+    c.appendChild(spinner);
+    const log = node("div", "log");
+    c.appendChild(log);
+
+    await streamJob(
+      started.jobId,
+      (line) => appendLogLine(log, line),
+      (payload) => {
+        spinner.remove();
+        setBusy(false);
+        const r = payload.result || {};
+        if (onResult) {
+          onResult(r);
+          return;
+        }
+        if (r.ok !== true) {
+          showFailure(r, "The runs did not complete");
+          return;
+        }
+        renderSuiteOutcome(r);
+      }
+    );
+  }
+
+  /* A failure count is the RESULT, not an error: an intermittent bug is a rate, and the whole
+   * point of running it N times is to find out what that rate is. */
+  function renderSuiteOutcome(r) {
+    const c = card("Runs complete");
+    // Where runs failed matters more than how many: only a failure AT the final check is the bug.
+    kv(c, [
+      ["ran", r.repetitions],
+      ["reached the final check", r.reachedCheck],
+      ["failed at the final check", r.failedAtCheck],
+      ["stopped before the check", r.stoppedEarly],
+      ["videos", r.artifactsDir],
+    ]);
+    c.appendChild(node("p", null, r.summary || ""));
+    c.appendChild(
+      node(
+        "p",
+        null,
+        r.stoppedEarly > 0
+          ? "Runs that stopped before the final check are not counted against the bug: they never got far enough to see it. It usually means the site took a path the script did not expect."
+          : r.failedAtCheck > 0
+            ? "That is a failure rate measured from real runs — the number to put in the bug report."
+            : "Every run passed. Either the fault did not appear this time, or the closing check does not catch it. Running it more times is the cheapest way to tell."
+      )
+    );
+    buttons(c, [
+      { label: "Run it 30× more", kind: "primary", onClick: () => runSuite(30) },
+      { label: "Run it 100× more", onClick: () => runSuite(100) },
+    ]);
   }
 
   async function onSend() {
@@ -1560,6 +2030,17 @@
     say(
       "I investigate intermittent Chrome issues by reproducing them many times and contrasting the runs that fail against the runs that pass.\n\nDescribe the bug below — the URL, the steps, what you expected, what actually happens, and roughly how often. I will turn it into a structured flow, show you exactly where I think it breaks, and ask before anything runs."
     );
+    if (el.varsBtn) {
+      el.varsBtn.addEventListener("click", () => {
+        if (el.varsPanel && !el.varsPanel.hidden) closeVariablesPanel();
+        else openVariablesPanel();
+      });
+      if (el.varsPanelClose) el.varsPanelClose.addEventListener("click", closeVariablesPanel);
+      document.addEventListener("keydown", (ev) => {
+        if (ev.key === "Escape") closeVariablesPanel();
+      });
+    }
+    void updateVarsCount();
     void checkProvider();
   }
 

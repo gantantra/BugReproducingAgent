@@ -45,10 +45,17 @@ const CREDENTIAL_NAME = /^[A-Z][A-Z0-9_]*$/;
 /** Kept at the workspace root, beside `config.yaml`. `*-workspace/` is gitignored wholesale. */
 export const CREDENTIALS_FILENAME = ".credentials.json";
 
+export interface CredentialEntry {
+  name: string;
+  description?: string;
+}
+
 interface CredentialFile {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   /** name -> value. Values are plain: this is a local convenience, not a vault. */
   credentials: Record<string, string>;
+  /** name -> description. Describes what the key is for, for model prompting. */
+  descriptions?: Record<string, string>;
 }
 
 export class CredentialStore implements SecretStore {
@@ -70,7 +77,7 @@ export class CredentialStore implements SecretStore {
   }
 
   private read(): CredentialFile {
-    if (!existsSync(this.path)) return { schemaVersion: 1, credentials: {} };
+    if (!existsSync(this.path)) return { schemaVersion: 2, credentials: {}, descriptions: {} };
     let parsed: unknown;
     try {
       parsed = JSON.parse(readFileSync(this.path, "utf8"));
@@ -81,12 +88,19 @@ export class CredentialStore implements SecretStore {
       });
     }
     const creds = (parsed as CredentialFile | null)?.credentials;
-    if (!creds || typeof creds !== "object") return { schemaVersion: 1, credentials: {} };
-    const out: Record<string, string> = {};
+    if (!creds || typeof creds !== "object") return { schemaVersion: 2, credentials: {}, descriptions: {} };
+    const outCreds: Record<string, string> = {};
     for (const [k, v] of Object.entries(creds)) {
-      if (CREDENTIAL_NAME.test(k) && typeof v === "string" && v.length > 0) out[k] = v;
+      if (CREDENTIAL_NAME.test(k) && typeof v === "string" && v.length > 0) outCreds[k] = v;
     }
-    return { schemaVersion: 1, credentials: out };
+    const descs = (parsed as CredentialFile | null)?.descriptions;
+    const outDescs: Record<string, string> = {};
+    if (descs && typeof descs === "object") {
+      for (const [k, v] of Object.entries(descs)) {
+        if (CREDENTIAL_NAME.test(k) && typeof v === "string" && v.length > 0) outDescs[k] = v;
+      }
+    }
+    return { schemaVersion: 2, credentials: outCreds, descriptions: outDescs };
   }
 
   private write(file: CredentialFile): void {
@@ -102,13 +116,33 @@ export class CredentialStore implements SecretStore {
     return Object.keys(this.read().credentials).sort();
   }
 
-  set(name: string, value: string): void {
+  /** The declared entries with names and optional descriptions. */
+  entries(): CredentialEntry[] {
+    const file = this.read();
+    return Object.keys(file.credentials)
+      .sort()
+      .map((name) => ({
+        name,
+        ...(file.descriptions?.[name] ? { description: file.descriptions[name] } : {}),
+      }));
+  }
+
+  /** The declared descriptions map. */
+  descriptions(): Record<string, string> {
+    return { ...(this.read().descriptions ?? {}) };
+  }
+
+  set(name: string, value: string, description?: string): void {
     CredentialStore.assertName(name);
     if (typeof value !== "string" || value.length === 0) {
       fail("INPUT_INVALID", "A credential value must be a non-empty string", { context: { name } });
     }
     const file = this.read();
     file.credentials[name] = value;
+    if (description && typeof description === "string" && description.trim().length > 0) {
+      file.descriptions = file.descriptions || {};
+      file.descriptions[name] = description.trim();
+    }
     this.write(file);
   }
 
@@ -117,6 +151,9 @@ export class CredentialStore implements SecretStore {
     const file = this.read();
     if (!(name in file.credentials)) return false;
     delete file.credentials[name];
+    if (file.descriptions && name in file.descriptions) {
+      delete file.descriptions[name];
+    }
     this.write(file);
     return true;
   }

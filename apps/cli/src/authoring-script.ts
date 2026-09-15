@@ -135,6 +135,121 @@ function fencedJsonBlocks(markdown: string): string[] {
   return blocks;
 }
 
+/**
+ * A screen the authoring session went through that a later run may not see, and how many actions
+ * it took on it.
+ *
+ * WHY THIS EXISTS
+ *
+ * A recorded script follows exactly one path, and it is replayed many times in a row — so a flow
+ * that changes the state it starts from takes a different path on the next run. Measured on a real
+ * site: the session signed in with a test number that had no account, so the site showed a sign-up
+ * form, and the script recorded filling it in. The first re-run created the account and stopped
+ * short of deleting it; from then on the number was registered, the site signed straight in, and
+ * 29 runs waited for a sign-up form that never came. All thirty were counted as failures, and none
+ * of them was the bug.
+ *
+ * Only the session knows which screens are like that, so it declares them —
+ * `OPTIONAL: "Full Name" | 5` — and the script handles such a screen when it shows and skips it
+ * when the flow goes straight on. The declaration is checked, never trusted: a trigger that matches
+ * no recorded action, or a block that would swallow a navigation or a check, is refused by name and
+ * those steps stay mandatory.
+ */
+export interface OptionalScreen {
+  /** Text in the first recorded action on that screen, such as the control's accessible name. */
+  trigger: string;
+  /** How many actions the session took on that screen. Screenshots and snapshots do not count. */
+  actions: number;
+}
+
+// Backticks count as quotes: a model writing `OPTIONAL: \`Accept cookies\` | 1` means the text inside them.
+const OPTIONAL_LINE = /^\s*[*_]*OPTIONAL:\s*[*_]*\s*["'“”`]?(.+?)["'“”`]?\s*\|\s*(\d{1,3})\s*[*_`]*\s*$/i;
+
+/** The `OPTIONAL:` declarations in a session's final message, as written. */
+export function readOptionalScreens(message: string): OptionalScreen[] {
+  const screens: OptionalScreen[] = [];
+  for (const line of message.split(/\r?\n/)) {
+    const m = OPTIONAL_LINE.exec(line);
+    if (!m) continue;
+    const trigger = m[1]!.trim();
+    const actions = Number.parseInt(m[2]!, 10);
+    if (trigger.length > 0 && actions > 0) screens.push({ trigger, actions });
+  }
+  return screens;
+}
+
+const INTERACTION =
+  /^await (page\..+)\.(click|dblclick|fill|check|uncheck|press|selectOption|hover|setInputFiles)\(.*\);?$/;
+const CHECK = /^await (page\..+)\.waitFor\(\{.*\}\);?$/;
+
+function isScreenshot(step: AuthoredStep): boolean {
+  return step.tool === "browser_take_screenshot" || step.code.includes("page.screenshot(");
+}
+
+/** The locator a step acts on or waits for; null for navigation, sleeps and screenshots. */
+export function locatorOfStep(code: string): string | null {
+  const trimmed = code.trim();
+  if (trimmed.includes("\n")) return null;
+  return INTERACTION.exec(trimmed)?.[1] ?? CHECK.exec(trimmed)?.[1] ?? null;
+}
+
+export interface OptionalBlock {
+  /** Index of the first step in the block. */
+  start: number;
+  /** Index one past the last step in the block. */
+  end: number;
+  trigger: string;
+  /** The first action's locator: its appearing is what "this screen is showing" means. */
+  locator: string;
+}
+
+/** Where each declared screen sits in the recorded steps, or why a declaration was refused. */
+export function planOptionalBlocks(
+  steps: readonly AuthoredStep[],
+  screens: readonly OptionalScreen[]
+): { blocks: OptionalBlock[]; refused: string[] } {
+  const blocks: OptionalBlock[] = [];
+  const refused: string[] = [];
+  let from = 0;
+
+  for (const screen of screens) {
+    const start = steps.findIndex(
+      (s, i) => i >= from && INTERACTION.test(s.code.trim()) && s.code.includes(screen.trigger)
+    );
+    if (start === -1) {
+      refused.push(`"${screen.trigger}": no recorded action mentions it, so nothing was made optional`);
+      continue;
+    }
+
+    let end = start;
+    let counted = 0;
+    let problem: string | null = null;
+    for (let i = start; i < steps.length && counted < screen.actions; i++) {
+      const step = steps[i]!;
+      if (INTERACTION.test(step.code.trim())) {
+        counted++;
+        end = i + 1;
+      } else if (isScreenshot(step)) {
+        end = i + 1;
+      } else {
+        problem = `the block would include \`${step.code.trim().split("\n")[0]!.slice(0, 120)}\`, a navigation or a check rather than an action on that screen`;
+        break;
+      }
+    }
+    if (!problem && counted < screen.actions) {
+      problem = `it declares ${screen.actions} actions but only ${counted} were recorded from there`;
+    }
+    if (problem) {
+      refused.push(`"${screen.trigger}": ${problem}, so those steps stay mandatory`);
+      continue;
+    }
+
+    blocks.push({ start, end, trigger: screen.trigger, locator: locatorOfStep(steps[start]!.code)! });
+    from = end;
+  }
+  return { blocks, refused };
+}
+
 export interface RenderSpecOptions {
   /** Shown as the test name, so a failing run names the bug rather than a file. */
   title: string;
@@ -143,6 +258,8 @@ export interface RenderSpecOptions {
   reportSummary?: string;
   /** Recorded so a reader knows the script was authored, not hand-written. */
   authoredAt: string;
+  /** Screens the session declared as appearing on some runs only. */
+  optional?: readonly OptionalScreen[];
 }
 
 /**
@@ -156,7 +273,40 @@ export function renderAuthoredSpec(
   steps: readonly AuthoredStep[],
   opts: RenderSpecOptions
 ): string {
-  const body = steps.map((s) => `    ${s.code.replace(/\n/g, "\n    ")}`);
+  const indent = (code: string, pad: string): string => `${pad}${code.replace(/\n/g, `\n${pad}`)}`;
+  const { blocks } = planOptionalBlocks(steps, opts.optional ?? []);
+
+  const body: string[] = [];
+  let optionalCount = 0;
+  for (let i = 0; i < steps.length; ) {
+    const block = blocks.find((b) => b.start === i);
+    if (!block) {
+      body.push(indent(steps[i]!.code, "    "));
+      i++;
+      continue;
+    }
+
+    optionalCount++;
+    const name = `optional${optionalCount}`;
+    /* Waiting for the screen OR for whatever comes right after it decides the branch as soon as
+     * the site does: no fixed pause on the runs that go straight on. When the next step is a
+     * navigation there is nothing to race against, and the screen gets ten seconds to show. */
+    const after = steps.slice(block.end).find((s) => !isScreenshot(s));
+    const next = after ? locatorOfStep(after.code) : null;
+    const detect = next
+      ? `await ${name}.or(${next}).first().waitFor({ state: "visible" }).then(() => ${name}.isVisible(), () => false)`
+      : `await ${name}.waitFor({ state: "visible", timeout: 10_000 }).then(() => true, () => false)`;
+
+    body.push(
+      `    // Shown on some runs only, so the authoring session marked it optional (${JSON.stringify(block.trigger)}):`,
+      `    // handled when it appears, skipped when the flow goes straight on.`,
+      `    const ${name} = ${block.locator};`,
+      `    if (${detect}) {`,
+      ...steps.slice(block.start, block.end).map((s) => indent(s.code, "      ")),
+      `    }`
+    );
+    i = block.end;
+  }
 
   return [
     `// ${opts.title}`,
@@ -186,18 +336,30 @@ export function renderAuthoredSpec(
  * work, so the passing run is exactly the one whose recording is needed. `retries: 0` because a
  * retry would hide the intermittent failure this exists to count.
  */
-export function renderPlaywrightConfig(opts: { outputDir: string }): string {
+export function renderPlaywrightConfig(opts: {
+  outputDir: string;
+  /** The platform the session was authored on (see authoring-platform.ts). */
+  contextOptions?: Record<string, unknown>;
+  /** How many steps the script has; the whole-run time limit is sized from it. */
+  steps?: number;
+}): string {
+  const emulation = Object.entries(opts.contextOptions ?? {}).map(
+    ([key, value]) => `    ${key}: ${JSON.stringify(value)},`
+  );
+  const steps = Math.max(1, opts.steps ?? 1);
+  const wholeRunMs = 30_000 + steps * 10_000;
+  const ms = (n: number): string => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, "_");
   return [
     `import { defineConfig } from "@playwright/test";`,
     ``,
     `export default defineConfig({`,
     `  // No retries. A retry hides the intermittent failure this suite exists to measure.`,
     `  retries: 0,`,
-    `  // Shorter than Playwright's 30s default, because here failures are the POINT and there are`,
-    `  // many of them: 30 runs of a 1-in-3 bug spent 6.4 minutes, almost all of it ten failing`,
-    `  // runs waiting out a timeout for an element that was never going to appear. Still generous`,
-    `  // enough that a merely slow page is not reported as a broken one.`,
-    `  timeout: 15_000,`,
+    `  // The whole run gets time to finish: 30s plus 10s for each of its ${steps} step(s). This was a`,
+    `  // flat 15s once, which a real sign-in flow cannot fit into — every run of one 16-step script`,
+    `  // was cut off partway through and counted as a failure. What still fails fast is a single`,
+    `  // step that cannot happen: see actionTimeout below.`,
+    `  timeout: ${ms(wholeRunMs)},`,
     `  // One worker: repetitions of one flow against one account are not independent.`,
     `  workers: 1,`,
     `  outputDir: ${JSON.stringify(opts.outputDir)},`,
@@ -205,6 +367,13 @@ export function renderPlaywrightConfig(opts: { outputDir: string }): string {
     `    // Every run, not just failures: the approval gate is a human watching a PASSING run.`,
     `    video: "on",`,
     `    trace: "retain-on-failure",`,
+    `    // One step that cannot happen gives up after 15s — the closing check included — so a run`,
+    `    // that meets the bug is counted in seconds, not after the whole run's budget.`,
+    `    actionTimeout: 15_000,`,
+    `    navigationTimeout: 30_000,`,
+    ...(emulation.length > 0
+      ? [`    // The browser the session was authored on, so every re-run is the same platform.`, ...emulation]
+      : []),
     `  },`,
     `});`,
     ``,

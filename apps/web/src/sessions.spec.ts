@@ -306,4 +306,9 @@ describe("users, and surviving a restart on host storage", () => {
     expect(store.userCount()).toBe(0);
     expect(store.acquire("loopback").status).toBe("active");
   });
+
+  it("defaults to a 2-hour TTL to prevent sessions lapsing during browser runs", () => {
+    const store = new SessionStore(() => "S1");
+    expect(store.ttlMs).toBe(7_200_000);
+  });
 });

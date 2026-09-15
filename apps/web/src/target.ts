@@ -13,10 +13,12 @@ import { ParamError } from "./actions.js";
  * key all stay inside the CLI process; what this does is capture a decision the human just made in
  * the UI and put it where the CLI reads decisions from.
  *
- * The three things the design insists a human decides, and which this therefore refuses to guess:
+ * What is decided, and by whom:
  *
- *  - **Classification.** There is deliberately no `production`. Declaring a target `test` is the
- *    operator asserting they are authorised to act on it, so it is asked, never defaulted.
+ *  - **Classification.** There is deliberately no `production`. A target taken from the operator's
+ *    own report is recorded as `test` (see `targetFromReport`): sending a report about a site is the
+ *    operator naming that site as one they act on, and `test` and `staging` change nothing the run
+ *    does, so asking which one repeated a decision already made.
  *  - **Allowed origins.** A navigation outside the list aborts the run. The baseUrl's origin is
  *    added because the schema requires every target origin to appear, and nothing else is.
  *  - **Destructive actions** are not decided here at all. `blockDestructiveActions` is a workspace
@@ -78,6 +80,47 @@ export function validateTargetRequest(body: unknown): TargetRequest {
   }
 
   return { name, baseUrl: url.toString().replace(/\/$/, ""), classification };
+}
+
+/**
+ * The target named in the report itself, or null when the report names no web address.
+ *
+ * The operator already gave the site: it is in the report they just sent. The page used to ask
+ * them to type it again, then to pick an environment label that changed nothing the run does,
+ * and answering re-opened the investigation a second time.
+ *
+ * The first http(s) address wins, trimmed of the punctuation a sentence puts after it. Only its
+ * origin becomes the base URL; the page the report mentions stays in the report for the session.
+ * The name is the host, readable (`www.99acres.com` → `99acres-com`), so a later target for a
+ * different site does not overwrite this one.
+ */
+export function targetFromReport(text: string): TargetRequest | null {
+  const match = /\bhttps?:\/\/[^\s<>"'`]+/i.exec(text ?? "");
+  if (!match) return null;
+  const raw = match[0].replace(/[).,;:!?\]}]+$/, "");
+
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+
+  const slug = url.hostname
+    .toLowerCase()
+    .replace(/^www\./, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40)
+    .replace(/-+$/, "");
+  const name = TARGET_NAME.test(slug) ? slug : "target-test";
+
+  try {
+    return validateTargetRequest({ name, baseUrl: url.origin, classification: "test" });
+  } catch {
+    // An address that fails the same validation a typed one would is not a target to run on.
+    return null;
+  }
 }
 
 /**

@@ -21,6 +21,7 @@ import { lineageCommand, showCommand, statusCommand } from "./commands/inspect.j
 import { retentionApplyCommand } from "./commands/retention.js";
 import { analyzeCommand } from "./commands/analyze.js";
 import { authorCommand } from "./commands/author.js";
+import { rerunCommand } from "./commands/rerun.js";
 import { loadEnvFile } from "./env-file.js";
 import { loadDeepSeekCredentials } from "./deepseek-credentials.js";
 
@@ -288,8 +289,19 @@ program
   .option("--approve-plan", "accept the written plan and open the browser")
   .option("--resume <sessionId>", "resume a session that paused on a question")
   .option("--answer <text>", "the answer to the question, or a correction to the plan")
+  .option("--repair", "with --resume: re-record the script from where its last replay stopped")
   .action(async function (this: Command) {
     await dispatch(this, (rt, g) => authorCommand(rt, this.opts(), g));
+  });
+
+program
+  .command("rerun")
+  .description(
+    "run the authored Playwright suite N times and report how often it failed (the operator's own script, not the measured executor)"
+  )
+  .requiredOption("--repeat <n>", "how many times to run it", (v) => Number.parseInt(v, 10))
+  .action(async function (this: Command) {
+    await dispatch(this, (rt, g) => rerunCommand(rt, this.opts(), g));
   });
 
 program
