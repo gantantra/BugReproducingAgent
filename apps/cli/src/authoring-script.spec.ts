@@ -169,7 +169,12 @@ describe("the emitted config", () => {
   it("re-runs on the platform the session was authored on", () => {
     const mobile = renderPlaywrightConfig({
       outputDir: "./artifacts",
-      contextOptions: { isMobile: true, hasTouch: true, userAgent: "UA", viewport: { width: 412, height: 915 } },
+      contextOptions: {
+        isMobile: true,
+        hasTouch: true,
+        userAgent: "UA",
+        viewport: { width: 412, height: 915 },
+      },
     });
     expect(mobile).toContain("isMobile: true,");
     expect(mobile).toContain('userAgent: "UA",');

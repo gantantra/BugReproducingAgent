@@ -88,7 +88,8 @@ export class CredentialStore implements SecretStore {
       });
     }
     const creds = (parsed as CredentialFile | null)?.credentials;
-    if (!creds || typeof creds !== "object") return { schemaVersion: 2, credentials: {}, descriptions: {} };
+    if (!creds || typeof creds !== "object")
+      return { schemaVersion: 2, credentials: {}, descriptions: {} };
     const outCreds: Record<string, string> = {};
     for (const [k, v] of Object.entries(creds)) {
       if (CREDENTIAL_NAME.test(k) && typeof v === "string" && v.length > 0) outCreds[k] = v;

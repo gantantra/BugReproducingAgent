@@ -53,7 +53,9 @@ describe("extractDeterministic", () => {
   });
 
   it("extracts multiple credentials without overwriting", () => {
-    const res = extractDeterministic("phone is 9876543210, password is SecretPass1!, and reason is 'closing'");
+    const res = extractDeterministic(
+      "phone is 9876543210, password is SecretPass1!, and reason is 'closing'"
+    );
     expect(res.extracted).toHaveLength(2);
     expect(res.extracted.find((c) => c.name === "ACCOUNT_PHONE")?.value).toBe("9876543210");
     expect(res.extracted.find((c) => c.name === "ACCOUNT_PASSWORD")?.value).toBe("SecretPass1!");
@@ -121,7 +123,7 @@ describe("extractCredentials with LLM", () => {
             { name: "SIGN_IN_OTP", value: "7982", description: "One-time verification code" },
           ]),
           raw: {},
-        } as LlmResponse),
+        }) as LlmResponse,
     } as unknown as LlmProvider;
 
     const res = await extractCredentials("my test mobile 1111111170 and otp 7982", {
@@ -143,10 +145,12 @@ describe("extractCredentials with LLM", () => {
             { name: "SIGN_IN_OTP", value: "0000", description: "Invented code" },
           ]),
           raw: {},
-        } as LlmResponse),
+        }) as LlmResponse,
     } as unknown as LlmProvider;
 
-    const res = await extractCredentials("my test mobile 1111111170", { llmProvider: mockProvider });
+    const res = await extractCredentials("my test mobile 1111111170", {
+      llmProvider: mockProvider,
+    });
     expect(res.extracted.map((e) => e.name)).toEqual(["SIGN_IN_PHONE"]);
   });
 

@@ -23,22 +23,41 @@ const REAL = [
   step("await page.getByTestId('BOTTOM_TAB_ITEM_CONTAINER_menuTab').click();"),
   step("await page.getByTestId('LOGIN_BANNER').click();"),
   step("await page.getByTestId('LOGIN_BANNER_CTA_BUY_RESIDENTIAL').click();"),
-  step("await page.getByRole('spinbutton', { name: 'Phone Number' }).fill(process.env['ACCOUNT_PHONE']);", "browser_type"),
+  step(
+    "await page.getByRole('spinbutton', { name: 'Phone Number' }).fill(process.env['ACCOUNT_PHONE']);",
+    "browser_type"
+  ),
   step("await page.getByTestId('primary-button').click();"),
-  step("await page.getByTestId('OTP_SCREEN_OTP1').fill(process.env['ACCOUNT_OTP']);", "browser_type"),
+  step(
+    "await page.getByTestId('OTP_SCREEN_OTP1').fill(process.env['ACCOUNT_OTP']);",
+    "browser_type"
+  ),
   step("await page.locator('div').filter({ hasText: /^Verify$/ }).first().click();"),
   // The sign-up screen: only an unregistered number sees it.
-  step("await page.getByRole('textbox', { name: 'Full Name' }).fill(process.env['ACCOUNT_USERNAME']);", "browser_type"),
+  step(
+    "await page.getByRole('textbox', { name: 'Full Name' }).fill(process.env['ACCOUNT_USERNAME']);",
+    "browser_type"
+  ),
   step("await page.getByTestId('No').click();"),
   step("await page.getByTestId('ContactAgreementCheckbox').getByLabel('checkbox').click();"),
   step("await page.locator('div').filter({ hasText: 'Continue' }).nth(5).click();"),
   step("await page.locator('text=\"Continue\"').click();"),
   // What the brief now asks for after a submit: proof the sign-in landed before navigating.
-  step("await page.getByText(\"My Profile\").first().waitFor({ state: 'visible' });", "browser_wait_for"),
+  step(
+    "await page.getByText(\"My Profile\").first().waitFor({ state: 'visible' });",
+    "browser_wait_for"
+  ),
   step("await page.goto('https://www.99acres.com/profile/editProfile');", "browser_navigate"),
-  step("await page.locator('div[tabindex=\"0\"]:has(img[src*=\"delete.shared.svg\"]):not(:has(input))').click();"),
-  step("await page.locator('div').filter({ hasText: /^Yes, Please continue to delete$/ }).first().click();"),
-  step("await page.getByText(\"Account has been deleted successfully!\").first().waitFor({ state: 'visible' });", "browser_wait_for"),
+  step(
+    'await page.locator(\'div[tabindex="0"]:has(img[src*="delete.shared.svg"]):not(:has(input))\').click();'
+  ),
+  step(
+    "await page.locator('div').filter({ hasText: /^Yes, Please continue to delete$/ }).first().click();"
+  ),
+  step(
+    "await page.getByText(\"Account has been deleted successfully!\").first().waitFor({ state: 'visible' });",
+    "browser_wait_for"
+  ),
 ];
 
 describe("reading the declarations", () => {
@@ -52,9 +71,11 @@ describe("reading the declarations", () => {
   });
 
   it("tolerates the formatting a model wraps lines in, and ignores lines that are not declarations", () => {
-    expect(readOptionalScreens("**OPTIONAL: `Accept cookies` | 1**\nOPTIONAL: nothing here\nOPTIONAL: \"x\" | 0")).toEqual([
-      { trigger: "Accept cookies", actions: 1 },
-    ]);
+    expect(
+      readOptionalScreens(
+        '**OPTIONAL: `Accept cookies` | 1**\nOPTIONAL: nothing here\nOPTIONAL: "x" | 0'
+      )
+    ).toEqual([{ trigger: "Accept cookies", actions: 1 }]);
   });
 });
 
@@ -63,7 +84,9 @@ describe("placing a declared screen in the recording", () => {
     const { blocks, refused } = planOptionalBlocks(REAL, [{ trigger: "Full Name", actions: 5 }]);
     expect(refused).toEqual([]);
     expect(blocks).toHaveLength(1);
-    expect(REAL.slice(blocks[0]!.start, blocks[0]!.end).map((s) => s.code)).toEqual(REAL.slice(8, 13).map((s) => s.code));
+    expect(REAL.slice(blocks[0]!.start, blocks[0]!.end).map((s) => s.code)).toEqual(
+      REAL.slice(8, 13).map((s) => s.code)
+    );
     expect(blocks[0]!.locator).toBe("page.getByRole('textbox', { name: 'Full Name' })");
   });
 
@@ -119,7 +142,9 @@ describe("the emitted script", () => {
       authoredAt: "2026-09-15",
       optional: [{ trigger: "Full Name", actions: 5 }],
     });
-    expect(s).toContain('if (await optional1.waitFor({ state: "visible", timeout: 10_000 }).then(() => true, () => false)) {');
+    expect(s).toContain(
+      'if (await optional1.waitFor({ state: "visible", timeout: 10_000 }).then(() => true, () => false)) {'
+    );
   });
 });
 

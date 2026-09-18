@@ -233,7 +233,12 @@ export function createInvestigatorServer(opts: ServerOptions) {
     for (const listener of job.listeners) listener.write(payload);
   }
 
-  function startJob(actionId: string, argv: string[], workspace: string, sessionId?: string | null): Job {
+  function startJob(
+    actionId: string,
+    argv: string[],
+    workspace: string,
+    sessionId?: string | null
+  ): Job {
     const job: Job = {
       id: randomUUID(),
       action: actionId,
@@ -296,7 +301,9 @@ export function createInvestigatorServer(opts: ServerOptions) {
   function authorised(req: IncomingMessage, url?: URL): boolean {
     const headerToken = req.headers["x-investigator-token"];
     const queryToken = url?.searchParams.get("token");
-    const sent = (typeof headerToken === "string" ? headerToken : undefined) ?? (typeof queryToken === "string" ? queryToken : undefined);
+    const sent =
+      (typeof headerToken === "string" ? headerToken : undefined) ??
+      (typeof queryToken === "string" ? queryToken : undefined);
     if (typeof sent !== "string" || sent !== opts.token) return false;
     // A page on another origin must not be able to drive a process runner on this machine.
     const reqOrigin = req.headers.origin;
@@ -506,10 +513,15 @@ export function createInvestigatorServer(opts: ServerOptions) {
           const dir = requireSessionDir(res, sessionId);
           if (!dir) return;
           sessions.touch(sessionId);
-          const body = (await readBody(req)) as { name?: unknown; value?: unknown; description?: unknown };
+          const body = (await readBody(req)) as {
+            name?: unknown;
+            value?: unknown;
+            description?: unknown;
+          };
           const name = typeof body.name === "string" ? body.name : "";
           const value = typeof body.value === "string" ? body.value : "";
-          const description = typeof body.description === "string" ? body.description.trim() : undefined;
+          const description =
+            typeof body.description === "string" ? body.description.trim() : undefined;
           if (!/^[A-Z][A-Z0-9_]{0,63}$/.test(name)) {
             sendJson(res, 400, {
               ok: false,
@@ -740,7 +752,11 @@ export function createInvestigatorServer(opts: ServerOptions) {
         if (path === "/api/session-image" && req.method === "GET") {
           const fileParam = url.searchParams.get("file") ?? "";
           if (!fileParam) {
-            sendJson(res, 400, { ok: false, code: "BAD_PARAM", message: "file parameter required" });
+            sendJson(res, 400, {
+              ok: false,
+              code: "BAD_PARAM",
+              message: "file parameter required",
+            });
             return;
           }
           const dir = requireSessionDir(res, sessionId);

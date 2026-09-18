@@ -539,7 +539,8 @@
       el.input.placeholder = CHOOSE_PLACEHOLDER;
     } else if (placeholderBeforeChoice !== null) {
       // Put back what was there, unless something has since set a placeholder of its own.
-      if (el.input.placeholder === CHOOSE_PLACEHOLDER) el.input.placeholder = placeholderBeforeChoice;
+      if (el.input.placeholder === CHOOSE_PLACEHOLDER)
+        el.input.placeholder = placeholderBeforeChoice;
       placeholderBeforeChoice = null;
     }
   }
@@ -872,7 +873,10 @@
 
     const addBtn = node("button", "primary", "Add variable");
     addBtn.addEventListener("click", async () => {
-      const name = nameInput.value.trim().toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+      const name = nameInput.value
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9_]/g, "_");
       const value = valInput.value.trim();
       const description = descInput.value.trim();
       if (!name || !value) {
@@ -994,7 +998,10 @@
         showFailure(
           written && written.ok === false
             ? written
-            : { code: "BAD_PARAM", message: "That is not a web address. It needs to start with http:// or https://." },
+            : {
+                code: "BAD_PARAM",
+                message: "That is not a web address. It needs to start with http:// or https://.",
+              },
           "That address was not accepted"
         );
         await askForTarget();
@@ -1512,11 +1519,25 @@
         // current step, and the scroll position is left where the operator put it.
         if (m && viewport) {
           const imgUrl =
-            m[1] + (m[1].includes("?") ? "&" : "?") + "token=" + encodeURIComponent(TOKEN) + "&_t=" + Date.now();
+            m[1] +
+            (m[1].includes("?") ? "&" : "?") +
+            "token=" +
+            encodeURIComponent(TOKEN) +
+            "&_t=" +
+            Date.now();
           viewport.img.src = imgUrl;
           return;
         }
-        if (viewport && (line.startsWith("🌐 ") || line.startsWith("👆 ") || line.startsWith("⌨️ ") || line.startsWith("⏳ ") || line.startsWith("🔍 ") || line.startsWith("📸 ") || line.startsWith("📝 "))) {
+        if (
+          viewport &&
+          (line.startsWith("🌐 ") ||
+            line.startsWith("👆 ") ||
+            line.startsWith("⌨️ ") ||
+            line.startsWith("⏳ ") ||
+            line.startsWith("🔍 ") ||
+            line.startsWith("📸 ") ||
+            line.startsWith("📝 "))
+        ) {
           viewport.status.textContent = line;
         }
         appendLogLine(log, line);
@@ -1573,9 +1594,19 @@
       }
       buttons(c, [
         ...(canContinue
-          ? [{ label: "Keep going", kind: "primary", onClick: () => resumeAuthoring("Keep going from where the flow stands.") }]
+          ? [
+              {
+                label: "Keep going",
+                kind: "primary",
+                onClick: () => resumeAuthoring("Keep going from where the flow stands."),
+              },
+            ]
           : []),
-        { label: "Add more detail", ...(canContinue ? {} : { kind: "primary" }), onClick: () => promptForMoreDetail() },
+        {
+          label: "Add more detail",
+          ...(canContinue ? {} : { kind: "primary" }),
+          onClick: () => promptForMoreDetail(),
+        },
         { label: "Try again", onClick: () => startAuthoring({}) },
       ]);
       return;
@@ -1620,7 +1651,9 @@
     if (r.platform && r.platform.description) {
       const why =
         r.platform.note ||
-        (r.platform.source === "default" ? "The default, because nothing you said named a platform." : "");
+        (r.platform.source === "default"
+          ? "The default, because nothing you said named a platform."
+          : "");
       c.appendChild(
         node(
           "p",
@@ -1735,7 +1768,12 @@
       return;
     }
     if (!repair) say(answer, "you");
-    setBusy(true, repair ? "Recording the flow again from where the replay stopped…" : "Picking up where it left off…");
+    setBusy(
+      true,
+      repair
+        ? "Recording the flow again from where the replay stopped…"
+        : "Picking up where it left off…"
+    );
 
     const started = await act("author", {
       investigation: state.investigation,
@@ -1764,11 +1802,24 @@
         const m = line.match(/^\[SCREENSHOT:(.+)\]$/);
         if (m) {
           const imgUrl =
-            m[1] + (m[1].includes("?") ? "&" : "?") + "token=" + encodeURIComponent(TOKEN) + "&_t=" + Date.now();
+            m[1] +
+            (m[1].includes("?") ? "&" : "?") +
+            "token=" +
+            encodeURIComponent(TOKEN) +
+            "&_t=" +
+            Date.now();
           viewport.img.src = imgUrl;
           return;
         }
-        if (line.startsWith("🌐 ") || line.startsWith("👆 ") || line.startsWith("⌨️ ") || line.startsWith("⏳ ") || line.startsWith("🔍 ") || line.startsWith("📸 ") || line.startsWith("📝 ")) {
+        if (
+          line.startsWith("🌐 ") ||
+          line.startsWith("👆 ") ||
+          line.startsWith("⌨️ ") ||
+          line.startsWith("⏳ ") ||
+          line.startsWith("🔍 ") ||
+          line.startsWith("📸 ") ||
+          line.startsWith("📝 ")
+        ) {
           viewport.status.textContent = line;
         }
         appendLogLine(log, line);
@@ -1814,13 +1865,20 @@
     kv(c, [
       ["steps", r.suite && r.suite.steps],
       ["script", r.suite && r.suite.dir],
-      ["only on some runs", r.suite && r.suite.optionalScreens && r.suite.optionalScreens.join(", ")],
+      [
+        "only on some runs",
+        r.suite && r.suite.optionalScreens && r.suite.optionalScreens.join(", "),
+      ],
     ]);
     if (r.suite && r.suite.optionalRefused) {
       c.appendChild(node("p", "hint", `Kept mandatory: ${r.suite.optionalRefused.join("; ")}`));
     }
     c.appendChild(
-      node("p", null, `Checking that it replays: the agent runs it ${VERIFY_RUNS} times before offering more.`)
+      node(
+        "p",
+        null,
+        `Checking that it replays: the agent runs it ${VERIFY_RUNS} times before offering more.`
+      )
     );
     void verifyScript(r);
   }
@@ -1836,7 +1894,10 @@
         const atCheck = result.failedAtCheck
           ? ` The final check failed in ${result.failedAtCheck} of them, which may already be the bug.`
           : "";
-        renderRunControls(r, `Replayed ${VERIFY_RUNS} times and reached the final check every time.${atCheck}`);
+        renderRunControls(
+          r,
+          `Replayed ${VERIFY_RUNS} times and reached the final check every time.${atCheck}`
+        );
         return;
       }
       if (state.repairAttempts >= MAX_REPAIRS) {
@@ -1913,7 +1974,10 @@
    * check that runs before anyone is offered N runs. */
   async function runSuite(repetitions, onResult) {
     setStep("record");
-    setBusy(true, onResult ? "Checking that the script replays…" : `Running the script ${repetitions}×…`);
+    setBusy(
+      true,
+      onResult ? "Checking that the script replays…" : `Running the script ${repetitions}×…`
+    );
     const started = await act("rerun", { investigation: state.investigation, repeat: repetitions });
     if (started.ok !== true || !started.jobId) {
       setBusy(false);
@@ -1921,7 +1985,11 @@
       return;
     }
 
-    const c = card(onResult ? `Checking that the script replays (${repetitions} runs)` : `Running the script ${repetitions}×`);
+    const c = card(
+      onResult
+        ? `Checking that the script replays (${repetitions} runs)`
+        : `Running the script ${repetitions}×`
+    );
     const spinner = node("p");
     spinner.innerHTML =
       '<span class="spin"></span> the first run installs the suite&rsquo;s own Playwright, then it runs…';

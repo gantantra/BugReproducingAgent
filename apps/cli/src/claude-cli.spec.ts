@@ -183,7 +183,14 @@ describe("the command line", () => {
   });
   it("omits optional flags that were not supplied", () => {
     const args = claudeCliArgs({});
-    for (const flag of ["--mcp-config", "--allowed-tools", "--resume", "--max-turns", "--strict-mcp-config", "--tools"]) {
+    for (const flag of [
+      "--mcp-config",
+      "--allowed-tools",
+      "--resume",
+      "--max-turns",
+      "--strict-mcp-config",
+      "--tools",
+    ]) {
       expect(args, flag).not.toContain(flag);
     }
   });
@@ -231,7 +238,8 @@ describe("the Playwright MCP server config", () => {
   });
 
   it("launches the browser from the platform's config file only when given one", () => {
-    const args = cfg({ browserConfigPath: "/ws/author/browser-config.json" }).mcpServers.playwright.args;
+    const args = cfg({ browserConfigPath: "/ws/author/browser-config.json" }).mcpServers.playwright
+      .args;
     expect(args[args.indexOf("--config") + 1]).toBe("/ws/author/browser-config.json");
     expect(cfg().mcpServers.playwright.args).not.toContain("--config");
   });

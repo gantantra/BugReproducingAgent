@@ -101,7 +101,10 @@ export function claudeCliEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
       for (const p of candidates) {
         if (existsSync(p)) {
           const parsed = JSON.parse(readFileSync(p, "utf8"));
-          if (!env.ANTHROPIC_AUTH_TOKEN || (isDeepSeek && isAnthropicKey(env.ANTHROPIC_AUTH_TOKEN))) {
+          if (
+            !env.ANTHROPIC_AUTH_TOKEN ||
+            (isDeepSeek && isAnthropicKey(env.ANTHROPIC_AUTH_TOKEN))
+          ) {
             const token =
               parsed.ANTHROPIC_AUTH_TOKEN ||
               parsed.claude_code_anthropic_compatible?.ANTHROPIC_AUTH_TOKEN ||
@@ -130,7 +133,10 @@ export function claudeCliEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     if (!env.ANTHROPIC_BASE_URL || env.ANTHROPIC_BASE_URL.includes("api.anthropic.com")) {
       env.ANTHROPIC_BASE_URL = "https://api.deepseek.com/anthropic";
     }
-    if ((!env.ANTHROPIC_AUTH_TOKEN || isAnthropicKey(env.ANTHROPIC_AUTH_TOKEN)) && env.DEEPSEEK_API_KEY) {
+    if (
+      (!env.ANTHROPIC_AUTH_TOKEN || isAnthropicKey(env.ANTHROPIC_AUTH_TOKEN)) &&
+      env.DEEPSEEK_API_KEY
+    ) {
       env.ANTHROPIC_AUTH_TOKEN = env.DEEPSEEK_API_KEY;
     }
     if (env.ANTHROPIC_AUTH_TOKEN && !isAnthropicKey(env.ANTHROPIC_AUTH_TOKEN)) {
@@ -228,13 +234,7 @@ export function playwrightMcpConfig(opts: {
   } else {
     args.push("--isolated");
   }
-  args.push(
-    "--codegen",
-    "typescript",
-    "--save-session",
-    "--output-dir",
-    opts.outputDir
-  );
+  args.push("--codegen", "typescript", "--save-session", "--output-dir", opts.outputDir);
   if (opts.headless !== false) args.push("--headless");
   if (opts.secretsPath) args.push("--secrets", opts.secretsPath);
   if (opts.initPage) args.push("--init-page", opts.initPage);

@@ -71,7 +71,8 @@ describe("reading the evidence a replay left", () => {
         stops: [
           {
             line: 24,
-            statement: "await page.getByRole('textbox', { name: 'Full Name' }).fill(process.env['ACCOUNT_USERNAME']);",
+            statement:
+              "await page.getByRole('textbox', { name: 'Full Name' }).fill(process.env['ACCOUNT_USERNAME']);",
             waitingFor: "getByRole('textbox', { name: 'Full Name' })",
             runs: 1,
             errorContextPath: contextPath,
@@ -100,7 +101,8 @@ describe("the repair prompt", () => {
     stops: [
       {
         line: 24,
-        statement: "await page.getByRole('textbox', { name: 'Full Name' }).fill(process.env['ACCOUNT_USERNAME']);",
+        statement:
+          "await page.getByRole('textbox', { name: 'Full Name' }).fill(process.env['ACCOUNT_USERNAME']);",
         waitingFor: "getByRole('textbox', { name: 'Full Name' })",
         runs: 2,
         pageSnapshot: "- generic [ref=f1e5]: All Categories",

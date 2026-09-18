@@ -49,7 +49,8 @@ export interface SuiteCounts {
 export function summarizeReport(report: unknown): SuiteCounts {
   const stats = (report as { stats?: Record<string, unknown> } | null)?.stats;
   if (stats && typeof stats === "object") {
-    const n = (key: string): number => (typeof stats[key] === "number" ? (stats[key] as number) : 0);
+    const n = (key: string): number =>
+      typeof stats[key] === "number" ? (stats[key] as number) : 0;
     const passed = n("expected");
     const failed = n("unexpected");
     const flaky = n("flaky");
@@ -152,7 +153,9 @@ export function classifyRuns(report: unknown, specText: string): RunBreakdown {
           if (result.status !== "failed" && result.status !== "timedOut") continue;
 
           const errors = result.errors ?? [];
-          const line = errors.map((e) => e.location?.line).find((n): n is number => typeof n === "number") ?? null;
+          const line =
+            errors.map((e) => e.location?.line).find((n): n is number => typeof n === "number") ??
+            null;
           if (line !== null && line === checkLine) {
             reachedCheck++;
             failedAtCheck++;
@@ -160,7 +163,10 @@ export function classifyRuns(report: unknown, specText: string): RunBreakdown {
           }
 
           stoppedEarly++;
-          const text = errors.map((e) => String(e.message ?? "")).join("\n").replace(ANSI_COLOUR, "");
+          const text = errors
+            .map((e) => String(e.message ?? ""))
+            .join("\n")
+            .replace(ANSI_COLOUR, "");
           const waitingFor = /waiting for ([^\n]+)/.exec(text)?.[1]?.trim() ?? null;
           const key = `${line ?? "none"}|${waitingFor ?? ""}`;
           const existing = stops.get(key);
@@ -168,10 +174,13 @@ export function classifyRuns(report: unknown, specText: string): RunBreakdown {
             existing.runs++;
             continue;
           }
-          const context = (result.attachments ?? []).find((a) => /error-context/.test(a.name ?? "") && a.path);
+          const context = (result.attachments ?? []).find(
+            (a) => /error-context/.test(a.name ?? "") && a.path
+          );
           stops.set(key, {
             line,
-            statement: line !== null ? (lines[line - 1] ?? "").trim() : text.split("\n")[0]!.slice(0, 200),
+            statement:
+              line !== null ? (lines[line - 1] ?? "").trim() : text.split("\n")[0]!.slice(0, 200),
             waitingFor,
             runs: 1,
             ...(context?.path ? { errorContextPath: context.path } : {}),
@@ -315,7 +324,11 @@ export async function rerunCommand(
     });
   }
 
-  const suiteDir = join(investigationDirs(rt.workspace, investigationId).root, "authoring", "suite");
+  const suiteDir = join(
+    investigationDirs(rt.workspace, investigationId).root,
+    "authoring",
+    "suite"
+  );
   if (!existsSync(join(suiteDir, "package.json"))) {
     fail(
       "INPUT_INVALID",
@@ -339,7 +352,13 @@ export async function rerunCommand(
       fail(
         "EXEC_ACTION_FAILED",
         `Could not install the suite's Playwright.${whyItWouldNotStart(suiteDir)}`,
-        { context: { suiteDir, pathLength: String(suiteDir.length), exitCode: String(installed ?? "null") } }
+        {
+          context: {
+            suiteDir,
+            pathLength: String(suiteDir.length),
+            exitCode: String(installed ?? "null"),
+          },
+        }
       );
     }
   }
@@ -379,9 +398,13 @@ export async function rerunCommand(
   );
 
   if (exitCode === -1) {
-    fail("EXEC_ACTION_FAILED", `The Playwright runner could not start.${whyItWouldNotStart(suiteDir)}`, {
-      context: { suiteDir, pathLength: String(suiteDir.length) },
-    });
+    fail(
+      "EXEC_ACTION_FAILED",
+      `The Playwright runner could not start.${whyItWouldNotStart(suiteDir)}`,
+      {
+        context: { suiteDir, pathLength: String(suiteDir.length) },
+      }
+    );
   }
 
   let counts: SuiteCounts = { total: 0, passed: 0, failed: 0, flaky: 0, skipped: 0 };
@@ -399,7 +422,10 @@ export async function rerunCommand(
   }
 
   const specPath = join(suiteDir, "tests", "repro.spec.ts");
-  const breakdown = classifyRuns(parsedReport, existsSync(specPath) ? readFileSync(specPath, "utf8") : "");
+  const breakdown = classifyRuns(
+    parsedReport,
+    existsSync(specPath) ? readFileSync(specPath, "utf8") : ""
+  );
   const summary = reportRead ? describeBreakdown(breakdown) : describeFailures(counts);
   // Kept beside the report, so a later step can see where runs stopped without re-running them.
   if (reportRead) {
@@ -418,7 +444,8 @@ export async function rerunCommand(
       repetitions,
       ...breakdown,
       // Of the runs that reached the check. A run that stopped earlier says nothing about the bug.
-      failureRate: breakdown.reachedCheck > 0 ? breakdown.failedAtCheck / breakdown.reachedCheck : 0,
+      failureRate:
+        breakdown.reachedCheck > 0 ? breakdown.failedAtCheck / breakdown.reachedCheck : 0,
       summary,
       exitCode,
       reportPath,

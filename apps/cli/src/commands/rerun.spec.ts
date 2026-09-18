@@ -8,7 +8,7 @@ describe("telling the bug apart from a script that never got there", () => {
     'test("t", async ({ page }) => {',
     "    await page.getByTestId('primary-button').click();",
     "    await page.getByRole('textbox', { name: 'Full Name' }).fill(process.env['ACCOUNT_USERNAME']);",
-    '    await page.getByText("Account has been deleted successfully!").first().waitFor({ state: \'visible\' });',
+    "    await page.getByText(\"Account has been deleted successfully!\").first().waitFor({ state: 'visible' });",
     "});",
   ].join("\n");
 
@@ -17,7 +17,12 @@ describe("telling the bug apart from a script that never got there", () => {
     errors:
       line === undefined
         ? status === "failed"
-          ? [{ message: "Error: browserType.launch: Target page, context or browser has been closed" }]
+          ? [
+              {
+                message:
+                  "Error: browserType.launch: Target page, context or browser has been closed",
+              },
+            ]
           : []
         : [
             { message: "Test timeout of 15000ms exceeded." },
@@ -40,7 +45,11 @@ describe("telling the bug apart from a script that never got there", () => {
               { results: [run("passed")] },
               { results: [run("timedOut", 4, "getByRole('textbox', { name: 'Full Name' })")] },
               { results: [run("timedOut", 4, "getByRole('textbox', { name: 'Full Name' })")] },
-              { results: [run("timedOut", 5, 'getByText("Account has been deleted successfully!").first()')] },
+              {
+                results: [
+                  run("timedOut", 5, 'getByText("Account has been deleted successfully!").first()'),
+                ],
+              },
               { results: [run("failed")] },
             ],
           },
@@ -61,7 +70,8 @@ describe("telling the bug apart from a script that never got there", () => {
     const b = classifyRuns(report, SPEC);
     expect(b.stops[0]).toEqual({
       line: 4,
-      statement: "await page.getByRole('textbox', { name: 'Full Name' }).fill(process.env['ACCOUNT_USERNAME']);",
+      statement:
+        "await page.getByRole('textbox', { name: 'Full Name' }).fill(process.env['ACCOUNT_USERNAME']);",
       waitingFor: "getByRole('textbox', { name: 'Full Name' })",
       runs: 2,
       errorContextPath: "C:/artifacts/run-4/error-context.md",
@@ -75,7 +85,18 @@ describe("telling the bug apart from a script that never got there", () => {
   it("does not report a failure rate when no run got as far as the check", () => {
     const none = {
       stats: { expected: 0, unexpected: 2, flaky: 0, skipped: 0 },
-      suites: [{ specs: [{ tests: [{ results: [run("timedOut", 4, "x")] }, { results: [run("timedOut", 4, "x")] }] }] }],
+      suites: [
+        {
+          specs: [
+            {
+              tests: [
+                { results: [run("timedOut", 4, "x")] },
+                { results: [run("timedOut", 4, "x")] },
+              ],
+            },
+          ],
+        },
+      ],
     };
     expect(describeBreakdown(classifyRuns(none, SPEC))).toBe(
       "none of 2 runs reached the final check; 2 stopped before it — the script or the site, not the bug — at line 4, waiting for x"
@@ -114,9 +135,9 @@ describe("counting the runs", () => {
   });
 
   it("counts nothing it does not recognise, rather than counting it as a pass", () => {
-    expect(summarizeReport({ suites: [{ specs: [{ tests: [{ status: "interrupted" }] }] }] })).toEqual(
-      { total: 0, passed: 0, failed: 0, flaky: 0, skipped: 0 }
-    );
+    expect(
+      summarizeReport({ suites: [{ specs: [{ tests: [{ status: "interrupted" }] }] }] })
+    ).toEqual({ total: 0, passed: 0, failed: 0, flaky: 0, skipped: 0 });
     expect(summarizeReport(null)).toEqual({ total: 0, passed: 0, failed: 0, flaky: 0, skipped: 0 });
     expect(describeFailures({ total: 0, passed: 0, failed: 0, flaky: 0, skipped: 0 })).toBe(
       "no runs were recorded"

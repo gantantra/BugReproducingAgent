@@ -52,18 +52,22 @@ export function readRepairEvidence(suiteDir: string): RepairEvidence | null {
   }
   if (!Array.isArray(raw["stops"]) || typeof raw["stoppedEarly"] !== "number") return null;
 
-  const stops = (raw["stops"] as Array<Record<string, unknown>>).slice(0, 3).map((s): RepairStop => {
-    const contextPath = typeof s["errorContextPath"] === "string" ? s["errorContextPath"] : null;
-    const pageSnapshot =
-      contextPath && existsSync(contextPath) ? pageSnapshotFrom(readFileSync(contextPath, "utf8")) : null;
-    return {
-      line: typeof s["line"] === "number" ? s["line"] : null,
-      statement: String(s["statement"] ?? ""),
-      waitingFor: typeof s["waitingFor"] === "string" ? s["waitingFor"] : null,
-      runs: typeof s["runs"] === "number" ? s["runs"] : 1,
-      ...(pageSnapshot ? { pageSnapshot } : {}),
-    };
-  });
+  const stops = (raw["stops"] as Array<Record<string, unknown>>)
+    .slice(0, 3)
+    .map((s): RepairStop => {
+      const contextPath = typeof s["errorContextPath"] === "string" ? s["errorContextPath"] : null;
+      const pageSnapshot =
+        contextPath && existsSync(contextPath)
+          ? pageSnapshotFrom(readFileSync(contextPath, "utf8"))
+          : null;
+      return {
+        line: typeof s["line"] === "number" ? s["line"] : null,
+        statement: String(s["statement"] ?? ""),
+        waitingFor: typeof s["waitingFor"] === "string" ? s["waitingFor"] : null,
+        runs: typeof s["runs"] === "number" ? s["runs"] : 1,
+        ...(pageSnapshot ? { pageSnapshot } : {}),
+      };
+    });
 
   return {
     repetitions: typeof raw["repetitions"] === "number" ? raw["repetitions"] : 0,
@@ -82,13 +86,24 @@ export function buildRepairPrompt(e: RepairEvidence): string {
   ];
   for (const s of e.stops) {
     const where =
-      s.line !== null ? `at script line ${s.line}: \`${s.statement}\`` : `before the first step: ${s.statement}`;
-    lines.push(`- ${s.runs} run(s) stopped ${where}${s.waitingFor ? ` — waiting for ${s.waitingFor}, which never appeared` : ""}.`);
+      s.line !== null
+        ? `at script line ${s.line}: \`${s.statement}\``
+        : `before the first step: ${s.statement}`;
+    lines.push(
+      `- ${s.runs} run(s) stopped ${where}${s.waitingFor ? ` — waiting for ${s.waitingFor}, which never appeared` : ""}.`
+    );
   }
 
   const withSnapshot = e.stops.find((s) => s.pageSnapshot);
   if (withSnapshot) {
-    lines.push("", "What the page showed at that moment:", "", "```yaml", withSnapshot.pageSnapshot!, "```");
+    lines.push(
+      "",
+      "What the page showed at that moment:",
+      "",
+      "```yaml",
+      withSnapshot.pageSnapshot!,
+      "```"
+    );
   }
 
   lines.push(

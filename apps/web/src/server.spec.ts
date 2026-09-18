@@ -60,16 +60,28 @@ describe("investigator web server endpoints", () => {
 
     const sessionDir = join(testDir, "sessions", data.sessionFolder);
     mkdirSync(join(sessionDir, "authoring", "mcp"), { recursive: true });
-    writeFileSync(join(sessionDir, "authoring", "mcp", "page-1.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    writeFileSync(
+      join(sessionDir, "authoring", "mcp", "page-1.png"),
+      Buffer.from([0x89, 0x50, 0x4e, 0x47])
+    );
     writeFileSync(join(sessionDir, "authoring", "secret.txt"), "secret");
-    const realMcpDir = join(sessionDir, ".investigator", "investigations", "INV-002", "authoring", "mcp");
+    const realMcpDir = join(
+      sessionDir,
+      ".investigator",
+      "investigations",
+      "INV-002",
+      "authoring",
+      "mcp"
+    );
     mkdirSync(realMcpDir, { recursive: true });
     writeFileSync(join(realMcpDir, "page-1.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
   });
 
   it("serves a screenshot where an authoring session really writes it", async () => {
     // The exact query `author` emits: relative to the session folder, through `.investigator`.
-    const file = encodeURIComponent(".investigator/investigations/INV-002/authoring/mcp/page-1.png");
+    const file = encodeURIComponent(
+      ".investigator/investigations/INV-002/authoring/mcp/page-1.png"
+    );
     const res = await fetch(`${baseUrl}/api/session-image?file=${file}&token=${token}`, {
       headers: { cookie: `investigator_session=${sessionCookie}` },
     });
@@ -159,7 +171,12 @@ describe("investigator web server endpoints", () => {
       }),
     });
     expect(res.status).toBe(200);
-    const data = (await res.json()) as { ok: boolean; name: string; names: string[]; entries: any[] };
+    const data = (await res.json()) as {
+      ok: boolean;
+      name: string;
+      names: string[];
+      entries: any[];
+    };
     expect(data.ok).toBe(true);
     expect(data.name).toBe("CUSTOM_TOKEN");
     expect(data.names).toContain("CUSTOM_TOKEN");

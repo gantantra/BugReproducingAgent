@@ -290,8 +290,14 @@ program
   .option("--resume <sessionId>", "resume a session that paused on a question")
   .option("--answer <text>", "the answer to the question, or a correction to the plan")
   .option("--repair", "with --resume: re-record the script from where its last replay stopped")
-  .option("--thats-all", "planning: the operator has nothing more to add; write the plan with gaps marked")
-  .option("--plan-checksum <sha256>", "with --approve-plan: the checksum of the plan that was read; refused if it changed")
+  .option(
+    "--thats-all",
+    "planning: the operator has nothing more to add; write the plan with gaps marked"
+  )
+  .option(
+    "--plan-checksum <sha256>",
+    "with --approve-plan: the checksum of the plan that was read; refused if it changed"
+  )
   .action(async function (this: Command) {
     await dispatch(this, (rt, g) => authorCommand(rt, this.opts(), g));
   });

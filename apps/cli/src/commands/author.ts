@@ -114,10 +114,15 @@ export function readAuthoringOutcome(finalMessage: string): AuthoringOutcome {
     if (verb === "QUESTION") return { kind: "question", question: rest || body() };
     return { kind: "stuck", reason: rest || body() };
   }
-  if (/maximum number of turns|max_turns_reached|maximum turns reached|turn limit reached/i.test(finalMessage)) {
+  if (
+    /maximum number of turns|max_turns_reached|maximum turns reached|turn limit reached/i.test(
+      finalMessage
+    )
+  ) {
     return {
       kind: "stuck",
-      reason: "Authoring reached the turn limit without completing. You can inspect screenshots, supply credentials or instructions, and resume.",
+      reason:
+        "Authoring reached the turn limit without completing. You can inspect screenshots, supply credentials or instructions, and resume.",
     };
   }
   // No sentinel. Reported as unknown rather than assumed complete: treating an unrecognised
@@ -232,7 +237,9 @@ export async function authorCommand(
   const writeBrowserConfig = (profileName: string): void => {
     const profile = profiles[profileName];
     if (!profile) {
-      return fail("CONFIG_INVALID", "Emulation profile is not defined", { context: { profileName } });
+      return fail("CONFIG_INVALID", "Emulation profile is not defined", {
+        context: { profileName },
+      });
     }
     const browserConfigPath = join(sessionDir, "browser-config.json");
     writeFileSync(
@@ -319,7 +326,11 @@ export async function authorCommand(
       fromId: "intake_report",
       toKind: "flow",
       toId: `PLAN-${investigationId}-v${planVersionOf(planPath)}`,
-      actor: { kind: "deterministic", component: "author.approve-plan", version: AUTHORING_BRIEF_VERSION },
+      actor: {
+        kind: "deterministic",
+        component: "author.approve-plan",
+        version: AUTHORING_BRIEF_VERSION,
+      },
       inputs: {
         planChecksum: sha256Prefixed(approvedPlan),
         checksumConfirmed: opts.planChecksum !== undefined,
@@ -330,7 +341,8 @@ export async function authorCommand(
   // The platform the plan chose, or the session later asked for. With neither on record the
   // configured default is used, and the log names it either way.
   let platform: PlatformChoice = readPlatformFile(platformPath, profiles) ?? defaultPlatform;
-  const describePlatform = (): string => describeProfile(platform.profile, profiles[platform.profile]!);
+  const describePlatform = (): string =>
+    describeProfile(platform.profile, profiles[platform.profile]!);
   writeBrowserConfig(platform.profile);
   process.stderr.write(`📱 Browser: ${describePlatform()}\n`);
 
@@ -339,7 +351,8 @@ export async function authorCommand(
   const attemptPath = join(sessionDir, "attempt.json");
   // A repair re-records the whole flow, so it is a new attempt too: the script it produces must
   // not include the recording it replaces.
-  if (!opts.resume || opts.repair) writeFileSync(attemptPath, `${JSON.stringify({ startedAt: Date.now() })}\n`, "utf8");
+  if (!opts.resume || opts.repair)
+    writeFileSync(attemptPath, `${JSON.stringify({ startedAt: Date.now() })}\n`, "utf8");
   const attemptStartedAt = readAttemptStart(attemptPath);
 
   const resumeCreds = rt.credentials.entries();
@@ -357,9 +370,13 @@ export async function authorCommand(
   let repairPrompt = "";
   if (opts.repair) {
     if (!opts.resume) {
-      fail("INPUT_INVALID", "`--repair` re-records a session's script, so it needs --resume <sessionId>", {
-        context: { flag: "--repair" },
-      });
+      fail(
+        "INPUT_INVALID",
+        "`--repair` re-records a session's script, so it needs --resume <sessionId>",
+        {
+          context: { flag: "--repair" },
+        }
+      );
     }
     const suiteDirForRepair = join(sessionDir, "suite");
     const evidence = readRepairEvidence(suiteDirForRepair);
@@ -381,7 +398,9 @@ export async function authorCommand(
     "\n\n(The browser restarted for this turn: the page is fresh, the browser profile and any sign-in in it are kept, and the steps from your earlier turns are already part of the script. Navigate back and carry on from where the flow stands.)";
 
   const prompt = opts.resume
-    ? (opts.repair ? repairPrompt : (opts.answer ?? "") + resumeNote) + credsReminder + platformReminder
+    ? (opts.repair ? repairPrompt : (opts.answer ?? "") + resumeNote) +
+      credsReminder +
+      platformReminder
     : buildPrompt({
         report,
         targetName: targetName!,
@@ -395,18 +414,19 @@ export async function authorCommand(
         platforms: profileCatalogue(profiles),
       });
 
-  const argsFor = (resume?: string): string[] => claudeCliArgs({
-    mcpConfigPath,
-    strictMcpConfig: true,
-    // Without this the session stops on its first navigation asking for permission, which is not
-    // a question the operator can usefully answer -- they approve the SCRIPT, at a gate, after
-    // watching it. The allowlist is where "what may this session do" is decided, once.
-    allowedTools: ALLOWED_PLAYWRIGHT_TOOLS,
-    appendSystemPrompt: brief,
-    maxTurns: opts.maxTurns ?? 60,
-    outputFormat: "stream-json",
-    ...(resume ? { resume } : {}),
-  });
+  const argsFor = (resume?: string): string[] =>
+    claudeCliArgs({
+      mcpConfigPath,
+      strictMcpConfig: true,
+      // Without this the session stops on its first navigation asking for permission, which is not
+      // a question the operator can usefully answer -- they approve the SCRIPT, at a gate, after
+      // watching it. The allowlist is where "what may this session do" is decided, once.
+      allowedTools: ALLOWED_PLAYWRIGHT_TOOLS,
+      appendSystemPrompt: brief,
+      maxTurns: opts.maxTurns ?? 60,
+      outputFormat: "stream-json",
+      ...(resume ? { resume } : {}),
+    });
 
   // The web server names this session's folder as `--workspace` and serves screenshots relative
   // to it. A hand run without the flag has no page watching, and keeps the workspace root.
@@ -454,7 +474,14 @@ export async function authorCommand(
         process.stderr.write(`📱 Relaunching the browser as ${describePlatform()}\n`);
         note = `The browser has been relaunched as ${describePlatform()}. The page was reset but the browser profile, and any sign-in in it, was kept, and the steps from your earlier turns are already part of the script. Navigate again and carry on from where the flow stands.`;
       }
-      session = await runClaude(cli!, argsFor(session.sessionId), note, rt, sessionDir, workspaceDir);
+      session = await runClaude(
+        cli!,
+        argsFor(session.sessionId),
+        note,
+        rt,
+        sessionDir,
+        workspaceDir
+      );
       outcome = readAuthoringOutcome(session.finalMessage);
       continue;
     }
@@ -463,7 +490,14 @@ export async function authorCommand(
       process.stderr.write(
         `⏭️ Out of turns part-way through — continuing the same session (${continuations} of ${maxTurnLimitContinuations})\n`
       );
-      session = await runClaude(cli!, argsFor(session.sessionId), turnLimitNote, rt, sessionDir, workspaceDir);
+      session = await runClaude(
+        cli!,
+        argsFor(session.sessionId),
+        turnLimitNote,
+        rt,
+        sessionDir,
+        workspaceDir
+      );
       outcome = readAuthoringOutcome(session.finalMessage);
       continue;
     }
@@ -520,7 +554,11 @@ export async function authorCommand(
       investigationId,
       target: targetName,
       outcome: outcome.kind,
-      platform: { profile: platform.profile, description: describePlatform(), source: platform.source },
+      platform: {
+        profile: platform.profile,
+        description: describePlatform(),
+        source: platform.source,
+      },
       ...(outcome.kind === "question" ? { question: outcome.question } : {}),
       ...(outcome.kind === "stuck" ? { reason: outcome.reason } : {}),
       // Stopped by the turn counter even after the automatic continuation; the page offers to keep going.
@@ -605,7 +643,11 @@ export function formatToolUse(name: string, input: unknown): string {
     // Not browser actions: the session reading files MCP saved (a snapshot, a response body).
     // Labelled as what they are, so a log full of them reads as a session digging, not browsing.
     case "Read":
-      return `📄 Reading saved file: ${String(inp.file_path ?? "").split(/[\\/]/).pop() || "file"}`;
+      return `📄 Reading saved file: ${
+        String(inp.file_path ?? "")
+          .split(/[\\/]/)
+          .pop() || "file"
+      }`;
     case "Grep":
       return `🔎 Searching saved files for: ${String(inp.pattern ?? "").slice(0, 60)}`;
     case "browser_navigate":
@@ -695,7 +737,12 @@ function runClaude(
   sessionDir?: string,
   /** The folder screenshot paths are made relative to; see `screenshotLine`. */
   workspaceDir?: string
-): Promise<{ sessionId: string | null; finalMessage: string; exitCode: number | null; turnLimit: boolean }> {
+): Promise<{
+  sessionId: string | null;
+  finalMessage: string;
+  exitCode: number | null;
+  turnLimit: boolean;
+}> {
   return new Promise((resolvePromise) => {
     // `shell: false`, always. The prompt embeds a bug report written by someone else, and a shell
     // on Windows concatenates arguments rather than escaping them -- a report containing
@@ -762,7 +809,9 @@ function runClaude(
             attachment?: { type?: string };
             session_id?: string;
             result?: string;
-            message?: { content?: Array<{ type: string; name?: string; input?: unknown; text?: string }> };
+            message?: {
+              content?: Array<{ type: string; name?: string; input?: unknown; text?: string }>;
+            };
           };
           if (
             (parsed.type === "attachment" && parsed.attachment?.type === "max_turns_reached") ||
@@ -833,7 +882,8 @@ function runClaude(
       // it was stuck, so the caller may continue it.
       const turnLimit = maxTurnsReached && !finalMessage.includes("AUTHORING:");
       if (turnLimit) {
-        finalMessage = "AUTHORING: STUCK Authoring reached the maximum turn limit without completing.";
+        finalMessage =
+          "AUTHORING: STUCK Authoring reached the maximum turn limit without completing.";
       }
 
       resolvePromise({ sessionId, finalMessage, exitCode, turnLimit });
@@ -874,7 +924,9 @@ export function buildPrompt(a: {
   const credLines: string[] = [];
   if (a.credentialEntries && a.credentialEntries.length > 0) {
     for (const entry of a.credentialEntries) {
-      credLines.push(entry.description ? `- ${entry.name}: ${entry.description}` : `- ${entry.name}`);
+      credLines.push(
+        entry.description ? `- ${entry.name}: ${entry.description}` : `- ${entry.name}`
+      );
     }
   } else if (a.credentialNames.length > 0) {
     for (const name of a.credentialNames) {
@@ -887,7 +939,7 @@ export function buildPrompt(a: {
       ? [
           "## Session Credentials & Variables",
           "The following credentials and variables are configured for this session in the MCP secret store.",
-          "IMPORTANT: You MUST reference them strictly by their exact KEY NAME (e.g. browser_type with text set to the key name like \"ACCOUNT_PHONE\").",
+          'IMPORTANT: You MUST reference them strictly by their exact KEY NAME (e.g. browser_type with text set to the key name like "ACCOUNT_PHONE").',
           "NEVER guess, ask for, or type raw values; the browser tool resolves them automatically from the secret store.",
           ...credLines,
         ].join("\n")
@@ -969,8 +1021,8 @@ async function runPlanningPhase(a: {
     credEntries.length > 0
       ? `Credentials & variables available by name:\n${credEntries.map((e) => (e.description ? `- ${e.name}: ${e.description}` : `- ${e.name}`)).join("\n")}`
       : a.rt.credentials.names().length
-      ? `Credentials available by name: ${a.rt.credentials.names().join(", ")}`
-      : "No credentials were supplied.";
+        ? `Credentials available by name: ${a.rt.credentials.names().join(", ")}`
+        : "No credentials were supplied.";
 
   const prompt = [
     "Write the plan for reproducing this reported bug. Do not reproduce it yet.",
@@ -1333,7 +1385,9 @@ function emitSuite(a: {
     steps: steps.length,
     ...(proposalPath ? { proposalPath } : {}),
     ...(proposalRefusal ? { proposalRefusal } : {}),
-    ...(optionalPlan.blocks.length ? { optionalScreens: optionalPlan.blocks.map((b) => b.trigger) } : {}),
+    ...(optionalPlan.blocks.length
+      ? { optionalScreens: optionalPlan.blocks.map((b) => b.trigger) }
+      : {}),
     ...(optionalPlan.refused.length ? { optionalRefused: optionalPlan.refused } : {}),
   };
 }
