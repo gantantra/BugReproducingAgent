@@ -26,6 +26,20 @@ export const HIJACKING_ENV_VARS: readonly string[] = [
   "CLAUDE_CODE_USE_VERTEX",
 ];
 
+/**
+ * Variables a running Claude Code session sets for its OWN child processes: its session id, its
+ * messaging socket, and the hooks that let a child borrow the host's sign-in.
+ *
+ * When the agent is started from inside a Claude Code session (a terminal tab in the desktop app,
+ * say), these reach the authoring `claude` too, and it then authenticates through the host session
+ * instead of with the DeepSeek token it was given. Observed: DeepSeek answered 401 "Your api key
+ * ****8AAA is invalid" while every configured source held a different, valid key; with these
+ * removed the same command planned normally. The authoring session is its own session, never a
+ * child of whichever one launched the server.
+ */
+export const HOST_SESSION_ENV =
+  /^(CLAUDECODE|CLAUDE_PID|CLAUDE_AGENT_SDK_VERSION|CLAUDE_CODE_(ENTRYPOINT|SESSION_ID|HOST_SESSION_ID|CHILD_SESSION|SESSION_ATTENDED|EXECPATH|DESKTOP_APP_VERSION|MESSAGING_[A-Z_]+|OAUTH_[A-Z_]+|SDK_[A-Z_]+))$/;
+
 /** The model and effort this product uses for authoring. Defaults to deepseek-v4-flash. */
 export const AUTHORING_MODEL = process.env.ANTHROPIC_MODEL || "deepseek-v4-flash";
 export const AUTHORING_EFFORT = "medium";
@@ -39,6 +53,7 @@ export const AUTHORING_EFFORT = "medium";
 export function claudeCliEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...source };
   for (const name of HIJACKING_ENV_VARS) delete env[name];
+  for (const name of Object.keys(env)) if (HOST_SESSION_ENV.test(name)) delete env[name];
 
   if (!env.ANTHROPIC_MODEL) {
     env.ANTHROPIC_MODEL = AUTHORING_MODEL;
