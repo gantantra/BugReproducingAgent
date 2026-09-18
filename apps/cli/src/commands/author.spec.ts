@@ -85,6 +85,49 @@ describe("the directory the CLI was launched from is not the session's to tidy",
   });
 });
 
+describe("a session the turn counter stopped", () => {
+  /** A stand-in for `claude` that prints these stream-json lines once it has read the prompt. */
+  const standIn = (...lines: object[]): string[] => [
+    "-e",
+    `process.stdin.resume(); process.stdin.on('end', () => { for (const l of ${JSON.stringify(
+      lines.map((l) => JSON.stringify(l))
+    )}) console.log(l); });`,
+  ];
+  const rt = { logger: { debug: () => {} } } as unknown as Runtime;
+
+  it("is marked, so the harness can continue it rather than start over", async () => {
+    const session = await runClaudeForTest(
+      process.execPath,
+      standIn(
+        { type: "assistant", session_id: "s-1", message: { content: [{ type: "text", text: "Ticking the consent box" }] } },
+        { type: "result", subtype: "error_max_turns", is_error: true, session_id: "s-1" }
+      ),
+      "prompt",
+      rt
+    );
+    expect(session.turnLimit).toBe(true);
+    expect(session.sessionId).toBe("s-1");
+    expect(readAuthoringOutcome(session.finalMessage).kind).toBe("stuck");
+  });
+
+  it("is not marked when the session ended on its own sentinel", async () => {
+    const session = await runClaudeForTest(
+      process.execPath,
+      standIn({
+        type: "result",
+        subtype: "error_max_turns",
+        is_error: true,
+        session_id: "s-2",
+        result: "Recorded the check.\nAUTHORING: DONE",
+      }),
+      "prompt",
+      rt
+    );
+    expect(session.turnLimit).toBe(false);
+    expect(readAuthoringOutcome(session.finalMessage).kind).toBe("done");
+  });
+});
+
 describe("pointing the live viewport at a screenshot", () => {
   it("names the image relative to the --workspace folder, which the server resolves against", () => {
     // The layout a web session really has: the CLI's workspace root is `.investigator` INSIDE the

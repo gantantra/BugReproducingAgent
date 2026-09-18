@@ -58,7 +58,7 @@ import {
  */
 
 /** Bumped whenever ai/authoring/brief.md changes in a way that changes behaviour. */
-export const AUTHORING_BRIEF_VERSION = "2.4.0";
+export const AUTHORING_BRIEF_VERSION = "2.5.0";
 
 /**
  * Repetitions the emitted proposal starts at.
@@ -376,31 +376,57 @@ export async function authorCommand(
   /* A platform named after the browser is already open -- in a plan correction or an answer --
    * cannot be applied from inside the page. The session ends its turn asking for it; the harness
    * checks the name, relaunches the browser as that profile and resumes the same session. Bounded,
-   * so a session that keeps asking ends instead of relaunching forever. */
+   * so a session that keeps asking ends instead of relaunching forever.
+   *
+   * A session the turn counter stopped part-way through is continued once, the same way. It had not
+   * decided it was stuck: one real session signed in, found a control with no accessible name and
+   * reached the outcome, then ran out re-recording the check -- and the only way on from there was
+   * to start over from a new plan, throwing all of that away. */
   const maxRelaunches = 2;
-  for (let relaunches = 0; outcome.kind === "platform"; relaunches++) {
-    const requested = outcome.profile;
-    if (relaunches >= maxRelaunches || !session.sessionId) {
-      outcome = {
-        kind: "stuck",
-        reason: `The session asked to switch the browser to "${requested}" again after ${maxRelaunches} relaunches, or could not be resumed to do it.`,
-      };
-      break;
+  const maxTurnLimitContinuations = 1;
+  const turnLimitNote =
+    "You ran out of turns before finishing, so this turn continues the same session. The browser restarted: the page is fresh, the browser profile and any sign-in in it are kept, and every step you recorded is already part of the script. Carry on from where the flow stands. The moment the outcome is on screen, make browser_wait_for on its text your very next call, then finish." +
+    credsReminder +
+    platformReminder;
+  let relaunches = 0;
+  let continuations = 0;
+  for (;;) {
+    if (outcome.kind === "platform") {
+      const requested = outcome.profile;
+      if (relaunches >= maxRelaunches || !session.sessionId) {
+        outcome = {
+          kind: "stuck",
+          reason: `The session asked to switch the browser to "${requested}" again after ${maxRelaunches} relaunches, or could not be resumed to do it.`,
+        };
+        break;
+      }
+      relaunches++;
+      let note: string;
+      if (!Object.prototype.hasOwnProperty.call(profiles, requested)) {
+        note = `"${requested}" is not a configured browser platform, so nothing was relaunched. The browser is still ${describePlatform()}. Configured profiles:\n${profileCatalogue(profiles)}`;
+      } else if (requested === platform.profile) {
+        note = `The browser is already ${describePlatform()}. Carry on.`;
+      } else {
+        platform = { profile: requested, source: "session-request" };
+        writePlatformFile(platformPath, platform);
+        writeBrowserConfig(requested);
+        process.stderr.write(`📱 Relaunching the browser as ${describePlatform()}\n`);
+        note = `The browser has been relaunched as ${describePlatform()}. The page was reset but the browser profile, and any sign-in in it, was kept, and the steps from your earlier turns are already part of the script. Navigate again and carry on from where the flow stands.`;
+      }
+      session = await runClaude(cli!, argsFor(session.sessionId), note, rt, sessionDir, workspaceDir);
+      outcome = readAuthoringOutcome(session.finalMessage);
+      continue;
     }
-    let note: string;
-    if (!Object.prototype.hasOwnProperty.call(profiles, requested)) {
-      note = `"${requested}" is not a configured browser platform, so nothing was relaunched. The browser is still ${describePlatform()}. Configured profiles:\n${profileCatalogue(profiles)}`;
-    } else if (requested === platform.profile) {
-      note = `The browser is already ${describePlatform()}. Carry on.`;
-    } else {
-      platform = { profile: requested, source: "session-request" };
-      writePlatformFile(platformPath, platform);
-      writeBrowserConfig(requested);
-      process.stderr.write(`📱 Relaunching the browser as ${describePlatform()}\n`);
-      note = `The browser has been relaunched as ${describePlatform()}. The page was reset but the browser profile, and any sign-in in it, was kept, and the steps from your earlier turns are already part of the script. Navigate again and carry on from where the flow stands.`;
+    if (session.turnLimit && session.sessionId && continuations < maxTurnLimitContinuations) {
+      continuations++;
+      process.stderr.write(
+        `⏭️ Out of turns part-way through — continuing the same session (${continuations} of ${maxTurnLimitContinuations})\n`
+      );
+      session = await runClaude(cli!, argsFor(session.sessionId), turnLimitNote, rt, sessionDir, workspaceDir);
+      outcome = readAuthoringOutcome(session.finalMessage);
+      continue;
     }
-    session = await runClaude(cli!, argsFor(session.sessionId), note, rt, sessionDir, workspaceDir);
-    outcome = readAuthoringOutcome(session.finalMessage);
+    break;
   }
 
   // A script is emitted only from a session that reached the behaviour. A partial one is worse
@@ -456,6 +482,8 @@ export async function authorCommand(
       platform: { profile: platform.profile, description: describePlatform(), source: platform.source },
       ...(outcome.kind === "question" ? { question: outcome.question } : {}),
       ...(outcome.kind === "stuck" ? { reason: outcome.reason } : {}),
+      // Stopped by the turn counter even after the automatic continuation; the page offers to keep going.
+      ...(outcome.kind === "stuck" && session.turnLimit ? { turnLimit: true } : {}),
       sessionId: session.sessionId,
       suite,
       message: session.finalMessage,
@@ -626,7 +654,7 @@ function runClaude(
   sessionDir?: string,
   /** The folder screenshot paths are made relative to; see `screenshotLine`. */
   workspaceDir?: string
-): Promise<{ sessionId: string | null; finalMessage: string; exitCode: number | null }> {
+): Promise<{ sessionId: string | null; finalMessage: string; exitCode: number | null; turnLimit: boolean }> {
   return new Promise((resolvePromise) => {
     // `shell: false`, always. The prompt embeds a bug report written by someone else, and a shell
     // on Windows concatenates arguments rather than escaping them -- a report containing
@@ -760,11 +788,14 @@ function runClaude(
         }
       }
 
-      if (maxTurnsReached && !finalMessage.includes("AUTHORING:")) {
+      // Stopped by the turn counter rather than by an ending of its own: the session did not decide
+      // it was stuck, so the caller may continue it.
+      const turnLimit = maxTurnsReached && !finalMessage.includes("AUTHORING:");
+      if (turnLimit) {
         finalMessage = "AUTHORING: STUCK Authoring reached the maximum turn limit without completing.";
       }
 
-      resolvePromise({ sessionId, finalMessage, exitCode });
+      resolvePromise({ sessionId, finalMessage, exitCode, turnLimit });
     });
   });
 }

@@ -101,6 +101,10 @@ record the check.
   Take one only when you need to see something a snapshot cannot tell you.
 - **Read snapshots inline.** Call `browser_snapshot` without a filename and the page comes back in
   the result. Saving it to a file and then reading the file costs two calls for the same thing.
+- **Each action's result already shows the page.** A click, a type or a navigation returns a
+  snapshot of what it left on screen. Take the next control's ref from that; call `browser_find`
+  only when it does not show what you need. One real session ran a find before almost every
+  click, spent a third of its turns that way, and ran out one screen before the end.
 - **Find controls on the page, not in its source.** `browser_snapshot` and `browser_find` show what
   a user can reach. Do not read network responses or search the site's JavaScript to locate a
   control; if a control truly has no name you can find, ask.
@@ -110,10 +114,18 @@ record the check.
 
 ### Check the moment the outcome is on screen
 
-As soon as the flow's result is visible -- the bug, or the application behaving correctly -- call
-`browser_wait_for` on the text that shows it, **before you navigate anywhere else**. A check made
-after leaving the page waits for text that is no longer there, and the script then fails for a
-reason that has nothing to do with the bug. Then end with `AUTHORING: DONE`.
+As soon as the flow's result is visible -- the bug, or the application behaving correctly -- make
+`browser_wait_for` on the text that shows it **your very next call**: before a find, a screenshot,
+or navigating anywhere. A check made after leaving the page waits for text that is no longer there,
+and the script then fails for a reason that has nothing to do with the bug. Then end with
+`AUTHORING: DONE`.
+
+Messages that confirm an action are often toasts that vanish within seconds. One real session saw
+"Account has been deleted successfully!" in the result of its confirm click, looked for it again
+with `browser_find`, took a screenshot to see it, and by then it was gone. A find or a screenshot
+records nothing in the script, so the only way left to record the check was to run the whole
+destructive flow again, and the session ran out of turns doing it. Text in the result of the action
+that produced it is proof enough that it is there: record the wait on it straight away.
 
 Do not run a completed flow again. One attempt is the deliverable, repetition is the harness's
 job, and a destructive flow -- a deleted account, a cancelled order -- cannot be repeated anyway.

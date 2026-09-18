@@ -647,6 +647,10 @@
       await askForTarget();
       return;
     }
+    // Test-account values in the report itself go to the credential store too, and the stored
+    // report carries their names. Extraction ran on answers only, so a report that gave the phone
+    // and OTP up front put both into the plan and every prompt in the clear.
+    text = await credentialsToNames(undefined, text);
     const wrote = await api("/api/report", {
       method: "POST",
       body: JSON.stringify({ text, name: "report.md" }),
@@ -1540,8 +1544,24 @@
           "No script was written. A partial reproduction looks complete, and whoever runs it next believes it — so nothing is better than half."
         )
       );
+      /* Out of turns is not stuck. The CLI already continued the session once; the flow so far —
+       * sign-in, the controls it found, the steps recorded — is kept by resuming it, and thrown away
+       * by "Try again", which starts over from a new plan. */
+      const canContinue = r.turnLimit === true && Boolean(state.authoringSession);
+      if (canContinue) {
+        c.appendChild(
+          node(
+            "p",
+            null,
+            "It ran out of turns part-way through, after one automatic continuation. Keep going picks the same session up again, with the browser profile and every step it recorded."
+          )
+        );
+      }
       buttons(c, [
-        { label: "Add more detail", kind: "primary", onClick: () => promptForMoreDetail() },
+        ...(canContinue
+          ? [{ label: "Keep going", kind: "primary", onClick: () => resumeAuthoring("Keep going from where the flow stands.") }]
+          : []),
+        { label: "Add more detail", ...(canContinue ? {} : { kind: "primary" }), onClick: () => promptForMoreDetail() },
         { label: "Try again", onClick: () => startAuthoring({}) },
       ]);
       return;
