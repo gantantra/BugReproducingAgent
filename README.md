@@ -165,6 +165,21 @@ works out what each piece is and asks only when something is genuinely ambiguous
   credential store. The model is only ever told its name, e.g. `ACCOUNT_PHONE`. See
   [Credentials](#credentials).
 
+### Settling the plan
+
+Before any browser opens, the agent writes a plan and may ask up to three questions about what only
+you know: which account, which data, which variant of the flow. Answering **revises the plan** and
+shows it again. It does not open the browser. Each version is kept as `plan.v<N>.md` beside the
+current `plan.md`.
+
+**That's all I know** sits beside the input box for as long as the plan is being worked out. It
+stops the questions: the agent writes the final plan with whatever is still missing marked `???`,
+and the browser session works those out from the page. Anything you had typed is sent with it.
+
+"Looks right — go" approves the plan card you are reading, bound to its SHA-256. If the plan on disk
+changed after it was shown, the approval is refused with `GATE_CHECKSUM_MISMATCH` and nothing
+opens.
+
 ### Watching it work
 
 While the session drives the browser, a **live viewport** stays pinned at the top of the
@@ -227,6 +242,19 @@ PLATFORM: pixel-7-chrome-mobile — the report says "on my Android phone"
 4. Fill "New Password" with ??? — not given, need a value to type.
 7. Check: wait for the confirmation text.
 ```
+
+Before approving, the plan can be revised, and each revision is kept as `plan.v<N>.md`:
+
+```bash
+investigate author --investigation INV-001 --answer "sign in as the QA account"   # re-plans
+investigate author --investigation INV-001 --thats-all                            # final plan, gaps marked
+investigate author --investigation INV-001 --approve-plan --plan-checksum sha256:<planChecksum>
+```
+
+The planning turn's `--json` output carries `planVersion` and `planChecksum`. With
+`--plan-checksum`, an approval is refused (exit 3) unless `plan.md` still hashes to it. The
+approved plan's hash is recorded in lineage as `PLAN-<investigation>-v<N>`. That record is an
+authoring authorization, not one of the three gates, and it never authorizes a measured run.
 
 When the session meets something only you know, it pauses and asks. Answering resumes it:
 
@@ -463,7 +491,10 @@ and prompt bytes produced an interpretation. It is tamper-evident, not tamper-pr
 Global flags: `--workspace <dir>`, `--investigation <id>`, `--json`, `--verbose`, `--seed <int>`,
 `--no-color`. `--json` puts machine-readable output on stdout and human text on stderr.
 
-Other `author` options: `--headed`, `--max-turns <n>` (default 60), `--env <name>`.
+Other `author` options: `--headed`, `--max-turns <n>` (default 60), `--env <name>`, `--thats-all`
+(planning: write the final plan without asking again), `--plan-checksum <sha256:…>` (with
+`--approve-plan`: refuse unless the plan on disk is the one read). In the planning phase, `--answer`
+revises the plan.
 
 ### Exit codes
 
@@ -528,7 +559,8 @@ llm:
       investigations/INV-001/
         manifests/  approvals/  artifacts/  normalized/
         authoring/
-          plan.md, platform.json, attempt.json, browser-config.json, mcp-config.json,
+          plan.md, plan.v<N>.md (earlier versions), platform.json, attempt.json,
+          browser-config.json, mcp-config.json,
           .secrets.env, live/ (the live-view frame)
           suite/                     tests/repro.spec.ts, playwright.config.ts, package.json,
                                      artifacts/last-run.report.json, last-run.evidence.json

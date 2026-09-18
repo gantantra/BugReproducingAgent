@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fail, sha256Prefixed, systemClock } from "@investigator/core";
 import { investigationDirs } from "@investigator/storage";
 import { LineageWriter } from "@investigator/lineage";
@@ -149,6 +149,16 @@ export interface AuthorOptions {
    * server at all — see `runPlanningPhase`.
    */
   approvePlan?: boolean;
+  /**
+   * In the planning phase: the operator has nothing more to add. The turn must write its plan with
+   * any remaining gaps marked, rather than ask again.
+   */
+  thatsAll?: boolean;
+  /**
+   * With `approvePlan`: the checksum of the plan the operator read. The plan on disk must still
+   * hash to it, so an approval cannot land on a plan that was rewritten after it was shown.
+   */
+  planChecksum?: string;
 }
 
 export interface AuthorResult {
@@ -280,11 +290,42 @@ export async function authorCommand(
       profiles,
       defaultProfile: defaultPlatform.profile,
       platformPath,
+      ...(opts.answer ? { answer: opts.answer } : {}),
+      thatsAll: opts.thatsAll === true,
     });
+  }
+
+  if (opts.approvePlan && opts.planChecksum !== undefined) {
+    const onDisk = existsSync(planPath) ? sha256Prefixed(readFileSync(planPath, "utf8")) : null;
+    if (onDisk !== opts.planChecksum) {
+      fail(
+        "GATE_CHECKSUM_MISMATCH",
+        "The plan on disk is not the plan that was approved. Read the current plan and approve it again.",
+        { context: { expected: opts.planChecksum, actual: onDisk ?? "(no plan)" } }
+      );
+    }
   }
 
   const approvedPlan =
     opts.approvePlan && existsSync(planPath) ? readFileSync(planPath, "utf8") : "";
+  if (opts.approvePlan && approvedPlan) {
+    // The plan the browser session is about to act on, bound by its hash. The operator's click is
+    // recorded as the reason, not as a gate approval: a plan authorizes an attended authoring
+    // session, never a measured run.
+    await new LineageWriter(rt.metadata, systemClock).append({
+      investigationId,
+      edge: "interpreted_as",
+      fromKind: "intake_report",
+      fromId: "intake_report",
+      toKind: "flow",
+      toId: `PLAN-${investigationId}-v${planVersionOf(planPath)}`,
+      actor: { kind: "deterministic", component: "author.approve-plan", version: AUTHORING_BRIEF_VERSION },
+      inputs: {
+        planChecksum: sha256Prefixed(approvedPlan),
+        checksumConfirmed: opts.planChecksum !== undefined,
+      },
+    });
+  }
 
   // The platform the plan chose, or the session later asked for. With neither on record the
   // configured default is used, and the log names it either way.
@@ -912,7 +953,17 @@ async function runPlanningPhase(a: {
   profiles: Readonly<Record<string, EmulationProfile>>;
   defaultProfile: string;
   platformPath: string;
+  /** What the operator said about the previous plan: an answer, a correction, or more detail. */
+  answer?: string;
+  /** The operator has nothing more to add; write the plan with the gaps marked. */
+  thatsAll?: boolean;
 }): Promise<AuthorResult> {
+  // A planning turn with something new from the operator revises the plan it already wrote rather
+  // than starting from the report alone, so nothing they were already told is lost.
+  const previousPlan =
+    (a.answer !== undefined || a.thatsAll === true) && existsSync(a.planPath)
+      ? readFileSync(a.planPath, "utf8")
+      : "";
   const credEntries = a.rt.credentials.entries();
   const credSummary =
     credEntries.length > 0
@@ -946,6 +997,7 @@ async function runPlanningPhase(a: {
     `Default, when nothing the operator said names a platform: ${a.defaultProfile}`,
     "",
     "Put PLATFORM: <profile name> on its own line directly above AUTHORING: PLAN.",
+    ...planRevisionSection({ previousPlan, answer: a.answer, thatsAll: a.thatsAll === true }),
   ].join("\n");
 
   const args = claudeCliArgs({
@@ -965,7 +1017,9 @@ async function runPlanningPhase(a: {
    * whichever sentinel was used, and a question is carried alongside rather than replacing it.
    * Keeping the sentinel line out of the plan matters: it is shown to the operator verbatim. */
   const plan = stripPlatformLine(stripSentinel(session.finalMessage));
-  const question = outcome.kind === "question" ? outcome.question : "";
+  // After "That's all I know" there is nobody left to ask. A question is dropped rather than put
+  // back to the operator; the gap it named stays in the plan for the browser session to meet.
+  const question = outcome.kind === "question" && a.thatsAll !== true ? outcome.question : "";
   const ok = outcome.kind === "plan" || outcome.kind === "question";
 
   // The model proposes a profile name; config decides whether it exists. The operator sees the
@@ -981,9 +1035,12 @@ async function runPlanningPhase(a: {
       : undefined;
   const platformDescription = describeProfile(platform.profile, a.profiles[platform.profile]!);
   if (ok) {
+    archivePlan(a.planPath);
     writeFileSync(a.planPath, plan, "utf8");
     writePlatformFile(a.platformPath, platform);
   }
+  const planVersion = ok ? planVersionOf(a.planPath) : null;
+  const planChecksum = ok ? sha256Prefixed(plan) : null;
 
   return {
     json: {
@@ -999,6 +1056,7 @@ async function runPlanningPhase(a: {
         ...(platformNote ? { note: platformNote } : {}),
       },
       ...(question ? { question } : {}),
+      ...(planVersion !== null ? { planVersion, planChecksum } : {}),
       sessionId: session.sessionId,
       suite: null,
       message: session.finalMessage,
@@ -1014,11 +1072,72 @@ async function runPlanningPhase(a: {
             ...(platformNote ? [platformNote] : []),
             ...(question ? ["", `It needs to know: ${question}`] : []),
             "",
-            `Approve it with:  investigate author --investigation ${a.investigationId} --approve-plan`,
+            `Approve it with:  investigate author --investigation ${a.investigationId} --approve-plan --plan-checksum ${planChecksum}`,
             `Answer or change: the same command plus --answer "<your answer>"`,
+            `Revise the plan:  investigate author --investigation ${a.investigationId} --answer "<more detail>"   (add --thats-all when you have nothing more)`,
           ].join("\n")
         : renderHuman(outcome, session, null, a.investigationId),
   };
+}
+
+/**
+ * What a revising planning turn is told on top of the report: the plan it wrote last time and
+ * what the operator added. Empty when there is nothing to revise, so a first planning turn reads
+ * exactly as it always has.
+ */
+export function planRevisionSection(a: {
+  previousPlan: string;
+  answer?: string | undefined;
+  thatsAll: boolean;
+}): string[] {
+  const lines: string[] = [];
+  if (a.previousPlan) {
+    lines.push("", "## The plan you wrote last time", "", a.previousPlan);
+  }
+  if (a.answer) {
+    lines.push(
+      "",
+      "## What the operator added",
+      "",
+      a.answer,
+      "",
+      "Revise the plan with this. Use what they supplied as given; do not ask again about anything it answers."
+    );
+  }
+  if (a.thatsAll) {
+    lines.push(
+      "",
+      "## The operator has nothing more to add",
+      "",
+      "Do not ask anything. Write the complete plan now, mark every value still missing as ??? with what",
+      "it is for, and end with AUTHORING: PLAN. The browser session will work out what the page can show it."
+    );
+  } else {
+    lines.push(
+      "",
+      "If something only the operator can know is still missing, you may end with AUTHORING: QUESTION",
+      "instead. Ask at most three things at once, the one that matters most first, and never anything",
+      "the page itself would show."
+    );
+  }
+  return lines;
+}
+
+/**
+ * Keep the plan about to be replaced as `plan.v<N>.md`, so every version the operator was shown
+ * stays on disk and the current one is always `plan.md`.
+ */
+function archivePlan(planPath: string): void {
+  if (!existsSync(planPath)) return;
+  const version = planVersionOf(planPath);
+  writeFileSync(planPath.replace(/plan\.md$/, `plan.v${version}.md`), readFileSync(planPath));
+}
+
+/** The version number of the current `plan.md`: one more than the versions archived beside it. */
+export function planVersionOf(planPath: string): number {
+  const dir = dirname(planPath);
+  if (!existsSync(dir)) return 1;
+  return readdirSync(dir).filter((f) => /^plan\.v\d+\.md$/.test(f)).length + 1;
 }
 
 /**

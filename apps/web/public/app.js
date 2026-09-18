@@ -16,6 +16,7 @@
   const el = {
     transcript: document.getElementById("transcript"),
     input: document.getElementById("input"),
+    thatsAll: document.getElementById("thatsAll"),
     rail: document.getElementById("rail"),
     waiting: document.getElementById("waiting"),
     waitingLabel: document.getElementById("waitingLabel"),
@@ -75,6 +76,10 @@
     choicePending: false,
     // How many times this attempt's script has been sent back to be re-recorded after a replay.
     repairAttempts: 0,
+    // The plan is still being worked out: no browser yet, and "That's all I know" is offered.
+    planning: false,
+    // The checksum of the plan card on screen, sent with its approval.
+    planChecksum: null,
   };
 
   /* `state.awaiting` is opened and closed from a dozen places, some of them AFTER the card's
@@ -525,6 +530,10 @@
   function updateComposer() {
     const choosing = state.choicePending && !state.awaiting;
     el.input.disabled = state.busy || choosing;
+    if (el.thatsAll) {
+      el.thatsAll.hidden = !state.planning;
+      el.thatsAll.disabled = state.busy;
+    }
     if (choosing) {
       if (placeholderBeforeChoice === null) placeholderBeforeChoice = el.input.placeholder;
       el.input.placeholder = CHOOSE_PLACEHOLDER;
@@ -1460,6 +1469,11 @@
     // A new authoring run gets its own repair budget.
     state.repairAttempts = 0;
     const planning = !extra || extra.approvePlan !== true;
+    // Planning keeps "That's all I know" beside the composer; opening the browser ends it.
+    state.planning = planning;
+    if (!planning && state.planChecksum && !extra.planChecksum) {
+      extra = { ...extra, planChecksum: state.planChecksum };
+    }
     setBusy(
       true,
       planning ? "Working out how to reproduce it…" : "Working through it in a browser…"
@@ -1585,6 +1599,9 @@
    * not a form. */
   function showPlan(r) {
     setStep("reproduce");
+    state.planning = true;
+    state.planChecksum = r.planChecksum || null;
+    updateComposer();
     const c = card("Here is what I plan to do");
     c.appendChild(
       node(
@@ -1622,12 +1639,10 @@
       c.appendChild(node("p", "ask", asked));
       el.input.placeholder = "Your answer…";
       el.input.focus();
+      // An answer revises the plan, which comes back for another read before any browser opens.
       const handler = async (answer) => {
         state.awaiting = null;
-        await startAuthoring({
-          approvePlan: true,
-          answer: await credentialsToNames(asked, answer),
-        });
+        await startAuthoring({ answer: await credentialsToNames(asked, answer) });
       };
       handler.echoesItself = true;
       state.awaiting = handler;
@@ -1998,6 +2013,19 @@
       e.preventDefault();
       void onSend();
     }
+  });
+
+  /* "That's all I know": stop being asked, and have the plan written with what there is. Anything
+   * still typed in the box goes with it as the last answer -- credentials first turned into names,
+   * as every other answer is, so no value reaches the transcript. */
+  el.thatsAll?.addEventListener("click", async () => {
+    if (state.busy || !state.planning || !state.investigation) return;
+    const typed = el.input.value.trim();
+    el.input.value = "";
+    state.awaiting = null;
+    const answer = typed ? await credentialsToNames("plan", typed) : "";
+    say(answer ? `${answer}\n\nThat's all I know.` : "That's all I know.", "user");
+    await startAuthoring({ thatsAll: true, ...(answer ? { answer } : {}) });
   });
 
   // ------------------------------------------------------------------------------------- boot

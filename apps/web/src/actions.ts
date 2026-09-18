@@ -221,9 +221,19 @@ export const ACTIONS: readonly ActionDef[] = [
      * which is why it is accepted here as well as on the resume path. */
     if (flag(p, "approvePlan")) {
       argv.push("--approve-plan");
+      // The checksum of the plan card the operator read, in the CLI's own `sha256:` spelling.
+      const planChecksum = optionalStr(p, "planChecksum", PROPOSAL_CHECKSUM, "a plan checksum");
+      if (planChecksum) argv.push("--plan-checksum", planChecksum);
       const amendments = optionalStr(p, "answer", FREE_TEXT, "your changes to the plan");
       if (amendments) argv.push("--answer", amendments);
+      return argv;
     }
+
+    /* Still planning: an answer revises the plan instead of opening the browser, and "That's all
+     * I know" asks for the final plan with the remaining gaps marked. */
+    const more = optionalStr(p, "answer", FREE_TEXT, "more detail for the plan");
+    if (more) argv.push("--answer", more);
+    if (flag(p, "thatsAll")) argv.push("--thats-all");
     return argv;
   }),
 

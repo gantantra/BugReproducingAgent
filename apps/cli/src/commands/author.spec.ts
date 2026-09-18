@@ -10,6 +10,8 @@ import {
   formatToolUse,
   readAuthoringOutcome,
   buildPrompt,
+  planRevisionSection,
+  planVersionOf,
   runClaudeForTest,
   screenshotLine,
 } from "./author.js";
@@ -418,5 +420,43 @@ describe("buildPrompt credentials formatting", () => {
     });
 
     expect(prompt).toContain("No credentials were supplied. Ask if the flow needs one.");
+  });
+});
+
+describe("revising the plan before anything opens a browser", () => {
+  it("adds nothing to a first planning turn beyond the offer to ask", () => {
+    const text = planRevisionSection({ previousPlan: "", thatsAll: false }).join("\n");
+    expect(text).not.toContain("The plan you wrote last time");
+    expect(text).toContain("AUTHORING: QUESTION");
+  });
+
+  it("carries the previous plan and the operator's answer into the next turn", () => {
+    const text = planRevisionSection({
+      previousPlan: "1. Open /search",
+      answer: "use the QA account",
+      thatsAll: false,
+    }).join("\n");
+    expect(text).toContain("1. Open /search");
+    expect(text).toContain("use the QA account");
+  });
+
+  it("after \"That's all I know\", forbids another question and asks for the gaps to be marked", () => {
+    const text = planRevisionSection({ previousPlan: "1. Open /search", thatsAll: true }).join("\n");
+    expect(text).toContain("Do not ask anything");
+    expect(text).toContain("???");
+    expect(text).not.toContain("you may end with AUTHORING: QUESTION");
+  });
+
+  it("numbers the current plan one past the versions kept beside it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "plan-versions-"));
+    try {
+      const planPath = join(dir, "plan.md");
+      expect(planVersionOf(planPath)).toBe(1);
+      writeFileSync(join(dir, "plan.v1.md"), "old");
+      writeFileSync(join(dir, "plan.v2.md"), "older");
+      expect(planVersionOf(planPath)).toBe(3);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

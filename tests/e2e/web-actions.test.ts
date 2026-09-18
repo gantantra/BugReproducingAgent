@@ -100,6 +100,24 @@ describe("every web action produces argv the CLI parser accepts", () => {
   });
 });
 
+describe("the planner's author calls reach the parser intact", () => {
+  const ctx: BuildContext = { inWorkspace: (rel) => resolve(dir, rel) };
+  const author = () => ACTIONS.find((a) => a.id === "author")!;
+
+  it.each([
+    ["a plan revision", { investigation: "INV-001", answer: "use the QA account" }],
+    ["That's all I know", { investigation: "INV-001", thatsAll: true, answer: "Android" }],
+    [
+      "an approval bound to the plan checksum",
+      { investigation: "INV-001", approvePlan: true, planChecksum: `sha256:${"a".repeat(64)}` },
+    ],
+  ])("%s", async (_label, params) => {
+    const argv = author().build(params as Record<string, unknown>, ctx);
+    const { output } = await invoke(argv);
+    expect(PARSER_REJECTION.exec(output)?.[0]).toBeUndefined();
+  });
+});
+
 describe("the UI cannot walk past a gate", () => {
   const ctx: BuildContext = { inWorkspace: (rel) => resolve(dir, rel) };
 
