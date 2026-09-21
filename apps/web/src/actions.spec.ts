@@ -173,14 +173,25 @@ describe("artifact requests", () => {
 describe("sending a script back to be re-recorded", () => {
   it("resumes the session in repair mode, with nothing typed", () => {
     expect(
-      build("author", { investigation: "INV-001", resume: "62433c00-f352-4735-94b0-d5210d3da831", repair: true })
-    ).toEqual(["author", "--investigation", "INV-001", "--resume", "62433c00-f352-4735-94b0-d5210d3da831", "--repair"]);
+      build("author", {
+        investigation: "INV-001",
+        resume: "62433c00-f352-4735-94b0-d5210d3da831",
+        repair: true,
+      })
+    ).toEqual([
+      "author",
+      "--investigation",
+      "INV-001",
+      "--resume",
+      "62433c00-f352-4735-94b0-d5210d3da831",
+      "--repair",
+    ]);
   });
 
   it("still requires an answer on an ordinary resume", () => {
-    expect(() => build("author", { investigation: "INV-001", resume: "62433c00-f352-4735-94b0-d5210d3da831" })).toThrow(
-      ParamError
-    );
+    expect(() =>
+      build("author", { investigation: "INV-001", resume: "62433c00-f352-4735-94b0-d5210d3da831" })
+    ).toThrow(ParamError);
   });
 });
 
@@ -323,5 +334,92 @@ describe("approving the plan", () => {
     const argv = build("author", { investigation: "INV-001", approvePlan: true });
     expect(argv).toContain("--approve-plan");
     expect(argv).not.toContain("--answer");
+  });
+
+  it("binds an approval to the checksum of the plan card, in the CLI's sha256: spelling", () => {
+    const sum = `sha256:${"a".repeat(64)}`;
+    const argv = build("author", {
+      investigation: "INV-001",
+      approvePlan: true,
+      planChecksum: sum,
+    });
+    expect(argv[argv.indexOf("--plan-checksum") + 1]).toBe(sum);
+    expect(() =>
+      build("author", { investigation: "INV-001", approvePlan: true, planChecksum: "a".repeat(64) })
+    ).toThrow();
+  });
+
+  it("revises the plan with an answer given before approval, without opening a browser", () => {
+    const argv = build("author", { investigation: "INV-001", answer: "use the QA account" });
+    expect(argv).not.toContain("--approve-plan");
+    expect(argv[argv.indexOf("--answer") + 1]).toBe("use the QA account");
+  });
+
+  it('passes "That\'s all I know" through, alone or with a last answer', () => {
+    expect(build("author", { investigation: "INV-001", thatsAll: true })).toEqual([
+      "author",
+      "--investigation",
+      "INV-001",
+      "--thats-all",
+    ]);
+    const argv = build("author", { investigation: "INV-001", thatsAll: true, answer: "Android" });
+    expect(argv).toContain("--thats-all");
+    expect(argv[argv.indexOf("--answer") + 1]).toBe("Android");
+  });
+
+  it("builds a bare planning call exactly as before", () => {
+    expect(build("author", { investigation: "INV-001" })).toEqual([
+      "author",
+      "--investigation",
+      "INV-001",
+    ]);
+  });
+});
+
+describe("analysing a rerun batch and confirming a condition", () => {
+  it("passes a batch to analyse, and refuses one that is not a batch id", () => {
+    expect(build("analyze", { investigation: "INV-001", ai: true, batch: "BATCH-002" })).toEqual([
+      "analyze",
+      "--investigation",
+      "INV-001",
+      "--ai",
+      "--batch",
+      "BATCH-002",
+    ]);
+    for (const bad of ["RUN-001", "BATCH-1", "BATCH-001 --ai", "../BATCH-001"]) {
+      expect(() => build("analyze", { investigation: "INV-001", batch: bad }), bad).toThrow(
+        ParamError
+      );
+    }
+  });
+
+  it("previews a condition without a checksum, and runs it only with one", () => {
+    expect(build("confirm", { investigation: "INV-001", condition: 1 })).toEqual([
+      "confirm",
+      "--investigation",
+      "INV-001",
+      "--condition",
+      "1",
+    ]);
+    const checksum = `sha256:${"c".repeat(64)}`;
+    expect(build("confirm", { investigation: "INV-001", condition: 1, checksum })).toContain(
+      checksum
+    );
+  });
+
+  it("refuses a condition out of range and a malformed checksum", () => {
+    for (const condition of [0, 4, -1, 1.5, "one"]) {
+      expect(
+        () => build("confirm", { investigation: "INV-001", condition }),
+        String(condition)
+      ).toThrow(ParamError);
+    }
+    expect(() =>
+      build("confirm", { investigation: "INV-001", condition: 1, checksum: "a".repeat(64) })
+    ).toThrow(ParamError);
+  });
+
+  it("streams, because a confirmation runs the script many times", () => {
+    expect(findAction("confirm")?.streams).toBe(true);
   });
 });

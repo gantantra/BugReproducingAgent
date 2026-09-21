@@ -50,6 +50,11 @@ Playwright produces evidence. Deterministic software normalizes and measures evi
 | [ADR-0025](ADR-0025-browser-per-batch-context-per-run.md) | One browser per batch, one fresh context per run | execution, evidence |
 | [ADR-0026](ADR-0026-gate-proposal-bundle-and-injected-classifier.md) | Gate proposals are a bundle; the destructive classifier is injected | approvals, execution |
 | [ADR-0027](ADR-0027-authoring-loop-separate-from-measurement.md) | An interactive authoring loop, separate from the measurement loop | ai-flows, execution, cli, web |
+| [ADR-0028](ADR-0028-authored-sessions-become-measurable-experiments.md) | An authored session becomes a measurable experiment by translation, not by execution | ai, execution, approvals, cli |
+| [ADR-0029](ADR-0029-four-agents-and-authored-run-evidence.md) | Four agents, and every authored-suite run recorded by the measured path's own collector | cli, web, execution, evidence, storage |
+| [ADR-0030](ADR-0030-authored-suite-traces-stay-uningested.md) | An authored suite's traces stay in its own folder, uningested; raw opt-in is deferred | execution, evidence |
+| [ADR-0031](ADR-0031-confirmation-loop.md) | One Confirm click freezes a checksummed experiment; interleaved arms; only signature-matched failures count | cli, web, execution, evidence, ai |
+| [ADR-0032](ADR-0032-evidence-quality-per-claim.md) | An internal evidence-quality record per batch; a finding withheld only when its own evidence was incomplete | evidence, cli, web |
 
 ## Supersession
 

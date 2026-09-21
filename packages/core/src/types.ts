@@ -275,6 +275,16 @@ export const ARTIFACT_KINDS = [
   "report",
   "reset-script-output",
   "storage-state",
+  // One `investigate rerun` of an authored suite: its runs, how each was classified, and the
+  // artifact ids of their evidence (ADR-0029). Runs of an authored suite are not measured-path
+  // runs and have no row in `runs`; this record is where they are listed.
+  "rerun-batch",
+  // Which evidence was complete across a batch, and what each kind of claim needs (ADR-0032).
+  "evidence-quality",
+  // The experiment config frozen by the operator's Confirm click, canonical bytes (ADR-0031).
+  "confirmation-config",
+  // What a confirmation measured: per-arm counts, the verdict, the frozen config it ran.
+  "confirmation-result",
 ] as const;
 export type ArtifactKind = (typeof ARTIFACT_KINDS)[number];
 

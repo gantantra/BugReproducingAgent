@@ -135,8 +135,12 @@ export async function doctorCommand(rt: Runtime, opts: DoctorOptions): Promise<D
       model: authoringModel,
       effort: AUTHORING_EFFORT,
       tokenConfigured: authoringAuthTokenSet,
-      tokenPrefix: authoringEnv.ANTHROPIC_AUTH_TOKEN ? authoringEnv.ANTHROPIC_AUTH_TOKEN.slice(0, 10) : null,
-      tokenSuffix: authoringEnv.ANTHROPIC_AUTH_TOKEN ? authoringEnv.ANTHROPIC_AUTH_TOKEN.slice(-4) : null,
+      tokenPrefix: authoringEnv.ANTHROPIC_AUTH_TOKEN
+        ? authoringEnv.ANTHROPIC_AUTH_TOKEN.slice(0, 10)
+        : null,
+      tokenSuffix: authoringEnv.ANTHROPIC_AUTH_TOKEN
+        ? authoringEnv.ANTHROPIC_AUTH_TOKEN.slice(-4)
+        : null,
       baseUrlHost: authoringBaseUrlHost,
     },
     safety: {

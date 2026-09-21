@@ -89,7 +89,10 @@ export function readPlatformFile(
 ): PlatformChoice | null {
   if (!existsSync(path)) return null;
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as { profile?: unknown; source?: unknown };
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as {
+      profile?: unknown;
+      source?: unknown;
+    };
     if (
       typeof parsed.profile === "string" &&
       Object.prototype.hasOwnProperty.call(profiles, parsed.profile) &&

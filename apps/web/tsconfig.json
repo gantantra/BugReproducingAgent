@@ -7,8 +7,5 @@
   },
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.spec.ts", "node_modules", "dist"],
-  "references": [
-    { "path": "../../packages/storage" },
-    { "path": "../../packages/ai-flows" }
-  ]
+  "references": [{ "path": "../../packages/storage" }, { "path": "../../packages/ai-flows" }]
 }

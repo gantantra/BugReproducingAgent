@@ -9,9 +9,22 @@ import {
   type ReferenceWorld,
 } from "@investigator/ai-gateway";
 import { contrastRuns, type RunEvidenceFacts } from "@investigator/tools";
+import {
+  CLAIM_EVIDENCE_REQUIREMENTS,
+  deriveTargetSignature,
+  incompleteEvidenceFor,
+  type ClaimCategory,
+  type EvidenceQuality,
+  type TargetSignature,
+} from "@investigator/evidence";
 import type { GlobalOptions, Runtime } from "../runtime.js";
 import { openAiSession } from "../ai.js";
-import { buildAnalysisRegistry, readFlowFacts, readRunEvidence } from "../tool-registry.js";
+import {
+  buildAnalysisRegistry,
+  readBatchEvidence,
+  readFlowFacts,
+  readRunEvidence,
+} from "../tool-registry.js";
 
 /**
  * `investigate analyze` — read the runs that were measured and say what they show.
@@ -33,6 +46,60 @@ export interface AnalyzeOptions {
   ai?: boolean;
   replay?: string;
   json?: boolean;
+  /** A rerun batch to analyse instead of the measured runs (ADR-0029). */
+  batch?: string;
+}
+
+/** What was analysed: the measured path's runs, or one batch of an authored suite's runs. */
+export type AnalysisSource = { kind: "measured" } | { kind: "rerun-batch"; batchId: string };
+
+export interface WithheldFinding {
+  finding: AnalysisFinding;
+  reason: "EVIDENCE_INCOMPLETE_FOR_CLAIM";
+  incomplete: Array<{ runId: string; category: string; status: string }>;
+}
+
+/**
+ * Withhold each finding whose claim needs evidence that was incomplete in a run it cites -- that
+ * finding alone (ADR-0032). A finding with no claim category, or one whose evidence was complete,
+ * is untouched, whatever else in the batch was incomplete.
+ */
+export function withholdByEvidence(
+  findings: readonly AnalysisFinding[],
+  quality: EvidenceQuality | null
+): { kept: AnalysisFinding[]; withheld: WithheldFinding[] } {
+  if (!quality) return { kept: [...findings], withheld: [] };
+  const kept: AnalysisFinding[] = [];
+  const withheld: WithheldFinding[] = [];
+  for (const f of findings) {
+    const claim = f.claimCategory;
+    if (!claim || !(claim in CLAIM_EVIDENCE_REQUIREMENTS)) {
+      kept.push(f);
+      continue;
+    }
+    // A run is cited directly (`runId`) or as one side of a comparison (`runIdsA`/`runIdsB`).
+    const runIds = [
+      ...new Set(
+        (f.supportingEvidence ?? [])
+          .flatMap((r) => {
+            const ref = r as { runId?: unknown; runIdsA?: unknown; runIdsB?: unknown };
+            return [
+              ref.runId,
+              ...(Array.isArray(ref.runIdsA) ? ref.runIdsA : []),
+              ...(Array.isArray(ref.runIdsB) ? ref.runIdsB : []),
+            ];
+          })
+          .filter((id): id is string => typeof id === "string")
+      ),
+    ];
+    const incomplete = incompleteEvidenceFor(quality, claim as ClaimCategory, runIds);
+    if (incomplete.length > 0) {
+      withheld.push({ finding: f, reason: "EVIDENCE_INCOMPLETE_FOR_CLAIM", incomplete });
+    } else {
+      kept.push(f);
+    }
+  }
+  return { kept, withheld };
 }
 
 interface AnalysisFinding {
@@ -67,11 +134,25 @@ interface AnalysisOutput {
  * citation resolve against a run the tools never surfaced would validate a claim the model had no
  * basis to make and could not have checked.
  */
+/** Resolve a JSON pointer in a plain value. */
+function resolvePointer(root: unknown, field: string): { found: boolean; value: unknown } {
+  let cur: unknown = root;
+  for (const part of field.replace(/^\//, "").split("/")) {
+    if (cur === null || typeof cur !== "object") return { found: false, value: undefined };
+    cur = (cur as Record<string, unknown>)[
+      decodeURIComponent(part.replace(/~1/g, "/").replace(/~0/g, "~"))
+    ];
+    if (cur === undefined) return { found: false, value: undefined };
+  }
+  return { found: true, value: cur };
+}
+
 function worldFor(
   investigationId: string,
   runs: readonly RunEvidenceFacts[],
-  comparisonId: string
+  contrast: ReturnType<typeof contrastRuns>
 ): ReferenceWorld {
+  const comparisonId = contrast.comparisonId;
   const byRun = new Map(runs.map((r) => [r.runId, r]));
   return {
     investigationExists: (id) => id === investigationId,
@@ -83,20 +164,40 @@ function worldFor(
     artifactExists: () => false,
     artifactKind: () => null,
     resolveField: (ref) => {
+      if (!ref.field) return { found: false, value: undefined };
+      // A field on a comparison reference points into THIS contrast -- the deterministic object
+      // the model was shown -- and must match it exactly, like any other citation.
+      if ((ref as { comparisonId?: unknown }).comparisonId === comparisonId) {
+        const inContrast = resolvePointer(contrast, ref.field);
+        if (inContrast.found) return inContrast;
+        // A run field on a comparison ("every failing run shows this") must hold, with one and
+        // the same value, in EVERY run of the cited side -- not in some of them.
+        const side = (ref as { runIdsA?: unknown }).runIdsA;
+        if (!Array.isArray(side) || side.length === 0) return { found: false, value: undefined };
+        let common: { found: boolean; value: unknown } | null = null;
+        for (const id of side) {
+          const run = typeof id === "string" ? byRun.get(id) : undefined;
+          if (!run) return { found: false, value: undefined };
+          const r = resolvePointer(
+            { features: run.features, outcome: run.outcome, actions: run.actions },
+            ref.field
+          );
+          if (!r.found) return { found: false, value: undefined };
+          if (common && JSON.stringify(common.value) !== JSON.stringify(r.value)) {
+            return { found: false, value: undefined };
+          }
+          common = r;
+        }
+        return common ?? { found: false, value: undefined };
+      }
       if (ref.statisticId === comparisonId || ref.runId === undefined)
         return { found: false, value: undefined };
       const run = byRun.get(ref.runId);
-      if (!run || !ref.field) return { found: false, value: undefined };
-      const parts = ref.field.replace(/^\//, "").split("/");
-      let cur: unknown = { features: run.features, outcome: run.outcome, actions: run.actions };
-      for (const part of parts) {
-        if (cur === null || typeof cur !== "object") return { found: false, value: undefined };
-        cur = (cur as Record<string, unknown>)[
-          decodeURIComponent(part.replace(/~1/g, "/").replace(/~0/g, "~"))
-        ];
-        if (cur === undefined) return { found: false, value: undefined };
-      }
-      return { found: true, value: cur };
+      if (!run) return { found: false, value: undefined };
+      return resolvePointer(
+        { features: run.features, outcome: run.outcome, actions: run.actions },
+        ref.field
+      );
     },
     unusableCategories: (runId) => {
       const run = byRun.get(runId);
@@ -125,12 +226,44 @@ export async function analyzeCommand(
     });
   }
 
-  const runs = await readRunEvidence(rt, investigationId);
-  if (runs.length === 0) {
-    fail("INPUT_INVALID", "No runs with normalized evidence. Run experiments before analysing.", {
-      context: { investigationId },
-    });
+  /* The measured runs, as before. A named batch, or -- only when there are no measured runs,
+   * which used to be a refusal -- the latest rerun batch of the authored suite. */
+  let runs: RunEvidenceFacts[];
+  let source: AnalysisSource = { kind: "measured" };
+  let quality: EvidenceQuality | null = null;
+  if (opts.batch) {
+    const batch = await readBatchEvidence(rt, investigationId, opts.batch);
+    if (!batch) {
+      fail("GATE_REFERENCE_UNKNOWN", `Unknown rerun batch ${opts.batch}`, {
+        context: { investigationId, batch: opts.batch },
+      });
+    }
+    runs = batch.runs;
+    source = { kind: "rerun-batch", batchId: batch.batchId };
+    quality = batch.quality;
+  } else {
+    runs = await readRunEvidence(rt, investigationId);
+    if (runs.length === 0) {
+      const batch = await readBatchEvidence(rt, investigationId);
+      if (batch) {
+        runs = batch.runs;
+        source = { kind: "rerun-batch", batchId: batch.batchId };
+        quality = batch.quality;
+      }
+    }
   }
+  if (runs.length === 0) {
+    fail(
+      "INPUT_INVALID",
+      "No runs with normalized evidence. Run experiments, or run the authored script, before analysing.",
+      { context: { investigationId } }
+    );
+  }
+
+  // Which failure a confirmation would count, fixed from the runs before any model reads them.
+  const targetSignature: TargetSignature | null =
+    source.kind === "rerun-batch" ? deriveTargetSignature(runs) : null;
+  let withheld: WithheldFinding[] = [];
 
   // Deterministic first, and unconditional. This is the answer that does not need a provider.
   const contrast = contrastRuns(runs);
@@ -183,7 +316,7 @@ export async function analyzeCommand(
     }
 
     const value = result.value;
-    const world = worldFor(investigationId, runs, contrast.comparisonId);
+    const world = worldFor(investigationId, runs, contrast);
 
     // Reference validation is applied HERE, outside the flow runner, because only this layer
     // knows which runs were actually shown to the model.
@@ -191,6 +324,19 @@ export async function analyzeCommand(
       const refs = [...(f.supportingEvidence ?? []), ...(f.contradictingEvidence ?? [])];
       for (const r of validateReferences(refs, investigationId, world, `/findings/${i}`).issues) {
         referenceIssues.push(`${r.path}: ${r.message}`);
+      }
+      // A comparison names its runs in lists the single-run check does not see; each must be a
+      // run the tools returned, or it is a fabrication like any other.
+      for (const [j, ref] of refs.entries()) {
+        const lists = ref as { runIdsA?: unknown; runIdsB?: unknown };
+        for (const id of [
+          ...(Array.isArray(lists.runIdsA) ? lists.runIdsA : []),
+          ...(Array.isArray(lists.runIdsB) ? lists.runIdsB : []),
+        ]) {
+          if (typeof id !== "string" || !world.runBelongsTo(id, investigationId)) {
+            referenceIssues.push(`/findings/${i}/${j}: run ${String(id)} was not in evidence`);
+          }
+        }
       }
       for (const r of validateClaimSupport(
         f.level,
@@ -220,14 +366,22 @@ export async function analyzeCommand(
       );
     }
 
-    analysis = value;
+    const gated = withholdByEvidence(value.findings ?? [], quality);
+    withheld = gated.withheld;
+    analysis = { ...value, findings: gated.kept };
     aiRequestIds = result.record.aiRequestIds;
 
     const ref = await rt.artifacts.put({
       investigationId,
       kind: "report",
       filename: `${investigationId}-analysis.json`,
-      bytes: canonicalJson({ ...value, investigationId, comparisonId: contrast.comparisonId }),
+      bytes: canonicalJson({
+        ...analysis,
+        investigationId,
+        comparisonId: contrast.comparisonId,
+        source,
+        ...(withheld.length ? { withheldFindings: withheld } : {}),
+      }),
       contentType: "application/json",
       redactionApplied: rt.redactor.policyStamp(),
     });
@@ -258,8 +412,11 @@ export async function analyzeCommand(
       ok: true,
       investigationId,
       runsAnalysed: runs.length,
+      source,
+      ...(targetSignature ? { targetSignature } : {}),
       contrast,
       analysis,
+      ...(withheld.length ? { withheldFindings: withheld } : {}),
       aiRequestIds,
     },
     human: () => renderHuman(investigationId, runs, contrast, analysis),

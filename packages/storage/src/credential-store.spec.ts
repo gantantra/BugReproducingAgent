@@ -169,4 +169,3 @@ describe("the file on disk", () => {
     expect(store.entries()).toEqual([{ name: "LEGACY_KEY" }]);
   });
 });
-

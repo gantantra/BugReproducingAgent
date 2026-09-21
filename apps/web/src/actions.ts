@@ -77,6 +77,7 @@ const ARTIFACT_KIND = /^[a-z0-9-]{1,40}$/;
 const SUBJECT = /^[A-Za-z0-9:_-]{1,100}$/;
 /** A Claude CLI session id, as returned by a previous authoring turn. */
 const SESSION_ID = /^[0-9a-fA-F-]{8,64}$/;
+const BATCH_ID = /^BATCH-\d{3,6}$/;
 /**
  * The operator's answer to a question the authoring session asked.
  *
@@ -221,9 +222,19 @@ export const ACTIONS: readonly ActionDef[] = [
      * which is why it is accepted here as well as on the resume path. */
     if (flag(p, "approvePlan")) {
       argv.push("--approve-plan");
+      // The checksum of the plan card the operator read, in the CLI's own `sha256:` spelling.
+      const planChecksum = optionalStr(p, "planChecksum", PROPOSAL_CHECKSUM, "a plan checksum");
+      if (planChecksum) argv.push("--plan-checksum", planChecksum);
       const amendments = optionalStr(p, "answer", FREE_TEXT, "your changes to the plan");
       if (amendments) argv.push("--answer", amendments);
+      return argv;
     }
+
+    /* Still planning: an answer revises the plan instead of opening the browser, and "That's all
+     * I know" asks for the final plan with the remaining gaps marked. */
+    const more = optionalStr(p, "answer", FREE_TEXT, "more detail for the plan");
+    if (more) argv.push("--answer", more);
+    if (flag(p, "thatsAll")) argv.push("--thats-all");
     return argv;
   }),
 
@@ -255,6 +266,22 @@ export const ACTIONS: readonly ActionDef[] = [
   def("analyze", "contrast failing against passing runs", true, (p) => {
     const argv = ["analyze", ...inv(p)];
     if (flag(p, "ai")) argv.push("--ai");
+    const batch = optionalStr(p, "batch", BATCH_ID, "a rerun batch id like BATCH-001");
+    if (batch) argv.push("--batch", batch);
+    return argv;
+  }),
+
+  /*
+   * Confirm -> View result. Without a checksum it only builds the experiment the condition card
+   * shows; with one -- the checksum of exactly those bytes -- it runs it. Nothing here chooses
+   * what runs: the CLI rebuilds the config and refuses a checksum that does not match it.
+   */
+  def("confirm", "confirm a proposed condition by running it against a control", true, (p) => {
+    const argv = ["confirm", ...inv(p), "--condition", String(int(p, "condition", 1, 3))];
+    const checksum = optionalStr(p, "checksum", PROPOSAL_CHECKSUM, "a sha256: checksum");
+    if (checksum) argv.push("--checksum", checksum);
+    const batch = optionalStr(p, "batch", BATCH_ID, "a rerun batch id like BATCH-001");
+    if (batch) argv.push("--batch", batch);
     return argv;
   }),
 
@@ -305,6 +332,13 @@ const BY_ID = new Map(ACTIONS.map((a) => [a.id, a]));
 
 export function findAction(id: unknown): ActionDef | undefined {
   return typeof id === "string" ? BY_ID.get(id) : undefined;
+}
+
+/** Validate a request for the authored suite's replay video. Only the investigation is taken
+ * from the browser; the file itself is found by the server, never named by the page. */
+export function suiteVideoRequest(query: URLSearchParams): { investigation: string } {
+  const p: Params = { investigation: query.get("investigation") ?? "" };
+  return { investigation: str(p, "investigation", ID, "an id like INV-001") };
 }
 
 /** Validate an artifact request. Separate from actions: it reads a file, it does not run one. */

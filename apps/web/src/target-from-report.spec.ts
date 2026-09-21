@@ -23,7 +23,9 @@ describe("the target named in the report", () => {
   });
 
   it("keeps only the origin, port included", () => {
-    expect(targetFromReport("breaks at http://localhost:3000/app/cart?item=4 every few tries")).toEqual({
+    expect(
+      targetFromReport("breaks at http://localhost:3000/app/cart?item=4 every few tries")
+    ).toEqual({
       name: "localhost",
       baseUrl: "http://localhost:3000",
       classification: "test",

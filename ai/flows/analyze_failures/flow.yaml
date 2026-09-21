@@ -4,8 +4,10 @@
 # at the deterministic contrast before proposing anything, rather than reasoning from the report.
 # The allowlist is what it may look at, and it is short on purpose.
 id: analyze_failures
-version: 1.0.0
-modelAlias: REASONING_MODEL
+version: 1.1.0
+# The fast model: the reasoning model's calls on a rerun batch of a dozen runs outlasted the
+# 120 s per-call limit. The reading is anchored in contrast_runs, which does the arithmetic.
+modelAlias: FAST_MODEL
 temperature: 0
 tools:
   - get_flow
@@ -15,7 +17,7 @@ inputSchema: schemas/common.v1.json
 outputSchema: schemas/analyze-failures.output.v1.json
 budget:
   maxTurns: 8
-  maxToolCalls: 6
+  maxToolCalls: 10
   maxEvidenceBytes: 131072
   maxInputTokens: 60000
   maxOutputTokens: 6000

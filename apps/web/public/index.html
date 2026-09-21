@@ -416,9 +416,18 @@
         animation: live-pulse 2s infinite;
       }
       @keyframes live-pulse {
-        0% { opacity: 1; transform: scale(1); }
-        50% { opacity: 0.4; transform: scale(0.85); }
-        100% { opacity: 1; transform: scale(1); }
+        0% {
+          opacity: 1;
+          transform: scale(1);
+        }
+        50% {
+          opacity: 0.4;
+          transform: scale(0.85);
+        }
+        100% {
+          opacity: 1;
+          transform: scale(1);
+        }
       }
       .live-status {
         color: var(--muted);
@@ -521,6 +530,22 @@
       textarea:focus,
       input:focus {
         outline: 1px solid #2f4f7a;
+      }
+      /* Beside the composer for as long as the plan is being worked out: the operator can stop
+         being asked at any point, and the plan is then written with the gaps marked. */
+      .thats-all {
+        flex: none;
+        font: 12px inherit;
+        padding: 10px 12px;
+        border-radius: 9px;
+        border: 1px solid var(--line);
+        background: #11151b;
+        color: var(--text);
+        cursor: pointer;
+      }
+      .thats-all:disabled {
+        opacity: 0.5;
+        cursor: default;
       }
       .hint {
         margin: 7px 0 0;
@@ -654,7 +679,14 @@
       <h1>Investigator</h1>
       <span class="ws" id="ws"></span>
       <span class="spacer"></span>
-      <button class="pill" id="varsBtn" style="cursor:pointer;background:none;" title="View and manage session variables">variables (0)</button>
+      <button
+        class="pill"
+        id="varsBtn"
+        style="cursor: pointer; background: none"
+        title="View and manage session variables"
+      >
+        variables (0)
+      </button>
       <span class="pill" id="provider">checking…</span>
       <span class="pill" id="inv">no investigation</span>
     </header>
@@ -685,6 +717,7 @@
             id="input"
             placeholder="Describe the bug — the URL, the steps, what you expected, what happens instead, and how often."
           ></textarea>
+          <button id="thatsAll" class="thats-all" type="button" hidden>That's all I know</button>
         </div>
         <div class="hint">Enter to send · Shift+Enter for a new line</div>
       </div>

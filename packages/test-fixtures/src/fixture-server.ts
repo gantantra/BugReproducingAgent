@@ -20,6 +20,9 @@ export type FixtureKind =
   | "passing"
   | "product-failing-deterministic"
   | "product-failing-intermittent"
+  | "product-failing-counter"
+  | "product-failing-when-slow"
+  | "product-failing-slow-intermittent"
   | "automation-failing"
   | "infrastructure-failing"
   | "straddling-requests"
@@ -142,9 +145,73 @@ const INTERMITTENT_SCRIPT = `
   });
 `;
 
-function handler(kind: FixtureKind) {
+/**
+ * Every third filter comes back empty and the page logs the error. The count is kept by the
+ * server, so a suite repeated N times against one fixture fails on exactly runs 3, 6, 9, ... --
+ * an intermittent failure whose every instance is known in advance, for the rerun gate.
+ */
+const COUNTER_SCRIPT = `
+  const results = document.getElementById('results');
+  document.querySelector('[data-testid="filter-verified"]').addEventListener('click', function () {
+    fetch('/api/filter-counted').then(function (r) { return r.json(); }).then(function (d) {
+      if (!d.items.length) console.error('applyFilters: results undefined');
+      results.innerHTML = d.items.map(function (i) {
+        return '<div data-testid="result-card">' + i + '</div>';
+      }).join('');
+    });
+  });
+`;
+
+/**
+ * Fails only on a slow network: the page gives the filter response `SLOW_FAIL_AFTER_MS` to arrive,
+ * then gives up, logs the error and empties the list. On loopback the response takes a few
+ * milliseconds, so the page always passes -- until a confirmation slows the network, when it
+ * always fails. A condition with a known answer, for the confirmation gate.
+ */
+export const SLOW_FAIL_AFTER_MS = 300;
+
+const WHEN_SLOW_SCRIPT = `
+  const results = document.getElementById('results');
+  document.querySelector('[data-testid="filter-verified"]').addEventListener('click', function () {
+    let settled = false;
+    setTimeout(function () {
+      if (settled) return;
+      settled = true;
+      console.error('applyFilters: gave up waiting for results');
+      results.innerHTML = '';
+    }, ${SLOW_FAIL_AFTER_MS});
+    fetch('/api/filter').then(function (r) { return r.json(); }).then(function (d) {
+      if (settled) return;
+      settled = true;
+      results.innerHTML = d.items.map(function (i) {
+        return '<div data-testid="result-card">' + i + '</div>';
+      }).join('');
+    });
+  });
+`;
+
+/**
+ * The same page as "product-failing-when-slow", but the server itself is sometimes slow: whether
+ * a filter request takes `SLOW_RESPONSE_MS` -- past the page's patience -- is `intermittentFails`
+ * of its sequence number, about one in five. An intermittent bug whose cause is response time,
+ * visible in the evidence as the failing runs' slow filter request, and which a slowed network
+ * reproduces every time.
+ */
+export const SLOW_RESPONSE_MS = 700;
+
+/** Every `COUNTER_FAILS_EVERY`th filter request of a counter fixture returns no results. */
+export const COUNTER_FAILS_EVERY = 3;
+
+function handler(kind: FixtureKind, state: { filters: number } = { filters: 0 }) {
   return (req: IncomingMessage, res: ServerResponse): void => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
+
+    if (url.pathname === "/api/filter-counted") {
+      state.filters += 1;
+      const empty = state.filters % COUNTER_FAILS_EVERY === 0;
+      json(res, 200, { items: empty ? [] : ["alpha", "beta", "gamma"], n: state.filters });
+      return;
+    }
 
     if (url.pathname === "/__meta/expected") {
       const seed = seedOf(url);
@@ -153,6 +220,18 @@ function handler(kind: FixtureKind) {
         fails: intermittentFails(seed),
         targetRate: INTERMITTENT_TARGET_RATE,
       });
+      return;
+    }
+
+    if (url.pathname === "/api/filter" && kind === "product-failing-slow-intermittent") {
+      state.filters += 1;
+      // Seeded per request, not every Nth: how many times a script clicks must not decide which
+      // of its runs fail, or an authored script that clicks three times meets no slow response.
+      const slow = intermittentFails(state.filters);
+      setTimeout(
+        () => json(res, 200, { items: ["alpha", "beta", "gamma"] }),
+        slow ? SLOW_RESPONSE_MS : 0
+      );
       return;
     }
 
@@ -196,6 +275,13 @@ function handler(kind: FixtureKind) {
         return;
       case "product-failing-intermittent":
         send(res, 200, "text/html", SHELL(SEARCH_BODY, INTERMITTENT_SCRIPT));
+        return;
+      case "product-failing-counter":
+        send(res, 200, "text/html", SHELL(SEARCH_BODY, COUNTER_SCRIPT));
+        return;
+      case "product-failing-when-slow":
+      case "product-failing-slow-intermittent":
+        send(res, 200, "text/html", SHELL(SEARCH_BODY, WHEN_SLOW_SCRIPT));
         return;
       case "automation-failing":
         // The approved selector never exists: no button with the accessible name "Verified".
@@ -263,12 +349,14 @@ function sensitiveApi(req: IncomingMessage, res: ServerResponse): boolean {
 }
 
 export async function startFixture(kind: FixtureKind): Promise<FixtureHandle> {
+  // Per server, not per request: the counter fixture counts across the whole batch.
+  const state = { filters: 0 };
   const server: Server =
     kind === "infrastructure-failing"
       ? createServer()
       : createServer((req, res) => {
           if (kind === "sensitive" && sensitiveApi(req, res)) return;
-          handler(kind)(req, res);
+          handler(kind, state)(req, res);
         });
 
   if (kind === "infrastructure-failing") {

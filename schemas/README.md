@@ -28,6 +28,7 @@ fixtures.
 | `finding.v1.json` | Finding | `analyze_pass_fail` |
 | `minimization-candidate.v1.json` | MinimizationCandidate | `suggest_minimization` plus deterministic measurement |
 | `statistic.v1.json` | Statistic | frequency and comparison computation |
+| `evidence-quality.v1.json` | EvidenceQuality | `investigate rerun`, once per batch |
 | `lineage-record.v1.json` | LineageRecord | every stage, append-only |
 | `approval-record.v1.json` | ApprovalRecord | `investigate approve` only |
 | `reproducer-package.v1.json` | ReproducerPackage | reporting |

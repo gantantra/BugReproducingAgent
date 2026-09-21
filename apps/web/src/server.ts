@@ -9,6 +9,7 @@ import {
   ParamError,
   artifactRequest,
   findAction,
+  suiteVideoRequest,
   type BuildContext,
   type Params,
 } from "./actions.js";
@@ -233,7 +234,12 @@ export function createInvestigatorServer(opts: ServerOptions) {
     for (const listener of job.listeners) listener.write(payload);
   }
 
-  function startJob(actionId: string, argv: string[], workspace: string, sessionId?: string | null): Job {
+  function startJob(
+    actionId: string,
+    argv: string[],
+    workspace: string,
+    sessionId?: string | null
+  ): Job {
     const job: Job = {
       id: randomUUID(),
       action: actionId,
@@ -268,6 +274,57 @@ export function createInvestigatorServer(opts: ServerOptions) {
     return job;
   }
 
+  /**
+   * The first video Playwright recorded on the authored suite's last run, as listed in its own
+   * report. The path comes from the report, not the request, and is served only if it resolves
+   * inside the suite's `artifacts/` folder and is a `.webm`.
+   */
+  function findSuiteVideo(workspace: string, investigation: string): string | null {
+    const artifacts = resolve(
+      workspace,
+      ".investigator",
+      "investigations",
+      investigation,
+      "authoring",
+      "suite",
+      "artifacts"
+    );
+    const reportPath = join(artifacts, "last-run.report.json");
+    if (!existsSync(reportPath)) return null;
+    let report: unknown;
+    try {
+      report = JSON.parse(readFileSync(reportPath, "utf8"));
+    } catch {
+      return null;
+    }
+    let found: string | null = null;
+    const walk = (suite: unknown): void => {
+      const s = suite as { suites?: unknown[]; specs?: unknown[] } | null;
+      if (found || !s || typeof s !== "object") return;
+      for (const spec of s.specs ?? []) {
+        for (const test of (spec as { tests?: unknown[] }).tests ?? []) {
+          for (const result of (test as { results?: unknown[] }).results ?? []) {
+            const attachments =
+              (result as { attachments?: Array<{ name?: string; path?: string }> }).attachments ??
+              [];
+            const video = attachments.find((a) => a.name === "video" && typeof a.path === "string");
+            if (video?.path) {
+              found = video.path;
+              return;
+            }
+          }
+        }
+      }
+      for (const child of s.suites ?? []) walk(child);
+    };
+    walk(report);
+    if (!found) return null;
+    const full = resolve(artifacts, found);
+    if (!full.startsWith(artifacts + sep)) return null;
+    if (extname(full).toLowerCase() !== ".webm" || !existsSync(full)) return null;
+    return full;
+  }
+
   /** Locate an artifact by content hash. The layout is `<kind>/<first two hex>/<sha>.<ext>`. */
   function findArtifact(
     workspace: string,
@@ -296,7 +353,9 @@ export function createInvestigatorServer(opts: ServerOptions) {
   function authorised(req: IncomingMessage, url?: URL): boolean {
     const headerToken = req.headers["x-investigator-token"];
     const queryToken = url?.searchParams.get("token");
-    const sent = (typeof headerToken === "string" ? headerToken : undefined) ?? (typeof queryToken === "string" ? queryToken : undefined);
+    const sent =
+      (typeof headerToken === "string" ? headerToken : undefined) ??
+      (typeof queryToken === "string" ? queryToken : undefined);
     if (typeof sent !== "string" || sent !== opts.token) return false;
     // A page on another origin must not be able to drive a process runner on this machine.
     const reqOrigin = req.headers.origin;
@@ -506,10 +565,15 @@ export function createInvestigatorServer(opts: ServerOptions) {
           const dir = requireSessionDir(res, sessionId);
           if (!dir) return;
           sessions.touch(sessionId);
-          const body = (await readBody(req)) as { name?: unknown; value?: unknown; description?: unknown };
+          const body = (await readBody(req)) as {
+            name?: unknown;
+            value?: unknown;
+            description?: unknown;
+          };
           const name = typeof body.name === "string" ? body.name : "";
           const value = typeof body.value === "string" ? body.value : "";
-          const description = typeof body.description === "string" ? body.description.trim() : undefined;
+          const description =
+            typeof body.description === "string" ? body.description.trim() : undefined;
           if (!/^[A-Z][A-Z0-9_]{0,63}$/.test(name)) {
             sendJson(res, 400, {
               ok: false,
@@ -737,10 +801,32 @@ export function createInvestigatorServer(opts: ServerOptions) {
           return;
         }
 
+        if (path === "/api/suite-video" && req.method === "GET") {
+          const { investigation } = suiteVideoRequest(url.searchParams);
+          const dir = requireSessionDir(res, sessionId);
+          if (!dir) return;
+          const full = findSuiteVideo(dir, investigation);
+          if (!full) {
+            sendJson(res, 404, { ok: false, code: "NO_SUCH_ARTIFACT", message: "not found" });
+            return;
+          }
+          res.writeHead(200, {
+            "content-type": MIME[".webm"] ?? "video/webm",
+            "cache-control": "no-store",
+            "x-content-type-options": "nosniff",
+          });
+          res.end(readFileSync(full));
+          return;
+        }
+
         if (path === "/api/session-image" && req.method === "GET") {
           const fileParam = url.searchParams.get("file") ?? "";
           if (!fileParam) {
-            sendJson(res, 400, { ok: false, code: "BAD_PARAM", message: "file parameter required" });
+            sendJson(res, 400, {
+              ok: false,
+              code: "BAD_PARAM",
+              message: "file parameter required",
+            });
             return;
           }
           const dir = requireSessionDir(res, sessionId);

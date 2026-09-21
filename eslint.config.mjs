@@ -85,6 +85,9 @@ export default tseslint.config(
       "**/node_modules/**",
       ".investigator/**",
       "demo-ws/**",
+      // Workspaces hold evidence, not source: a session saves whatever JavaScript the site under
+      // investigation served. Same pattern as the .gitignore entry.
+      "*-workspace/**",
       "**/*.tsbuildinfo",
       "scripts/workspace-graph.json",
     ],

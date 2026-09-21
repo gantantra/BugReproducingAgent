@@ -163,7 +163,8 @@ export interface OptionalScreen {
 }
 
 // Backticks count as quotes: a model writing `OPTIONAL: \`Accept cookies\` | 1` means the text inside them.
-const OPTIONAL_LINE = /^\s*[*_]*OPTIONAL:\s*[*_]*\s*["'“”`]?(.+?)["'“”`]?\s*\|\s*(\d{1,3})\s*[*_`]*\s*$/i;
+const OPTIONAL_LINE =
+  /^\s*[*_]*OPTIONAL:\s*[*_]*\s*["'“”`]?(.+?)["'“”`]?\s*\|\s*(\d{1,3})\s*[*_`]*\s*$/i;
 
 /** The `OPTIONAL:` declarations in a session's final message, as written. */
 export function readOptionalScreens(message: string): OptionalScreen[] {
@@ -217,7 +218,9 @@ export function planOptionalBlocks(
       (s, i) => i >= from && INTERACTION.test(s.code.trim()) && s.code.includes(screen.trigger)
     );
     if (start === -1) {
-      refused.push(`"${screen.trigger}": no recorded action mentions it, so nothing was made optional`);
+      refused.push(
+        `"${screen.trigger}": no recorded action mentions it, so nothing was made optional`
+      );
       continue;
     }
 
@@ -244,7 +247,12 @@ export function planOptionalBlocks(
       continue;
     }
 
-    blocks.push({ start, end, trigger: screen.trigger, locator: locatorOfStep(steps[start]!.code)! });
+    blocks.push({
+      start,
+      end,
+      trigger: screen.trigger,
+      locator: locatorOfStep(steps[start]!.code)!,
+    });
     from = end;
   }
   return { blocks, refused };
@@ -278,7 +286,7 @@ export function renderAuthoredSpec(
 
   const body: string[] = [];
   let optionalCount = 0;
-  for (let i = 0; i < steps.length; ) {
+  for (let i = 0; i < steps.length;) {
     const block = blocks.find((b) => b.start === i);
     if (!block) {
       body.push(indent(steps[i]!.code, "    "));
@@ -372,7 +380,10 @@ export function renderPlaywrightConfig(opts: {
     `    actionTimeout: 15_000,`,
     `    navigationTimeout: 30_000,`,
     ...(emulation.length > 0
-      ? [`    // The browser the session was authored on, so every re-run is the same platform.`, ...emulation]
+      ? [
+          `    // The browser the session was authored on, so every re-run is the same platform.`,
+          ...emulation,
+        ]
       : []),
     `  },`,
     `});`,

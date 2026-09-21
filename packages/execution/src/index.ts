@@ -15,3 +15,4 @@ export * from "./emulation.js";
 export * from "./manifest.js";
 export * from "./worker.js";
 export * from "./enqueue.js";
+export * from "./suite-capture.js";

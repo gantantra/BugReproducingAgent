@@ -11,6 +11,7 @@ import {
   type Tool,
 } from "@investigator/tools";
 import { ACTION_TYPES } from "@investigator/core";
+import type { EvidenceQuality } from "@investigator/evidence";
 import type { Runtime } from "./runtime.js";
 
 /**
@@ -179,38 +180,146 @@ export async function readRunEvidence(
       continue;
     }
 
-    const outcome = (doc["outcome"] ?? {}) as Record<string, unknown>;
-    const capture = (doc["captureStatus"] ?? {}) as Record<string, unknown>;
-    const categories = (capture["categories"] ?? {}) as Record<string, { status?: string }>;
-
-    out.push({
-      runId: run.runId,
-      experimentId: run.experimentId ?? null,
-      outcome: String(outcome["outcome"] ?? run.outcome ?? "UNKNOWN"),
-      outcomeRuleId: Number(outcome["ruleId"] ?? run.outcomeRuleId ?? 0),
-      outcomeDetail: String(outcome["detail"] ?? ""),
-      attemptIndex: run.attemptIndex,
-      durationMs: run.durationMs,
-      features: (doc["features"] ?? {}) as Record<string, unknown>,
-      captureStatus: Object.fromEntries(
-        Object.entries(categories).map(([k, v]) => [k, String(v?.status ?? "unknown")])
-      ),
-      limitations: ((capture["limitations"] ?? []) as unknown[]).map(String),
-      actions: ((doc["actions"] ?? []) as Array<Record<string, unknown>>).map((a) => ({
-        actionId: String(a["actionId"] ?? ""),
-        actionType: String(a["actionType"] ?? ""),
-        status: String(a["status"] ?? ""),
-        failureReason: a["failureReason"] === undefined ? null : String(a["failureReason"]),
-        selectorCanonical:
-          a["selectorCanonical"] === undefined || a["selectorCanonical"] === null
-            ? null
-            : String(a["selectorCanonical"]),
-        startDeltaMs: a["startDeltaMs"] === undefined ? null : Number(a["startDeltaMs"]),
-        endDeltaMs: a["endDeltaMs"] === undefined ? null : Number(a["endDeltaMs"]),
-      })),
-    });
+    out.push(
+      factsFromNormalized(run.runId, doc, {
+        experimentId: run.experimentId ?? null,
+        outcome: run.outcome ?? null,
+        outcomeRuleId: run.outcomeRuleId ?? null,
+        attemptIndex: run.attemptIndex,
+        durationMs: run.durationMs,
+      })
+    );
   }
   return out;
+}
+
+/** One run's facts from its normalized evidence, the same way for measured and authored runs. */
+export function factsFromNormalized(
+  runId: string,
+  doc: Record<string, unknown>,
+  fallback: {
+    experimentId: string | null;
+    outcome: string | null;
+    outcomeRuleId: number | null;
+    attemptIndex: number | null;
+    durationMs: number | null;
+  }
+): RunEvidenceFacts {
+  const outcome = (doc["outcome"] ?? {}) as Record<string, unknown>;
+  const capture = (doc["captureStatus"] ?? {}) as Record<string, unknown>;
+  const categories = (capture["categories"] ?? {}) as Record<string, { status?: string }>;
+  return {
+    runId,
+    experimentId: fallback.experimentId,
+    outcome: String(outcome["outcome"] ?? fallback.outcome ?? "UNKNOWN"),
+    outcomeRuleId: Number(outcome["ruleId"] ?? fallback.outcomeRuleId ?? 0),
+    outcomeDetail: String(outcome["detail"] ?? ""),
+    attemptIndex: fallback.attemptIndex,
+    durationMs: fallback.durationMs,
+    features: (doc["features"] ?? {}) as Record<string, unknown>,
+    captureStatus: Object.fromEntries(
+      Object.entries(categories).map(([k, v]) => [k, String(v?.status ?? "unknown")])
+    ),
+    limitations: ((capture["limitations"] ?? []) as unknown[]).map(String),
+    actions: ((doc["actions"] ?? []) as Array<Record<string, unknown>>).map((a) => ({
+      actionId: String(a["actionId"] ?? ""),
+      actionType: String(a["actionType"] ?? ""),
+      status: String(a["status"] ?? ""),
+      failureReason: a["failureReason"] === undefined ? null : String(a["failureReason"]),
+      selectorCanonical:
+        a["selectorCanonical"] === undefined || a["selectorCanonical"] === null
+          ? null
+          : String(a["selectorCanonical"]),
+      startDeltaMs: a["startDeltaMs"] === undefined ? null : Number(a["startDeltaMs"]),
+      endDeltaMs: a["endDeltaMs"] === undefined ? null : Number(a["endDeltaMs"]),
+    })),
+  };
+}
+
+export interface BatchEvidence {
+  batchId: string;
+  runs: RunEvidenceFacts[];
+  quality: EvidenceQuality | null;
+  /** The batch record as stored by `rerun`. */
+  record: RerunBatchRecord;
+}
+
+export interface RerunBatchRecord {
+  batchId: string;
+  suiteChecksum: string;
+  evidenceQualityArtifactId: string;
+  runs: Array<{
+    runId: string;
+    repeatIndex: number;
+    kind: string;
+    outcome: string;
+    outcomeRuleId: number;
+    normalizedArtifactId: string;
+  }>;
+  [key: string]: unknown;
+}
+
+/** Every rerun batch of an investigation, oldest first. */
+export async function listRerunBatches(
+  rt: Runtime,
+  investigationId: string
+): Promise<RerunBatchRecord[]> {
+  const refs = await rt.artifacts.list(investigationId, { kind: "rerun-batch" });
+  const out: RerunBatchRecord[] = [];
+  for (const ref of refs) {
+    try {
+      out.push(JSON.parse(await rt.artifacts.getText(ref)) as RerunBatchRecord);
+    } catch {
+      // A batch record that cannot be read is not a batch anyone can analyse.
+    }
+  }
+  return out.sort((a, b) => a.batchId.localeCompare(b.batchId, "en", { numeric: true }));
+}
+
+/**
+ * The runs of one rerun batch -- the named one, or the latest -- with the batch's
+ * evidence-quality record. Null when the investigation has no such batch.
+ */
+export async function readBatchEvidence(
+  rt: Runtime,
+  investigationId: string,
+  batchId?: string
+): Promise<BatchEvidence | null> {
+  const batches = await listRerunBatches(rt, investigationId);
+  const record = batchId ? batches.find((b) => b.batchId === batchId) : batches.at(-1);
+  if (!record) return null;
+
+  const runs: RunEvidenceFacts[] = [];
+  for (const run of record.runs) {
+    let doc: Record<string, unknown>;
+    try {
+      doc = JSON.parse(await rt.artifacts.getText(run.normalizedArtifactId)) as Record<
+        string,
+        unknown
+      >;
+    } catch {
+      continue;
+    }
+    runs.push(
+      factsFromNormalized(run.runId, doc, {
+        experimentId: record.batchId,
+        outcome: run.outcome,
+        outcomeRuleId: run.outcomeRuleId,
+        attemptIndex: 0,
+        durationMs: null,
+      })
+    );
+  }
+
+  let quality: EvidenceQuality | null = null;
+  try {
+    quality = JSON.parse(
+      await rt.artifacts.getText(record.evidenceQualityArtifactId)
+    ) as EvidenceQuality;
+  } catch {
+    quality = null;
+  }
+  return { batchId: record.batchId, runs, quality, record };
 }
 
 /** The registry `analyze_failures` is allowed to reach. */

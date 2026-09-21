@@ -34,6 +34,48 @@ describe("the environment handed to the CLI", () => {
     expect(env["CLAUDE_CODE_USE_BEDROCK"]).toBeUndefined();
   });
 
+  it("does not let the authoring session borrow the sign-in of a Claude Code session that launched it", () => {
+    // The variables a Claude Code host sets for its own children. With them inherited, DeepSeek
+    // answered 401 with a key none of the configured sources held.
+    const env = claudeCliEnv({
+      ANTHROPIC_AUTH_TOKEN: "sk-a-deepseek-key",
+      ANTHROPIC_MODEL: "deepseek-v4-flash",
+      ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic",
+      CLAUDECODE: "1",
+      CLAUDE_PID: "1972",
+      CLAUDE_AGENT_SDK_VERSION: "0.3.274",
+      CLAUDE_CODE_ENTRYPOINT: "claude-desktop",
+      CLAUDE_CODE_SESSION_ID: "host-session",
+      CLAUDE_CODE_HOST_SESSION_ID: "local_host",
+      CLAUDE_CODE_CHILD_SESSION: "1",
+      CLAUDE_CODE_MESSAGING_SOCKET: "\\\\.\\pipe\\x",
+      CLAUDE_CODE_MESSAGING_TOKEN: "t",
+      CLAUDE_CODE_OAUTH_SCOPES: "user:inference",
+      CLAUDE_CODE_SDK_HAS_OAUTH_REFRESH: "1",
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+      PATH: "/usr/bin",
+    });
+    for (const gone of [
+      "CLAUDECODE",
+      "CLAUDE_PID",
+      "CLAUDE_AGENT_SDK_VERSION",
+      "CLAUDE_CODE_ENTRYPOINT",
+      "CLAUDE_CODE_SESSION_ID",
+      "CLAUDE_CODE_HOST_SESSION_ID",
+      "CLAUDE_CODE_CHILD_SESSION",
+      "CLAUDE_CODE_MESSAGING_SOCKET",
+      "CLAUDE_CODE_MESSAGING_TOKEN",
+      "CLAUDE_CODE_OAUTH_SCOPES",
+      "CLAUDE_CODE_SDK_HAS_OAUTH_REFRESH",
+    ]) {
+      expect(env[gone], gone).toBeUndefined();
+    }
+    // Settings the operator chose on purpose, and the DeepSeek credentials, are untouched.
+    expect(env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"]).toBe("1");
+    expect(env["ANTHROPIC_AUTH_TOKEN"]).toBe("sk-a-deepseek-key");
+    expect(env["PATH"]).toBe("/usr/bin");
+  });
+
   it("deletes rather than blanks them", () => {
     // "" is read as a deliberate override by some tools and as unset by others, and the
     // difference is not worth depending on.
@@ -141,7 +183,14 @@ describe("the command line", () => {
   });
   it("omits optional flags that were not supplied", () => {
     const args = claudeCliArgs({});
-    for (const flag of ["--mcp-config", "--allowed-tools", "--resume", "--max-turns", "--strict-mcp-config", "--tools"]) {
+    for (const flag of [
+      "--mcp-config",
+      "--allowed-tools",
+      "--resume",
+      "--max-turns",
+      "--strict-mcp-config",
+      "--tools",
+    ]) {
       expect(args, flag).not.toContain(flag);
     }
   });
@@ -189,7 +238,8 @@ describe("the Playwright MCP server config", () => {
   });
 
   it("launches the browser from the platform's config file only when given one", () => {
-    const args = cfg({ browserConfigPath: "/ws/author/browser-config.json" }).mcpServers.playwright.args;
+    const args = cfg({ browserConfigPath: "/ws/author/browser-config.json" }).mcpServers.playwright
+      .args;
     expect(args[args.indexOf("--config") + 1]).toBe("/ws/author/browser-config.json");
     expect(cfg().mcpServers.playwright.args).not.toContain("--config");
   });

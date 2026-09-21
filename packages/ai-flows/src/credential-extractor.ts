@@ -54,7 +54,12 @@ export async function extractCredentials(
   // If an LLM provider is available, attempt dynamic structured extraction
   if (context?.llmProvider) {
     try {
-      const llmResult = await extractWithLlm(trimmed, context.question, context.llmProvider, context.modelAlias);
+      const llmResult = await extractWithLlm(
+        trimmed,
+        context.question,
+        context.llmProvider,
+        context.modelAlias
+      );
       if (llmResult.extracted.length > 0) {
         return llmResult;
       }
@@ -84,13 +89,15 @@ async function extractWithLlm(
     "3. Extract the exact value provided by the user, copied verbatim from the message.",
     "4. Instructions, choices, reasons and explanations are not values. Leave them out; they are passed on as written.",
     "5. Return ONLY a valid JSON array of objects with the following schema:",
-    "   [ { \"name\": \"KEY_NAME\", \"value\": \"raw_value\", \"description\": \"purpose\" } ]",
+    '   [ { "name": "KEY_NAME", "value": "raw_value", "description": "purpose" } ]',
     "6. If the input contains no credentials or parameters, return [].",
     "Do not include explanation, markdown formatting, or code fences around the JSON.",
   ].join("\n");
 
   const userPrompt = [
-    question ? `Context question asked: "${question}"` : "Context: General bug reproduction session",
+    question
+      ? `Context question asked: "${question}"`
+      : "Context: General bug reproduction session",
     `User message: "${text}"`,
   ].join("\n");
 
@@ -124,7 +131,8 @@ async function extractWithLlm(
         valid.push({
           name: item.name,
           value: item.value.trim(),
-          description: typeof item.description === "string" ? item.description.trim() : "Session parameter",
+          description:
+            typeof item.description === "string" ? item.description.trim() : "Session parameter",
         });
         remaining = remaining.replace(item.value, " ");
       }
@@ -133,7 +141,10 @@ async function extractWithLlm(
       return {
         extracted: valid,
         remainingText: remaining.replace(/\s+/g, " ").trim(),
-        referencedText: referenceValues(text, valid.map((v) => ({ raw: v.value, name: v.name }))),
+        referencedText: referenceValues(
+          text,
+          valid.map((v) => ({ raw: v.value, name: v.name }))
+        ),
       };
     }
   }
@@ -206,7 +217,11 @@ export function extractDeterministic(text: string, question?: string): Extractio
     const rawKey = gm[1]!;
     const val = gm[2]!.trim();
     if (CREDENTIAL_NAME.test(rawKey) && val.length > 0 && !found.some((f) => f.name === rawKey)) {
-      found.push({ name: rawKey, value: val, description: `${rawKey.toLowerCase().replace(/_/g, " ")}` });
+      found.push({
+        name: rawKey,
+        value: val,
+        description: `${rawKey.toLowerCase().replace(/_/g, " ")}`,
+      });
       spans.push({ raw: gm[2]!, name: rawKey });
       rest = rest.replace(gm[0], " ");
     }
@@ -223,7 +238,11 @@ export function extractDeterministic(text: string, question?: string): Extractio
   // 4. Shape recognition: phone numbers (ANY 10 consecutive digits, or with country code, e.g. 1111111170)
   const phoneMatch = rest.match(/(?:\+\d{1,3}[- ]?)?\b\d{10}\b/);
   if (phoneMatch && !found.some((f) => f.name === "ACCOUNT_PHONE")) {
-    found.push({ name: "ACCOUNT_PHONE", value: phoneMatch[0].replace(/\s+/g, ""), description: "Phone number" });
+    found.push({
+      name: "ACCOUNT_PHONE",
+      value: phoneMatch[0].replace(/\s+/g, ""),
+      description: "Phone number",
+    });
     spans.push({ raw: phoneMatch[0], name: "ACCOUNT_PHONE" });
     rest = rest.replace(phoneMatch[0], " ");
   }
@@ -267,6 +286,9 @@ export function extractDeterministic(text: string, question?: string): Extractio
   return {
     extracted: found,
     remainingText: rest.replace(/\s+/g, " ").trim(),
-    referencedText: referenceValues(text, [...spans, ...found.map((f) => ({ raw: f.value, name: f.name }))]),
+    referencedText: referenceValues(text, [
+      ...spans,
+      ...found.map((f) => ({ raw: f.value, name: f.name })),
+    ]),
   };
 }

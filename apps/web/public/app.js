@@ -16,6 +16,7 @@
   const el = {
     transcript: document.getElementById("transcript"),
     input: document.getElementById("input"),
+    thatsAll: document.getElementById("thatsAll"),
     rail: document.getElementById("rail"),
     waiting: document.getElementById("waiting"),
     waitingLabel: document.getElementById("waitingLabel"),
@@ -75,6 +76,12 @@
     choicePending: false,
     // How many times this attempt's script has been sent back to be re-recorded after a replay.
     repairAttempts: 0,
+    // The plan is still being worked out: no browser yet, and "That's all I know" is offered.
+    planning: false,
+    // The checksum of the plan card on screen, sent with its approval.
+    planChecksum: null,
+    // A browser-session question is open: "That's all I know" answers it for the same session.
+    browsingQuestion: false,
   };
 
   /* `state.awaiting` is opened and closed from a dozen places, some of them AFTER the card's
@@ -525,12 +532,17 @@
   function updateComposer() {
     const choosing = state.choicePending && !state.awaiting;
     el.input.disabled = state.busy || choosing;
+    if (el.thatsAll) {
+      el.thatsAll.hidden = !state.planning && !state.browsingQuestion;
+      el.thatsAll.disabled = state.busy;
+    }
     if (choosing) {
       if (placeholderBeforeChoice === null) placeholderBeforeChoice = el.input.placeholder;
       el.input.placeholder = CHOOSE_PLACEHOLDER;
     } else if (placeholderBeforeChoice !== null) {
       // Put back what was there, unless something has since set a placeholder of its own.
-      if (el.input.placeholder === CHOOSE_PLACEHOLDER) el.input.placeholder = placeholderBeforeChoice;
+      if (el.input.placeholder === CHOOSE_PLACEHOLDER)
+        el.input.placeholder = placeholderBeforeChoice;
       placeholderBeforeChoice = null;
     }
   }
@@ -863,7 +875,10 @@
 
     const addBtn = node("button", "primary", "Add variable");
     addBtn.addEventListener("click", async () => {
-      const name = nameInput.value.trim().toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+      const name = nameInput.value
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9_]/g, "_");
       const value = valInput.value.trim();
       const description = descInput.value.trim();
       if (!name || !value) {
@@ -985,7 +1000,10 @@
         showFailure(
           written && written.ok === false
             ? written
-            : { code: "BAD_PARAM", message: "That is not a web address. It needs to start with http:// or https://." },
+            : {
+                code: "BAD_PARAM",
+                message: "That is not a web address. It needs to start with http:// or https://.",
+              },
           "That address was not accepted"
         );
         await askForTarget();
@@ -1310,9 +1328,13 @@
     return candidates[0] || null;
   }
 
-  async function analyse(withAi) {
+  async function analyse(withAi, batch) {
     setBusy(true);
-    const started = await act("analyze", { investigation: state.investigation, ai: withAi });
+    const started = await act("analyze", {
+      investigation: state.investigation,
+      ai: withAi,
+      ...(batch ? { batch } : {}),
+    });
     if (started.ok !== true || !started.jobId) {
       setBusy(false);
       showFailure(resultOf(started), "Could not start the analysis");
@@ -1330,7 +1352,12 @@
         setBusy(false);
         const r = payload.result || {};
         if (r.ok !== true) {
-          showFailure(r, "Analysis failed");
+          // A model reading can fail on one bad citation; the evidence is still there, so the
+          // operator can ask again without re-running the script.
+          const failed = showFailure(r, "Analysis failed");
+          buttons(failed, [
+            { label: "Analyse again", kind: "primary", onClick: () => analyse(withAi, batch) },
+          ]);
           return;
         }
         renderAnalysis(r);
@@ -1339,8 +1366,11 @@
   }
 
   function renderAnalysis(r) {
+    setStep("rca");
+    const contrast = r.contrast || r.comparison || {};
     const c = card("What separates failing from passing");
-    const disc = (r.comparison && r.comparison.perfectDiscriminators) || r.perfectDiscriminators;
+    if (r.analysis && r.analysis.summary) c.appendChild(node("p", null, r.analysis.summary));
+    const disc = contrast.perfectDiscriminators || r.perfectDiscriminators;
     if (disc && disc.length) {
       const ul = node("ul", "plain");
       for (const d of disc) ul.appendChild(node("li", null, typeof d === "string" ? d : d.name));
@@ -1348,23 +1378,163 @@
     } else {
       c.appendChild(node("p", null, "No signal separated the two groups cleanly."));
     }
-    for (const caveat of (r.comparison && r.comparison.caveats) || r.caveats || []) {
+    for (const caveat of contrast.caveats || r.caveats || []) {
       const p = node("p", null, `Caveat: ${typeof caveat === "string" ? caveat : caveat.message}`);
       p.style.color = "var(--warn)";
       c.appendChild(p);
     }
-    if (r.findings && r.findings.length) {
+    const findings = (r.analysis && r.analysis.findings) || r.findings || [];
+    const withheld = r.withheldFindings || [];
+    if (findings.length || withheld.length) {
       const f = card("Findings");
-      for (const finding of r.findings) {
+      for (const finding of findings) {
+        const refs = finding.supportingEvidence || finding.evidence || [];
         kv(f, [
-          ["claim", finding.claim || finding.title],
+          ["claim", finding.statement || finding.claim || finding.title],
           ["level", finding.level],
-          ["evidence", (finding.evidence || []).length + " reference(s)"],
+          ["evidence", refs.length + " reference(s)"],
         ]);
+      }
+      // Shown only for a finding the evidence could not carry, as one plain line (ADR-0032).
+      for (const w of withheld) {
+        const cats = [...new Set((w.incomplete || []).map((i) => i.category))].join(", ");
+        const runs = new Set((w.incomplete || []).map((i) => i.runId)).size;
+        const p = node(
+          "p",
+          "hint",
+          `Held back: “${w.finding.statement}” rests on ${cats} evidence that was incomplete in ${runs} of the runs it cites.`
+        );
+        f.appendChild(p);
       }
     }
     state.done.add("rca");
     renderRail();
+    const proposals = (r.analysis && r.analysis.proposedConfirmations) || [];
+    if (r.source && r.source.kind === "rerun-batch" && proposals.length) {
+      void seeCondition(r.source.batchId, proposals[0]);
+    }
+  }
+
+  function describeFactor(f) {
+    if (!f) return "the proposed change";
+    return f.kind === "network"
+      ? `the network slowed to ${f.profile === "slow-3g" ? "slow 3G" : "fast 3G"}`
+      : `the CPU slowed ${f.rate}×`;
+  }
+
+  /* See condition: the one condition worth testing, what would disprove it, and exactly what a
+   * Confirm will run. The experiment is built by the CLI, and the Confirm click carries the
+   * checksum of those bytes, so what runs is what was shown. */
+  async function seeCondition(batchId, proposal) {
+    const preview = await act("confirm", {
+      investigation: state.investigation,
+      condition: 1,
+      batch: batchId,
+    });
+    const job = preview.jobId ? await waitForJob(preview.jobId) : resultOf(preview);
+    const c = card("See condition");
+    c.appendChild(node("p", null, proposal.condition));
+    c.appendChild(node("p", "hint", `Disproved if: ${proposal.falsifier}`));
+    if (!job || job.ok !== true || !job.checksum) {
+      c.appendChild(
+        node("p", null, `It cannot be confirmed here: ${(job && job.message) || "no experiment"}.`)
+      );
+      return;
+    }
+    const perArm = job.config.perArm;
+    c.appendChild(
+      node(
+        "p",
+        null,
+        `Confirm runs the script ${perArm} times with ${describeFactor(job.config.factor)} and ${perArm} times without, interleaved, and counts only failures that look like the ones already seen.`
+      )
+    );
+    buttons(c, [
+      {
+        label: "Confirm",
+        kind: "primary",
+        onClick: () => confirmCondition(batchId, job.checksum),
+      },
+    ]);
+  }
+
+  async function waitForJob(jobId) {
+    let result = null;
+    await streamJob(
+      jobId,
+      () => {},
+      (payload) => {
+        result = payload.result || null;
+      }
+    );
+    return result;
+  }
+
+  async function confirmCondition(batchId, checksum) {
+    setBusy(true);
+    const started = await act("confirm", {
+      investigation: state.investigation,
+      condition: 1,
+      batch: batchId,
+      checksum,
+    });
+    if (started.ok !== true || !started.jobId) {
+      setBusy(false);
+      showFailure(resultOf(started), "Could not start the confirmation");
+      return;
+    }
+    const c = card("Confirming");
+    const log = node("div", "log");
+    c.appendChild(log);
+    await streamJob(
+      started.jobId,
+      (line) => appendLogLine(log, line),
+      (payload) => {
+        setBusy(false);
+        const r = payload.result || {};
+        if (r.ok !== true) {
+          showFailure(r, "The confirmation did not finish");
+          return;
+        }
+        renderConfirmation(r);
+      }
+    );
+  }
+
+  /* View result: the verdict and plain counts. No statistics are shown; they were frozen with the
+   * experiment and decided the verdict. */
+  function renderConfirmation(r) {
+    const d = r.decision || {};
+    const confirmed = d.verdict === "high_confidence_trigger";
+    const c = card(confirmed ? "Confirmed" : "Not confirmed", !confirmed);
+    c.appendChild(node("p", null, r.condition));
+    kv(c, [
+      [`with ${describeFactor(r.factor)}`, `${r.variant.matched} of ${r.variant.reached} failed`],
+      ["without it", `${r.control.matched} of ${r.control.reached} failed`],
+    ]);
+    const other = (r.variant.otherFailures || 0) + (r.control.otherFailures || 0);
+    if (other) {
+      c.appendChild(
+        node(
+          "p",
+          "hint",
+          `${other} other failure(s) at the final check did not look like this bug and were not counted.`
+        )
+      );
+    }
+    if (r.factorNotApplied) {
+      c.appendChild(
+        node(
+          "p",
+          "hint",
+          `${r.factorNotApplied} run(s) where the change did not take were not counted.`
+        )
+      );
+    }
+    if (d.reason) c.appendChild(node("p", null, `Why not: ${d.reason}.`));
+    if (r.rootCauseHypothesis) {
+      c.appendChild(node("p", null, `Likely cause: ${r.rootCauseHypothesis.mechanism}`));
+    }
   }
 
   // -------------------------------------------------------------------------------- composer
@@ -1460,6 +1630,12 @@
     // A new authoring run gets its own repair budget.
     state.repairAttempts = 0;
     const planning = !extra || extra.approvePlan !== true;
+    // Planning keeps "That's all I know" beside the composer; opening the browser ends it.
+    state.planning = planning;
+    state.browsingQuestion = false;
+    if (!planning && state.planChecksum && !extra.planChecksum) {
+      extra = { ...extra, planChecksum: state.planChecksum };
+    }
     setBusy(
       true,
       planning ? "Working out how to reproduce it…" : "Working through it in a browser…"
@@ -1498,11 +1674,25 @@
         // current step, and the scroll position is left where the operator put it.
         if (m && viewport) {
           const imgUrl =
-            m[1] + (m[1].includes("?") ? "&" : "?") + "token=" + encodeURIComponent(TOKEN) + "&_t=" + Date.now();
+            m[1] +
+            (m[1].includes("?") ? "&" : "?") +
+            "token=" +
+            encodeURIComponent(TOKEN) +
+            "&_t=" +
+            Date.now();
           viewport.img.src = imgUrl;
           return;
         }
-        if (viewport && (line.startsWith("🌐 ") || line.startsWith("👆 ") || line.startsWith("⌨️ ") || line.startsWith("⏳ ") || line.startsWith("🔍 ") || line.startsWith("📸 ") || line.startsWith("📝 "))) {
+        if (
+          viewport &&
+          (line.startsWith("🌐 ") ||
+            line.startsWith("👆 ") ||
+            line.startsWith("⌨️ ") ||
+            line.startsWith("⏳ ") ||
+            line.startsWith("🔍 ") ||
+            line.startsWith("📸 ") ||
+            line.startsWith("📝 "))
+        ) {
           viewport.status.textContent = line;
         }
         appendLogLine(log, line);
@@ -1559,9 +1749,27 @@
       }
       buttons(c, [
         ...(canContinue
-          ? [{ label: "Keep going", kind: "primary", onClick: () => resumeAuthoring("Keep going from where the flow stands.") }]
+          ? [
+              {
+                label: "Keep going",
+                kind: "primary",
+                onClick: () => resumeAuthoring("Keep going from where the flow stands."),
+              },
+            ]
           : []),
-        { label: "Add more detail", ...(canContinue ? {} : { kind: "primary" }), onClick: () => promptForMoreDetail() },
+        ...(canContinue
+          ? []
+          : [
+              {
+                label: "Re-plan with this",
+                kind: "primary",
+                onClick: () =>
+                  replanWith(
+                    `The browser session stopped: ${r.reason || r.message || "no reason given"}`
+                  ),
+              },
+            ]),
+        { label: "Add more detail", onClick: () => promptForMoreDetail() },
         { label: "Try again", onClick: () => startAuthoring({}) },
       ]);
       return;
@@ -1585,6 +1793,9 @@
    * not a form. */
   function showPlan(r) {
     setStep("reproduce");
+    state.planning = true;
+    state.planChecksum = r.planChecksum || null;
+    updateComposer();
     const c = card("Here is what I plan to do");
     c.appendChild(
       node(
@@ -1603,7 +1814,9 @@
     if (r.platform && r.platform.description) {
       const why =
         r.platform.note ||
-        (r.platform.source === "default" ? "The default, because nothing you said named a platform." : "");
+        (r.platform.source === "default"
+          ? "The default, because nothing you said named a platform."
+          : "");
       c.appendChild(
         node(
           "p",
@@ -1622,12 +1835,10 @@
       c.appendChild(node("p", "ask", asked));
       el.input.placeholder = "Your answer…";
       el.input.focus();
+      // An answer revises the plan, which comes back for another read before any browser opens.
       const handler = async (answer) => {
         state.awaiting = null;
-        await startAuthoring({
-          approvePlan: true,
-          answer: await credentialsToNames(asked, answer),
-        });
+        await startAuthoring({ answer: await credentialsToNames(asked, answer) });
       };
       handler.echoesItself = true;
       state.awaiting = handler;
@@ -1698,6 +1909,9 @@
       },
     ]);
 
+    // "That's all I know" stays available here too: the plan is settled, but the operator can
+    // still say they have nothing more, and the session carries on or says what is missing.
+    state.browsingQuestion = true;
     el.input.placeholder = "Your answer…";
     el.input.focus();
     const question = r.question || "";
@@ -1714,13 +1928,20 @@
    * The CLI reads that evidence itself, so there is no answer to send or echo. */
   async function resumeAuthoring(answer, repair = false) {
     el.input.placeholder = DEFAULT_PLACEHOLDER;
+    state.browsingQuestion = false;
+    updateComposer();
     if (!state.authoringSession) {
       say("I lost track of that session. Starting a fresh one with what you have told me.");
       await startAuthoring({});
       return;
     }
     if (!repair) say(answer, "you");
-    setBusy(true, repair ? "Recording the flow again from where the replay stopped…" : "Picking up where it left off…");
+    setBusy(
+      true,
+      repair
+        ? "Recording the flow again from where the replay stopped…"
+        : "Picking up where it left off…"
+    );
 
     const started = await act("author", {
       investigation: state.investigation,
@@ -1749,11 +1970,24 @@
         const m = line.match(/^\[SCREENSHOT:(.+)\]$/);
         if (m) {
           const imgUrl =
-            m[1] + (m[1].includes("?") ? "&" : "?") + "token=" + encodeURIComponent(TOKEN) + "&_t=" + Date.now();
+            m[1] +
+            (m[1].includes("?") ? "&" : "?") +
+            "token=" +
+            encodeURIComponent(TOKEN) +
+            "&_t=" +
+            Date.now();
           viewport.img.src = imgUrl;
           return;
         }
-        if (line.startsWith("🌐 ") || line.startsWith("👆 ") || line.startsWith("⌨️ ") || line.startsWith("⏳ ") || line.startsWith("🔍 ") || line.startsWith("📸 ") || line.startsWith("📝 ")) {
+        if (
+          line.startsWith("🌐 ") ||
+          line.startsWith("👆 ") ||
+          line.startsWith("⌨️ ") ||
+          line.startsWith("⏳ ") ||
+          line.startsWith("🔍 ") ||
+          line.startsWith("📸 ") ||
+          line.startsWith("📝 ")
+        ) {
           viewport.status.textContent = line;
         }
         appendLogLine(log, line);
@@ -1792,6 +2026,8 @@
    * the bug. */
   const VERIFY_RUNS = 2;
   const MAX_REPAIRS = 2;
+  const NO_MORE_INFO =
+    "That's all I know. I have no more information: don't ask again. Carry on with what you have, or stop and say exactly what is missing.";
 
   function renderAuthored(r) {
     setStep("approve");
@@ -1799,13 +2035,20 @@
     kv(c, [
       ["steps", r.suite && r.suite.steps],
       ["script", r.suite && r.suite.dir],
-      ["only on some runs", r.suite && r.suite.optionalScreens && r.suite.optionalScreens.join(", ")],
+      [
+        "only on some runs",
+        r.suite && r.suite.optionalScreens && r.suite.optionalScreens.join(", "),
+      ],
     ]);
     if (r.suite && r.suite.optionalRefused) {
       c.appendChild(node("p", "hint", `Kept mandatory: ${r.suite.optionalRefused.join("; ")}`));
     }
     c.appendChild(
-      node("p", null, `Checking that it replays: the agent runs it ${VERIFY_RUNS} times before offering more.`)
+      node(
+        "p",
+        null,
+        `Checking that it replays: the agent runs it ${VERIFY_RUNS} times before offering more.`
+      )
     );
     void verifyScript(r);
   }
@@ -1821,13 +2064,17 @@
         const atCheck = result.failedAtCheck
           ? ` The final check failed in ${result.failedAtCheck} of them, which may already be the bug.`
           : "";
-        renderRunControls(r, `Replayed ${VERIFY_RUNS} times and reached the final check every time.${atCheck}`);
+        renderRunControls(
+          r,
+          `Replayed ${VERIFY_RUNS} times and reached the final check every time.${atCheck}`
+        );
         return;
       }
       if (state.repairAttempts >= MAX_REPAIRS) {
         renderRunControls(
           r,
-          `After ${MAX_REPAIRS} repairs it still stops before the final check when replayed: ${result.summary}. Running it many times now would mostly measure that, not the bug.`
+          `After ${MAX_REPAIRS} repairs it still stops before the final check when replayed: ${result.summary}. Running it many times now would mostly measure that, not the bug.`,
+          replayStopReason(result)
         );
         return;
       }
@@ -1839,7 +2086,58 @@
     });
   }
 
-  function renderRunControls(r, note) {
+  /* What the replay's own runner recorded about where it stopped: the line, the statement, and
+   * what it was waiting for. A new plan needs that, not just the one-line summary. */
+  function replayStopReason(result) {
+    const lines = [
+      `Replaying the recorded script stopped before the final check: ${result.summary}`,
+    ];
+    for (const stop of (result.stops || []).slice(0, 3)) {
+      const where = stop.line ? `line ${stop.line}` : "an unknown line";
+      const waiting = stop.waitingFor ? `, waiting for ${stop.waitingFor}` : "";
+      lines.push(
+        `- ${where}: ${stop.statement || "(no statement)"}${waiting} (${stop.runs} run(s))`
+      );
+    }
+    return lines.join("\n");
+  }
+
+  /* A new plan from what stopped the session, through the same planning turn an answer uses.
+   * The reason is the CLI's own text, already written with credential names, not something the
+   * operator typed, so it is not sent through credential extraction. */
+  async function replanWith(why) {
+    say(
+      `Re-plan with this.
+
+${why}`,
+      "user"
+    );
+    await startAuthoring({ answer: why });
+  }
+
+  /* The replay's own recording, fetched now into memory: the next N× run clears the folder it is
+   * in, and the card should keep showing the run the operator is deciding on. */
+  async function attachReviewVideo(c, before) {
+    try {
+      const res = await fetch(
+        `/api/suite-video?investigation=${encodeURIComponent(state.investigation)}`,
+        { headers: { "x-investigator-token": TOKEN } }
+      );
+      if (!res.ok) return;
+      const blob = await res.blob();
+      const v = document.createElement("video");
+      v.controls = true;
+      v.src = window.URL.createObjectURL(blob);
+      const heading = node("h4", null, "Recording of the replay");
+      heading.style.margin = "12px 0 0";
+      c.insertBefore(heading, before);
+      c.insertBefore(v, before);
+    } catch {
+      // No recording is not an error: the card works without one.
+    }
+  }
+
+  function renderRunControls(r, note, replanReason) {
     setStep("approve");
     const c = card("Ready to measure");
     if (note) c.appendChild(node("p", null, note));
@@ -1890,7 +2188,11 @@
       { label: "Run it", kind: "primary", onClick: () => runSuite(chosen()) },
       { label: "Run it 30×", onClick: () => runSuite(30) },
       { label: "Run it 100×", onClick: () => runSuite(100) },
+      ...(replanReason
+        ? [{ label: "Re-plan with this", onClick: () => replanWith(replanReason) }]
+        : []),
     ]);
+    void attachReviewVideo(c, row);
   }
 
   /** Run the authored suite N times here, streaming what the runner prints. */
@@ -1898,7 +2200,10 @@
    * check that runs before anyone is offered N runs. */
   async function runSuite(repetitions, onResult) {
     setStep("record");
-    setBusy(true, onResult ? "Checking that the script replays…" : `Running the script ${repetitions}×…`);
+    setBusy(
+      true,
+      onResult ? "Checking that the script replays…" : `Running the script ${repetitions}×…`
+    );
     const started = await act("rerun", { investigation: state.investigation, repeat: repetitions });
     if (started.ok !== true || !started.jobId) {
       setBusy(false);
@@ -1906,7 +2211,11 @@
       return;
     }
 
-    const c = card(onResult ? `Checking that the script replays (${repetitions} runs)` : `Running the script ${repetitions}×`);
+    const c = card(
+      onResult
+        ? `Checking that the script replays (${repetitions} runs)`
+        : `Running the script ${repetitions}×`
+    );
     const spinner = node("p");
     spinner.innerHTML =
       '<span class="spin"></span> the first run installs the suite&rsquo;s own Playwright, then it runs…';
@@ -1959,7 +2268,14 @@
       )
     );
     buttons(c, [
-      { label: "Run it 30× more", kind: "primary", onClick: () => runSuite(30) },
+      ...(r.batchId
+        ? [{ label: "Analyse", kind: "primary", onClick: () => analyse(true, r.batchId) }]
+        : []),
+      {
+        label: "Run it 30× more",
+        ...(r.batchId ? {} : { kind: "primary" }),
+        onClick: () => runSuite(30),
+      },
       { label: "Run it 100× more", onClick: () => runSuite(100) },
     ]);
   }
@@ -1998,6 +2314,32 @@
       e.preventDefault();
       void onSend();
     }
+  });
+
+  /* "That's all I know": stop being asked, and have the plan written with what there is. Anything
+   * still typed in the box goes with it as the last answer -- credentials first turned into names,
+   * as every other answer is, so no value reaches the transcript. */
+  el.thatsAll?.addEventListener("click", async () => {
+    if (state.busy || !state.investigation) return;
+    if (!state.planning && !state.browsingQuestion) return;
+    const typed = el.input.value.trim();
+    el.input.value = "";
+    state.awaiting = null;
+    if (!state.planning) {
+      // A question from the browser session: answer it in the same session, as every answer is.
+      const extra = typed ? await credentialsToNames("question", typed) : "";
+      await resumeAuthoring(
+        extra
+          ? `${extra}
+
+${NO_MORE_INFO}`
+          : NO_MORE_INFO
+      );
+      return;
+    }
+    const answer = typed ? await credentialsToNames("plan", typed) : "";
+    say(answer ? `${answer}\n\nThat's all I know.` : "That's all I know.", "user");
+    await startAuthoring({ thatsAll: true, ...(answer ? { answer } : {}) });
   });
 
   // ------------------------------------------------------------------------------------- boot

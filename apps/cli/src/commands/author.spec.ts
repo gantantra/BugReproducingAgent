@@ -10,6 +10,8 @@ import {
   formatToolUse,
   readAuthoringOutcome,
   buildPrompt,
+  planRevisionSection,
+  planVersionOf,
   runClaudeForTest,
   screenshotLine,
 } from "./author.js";
@@ -18,7 +20,10 @@ describe("the script is built from every browser run of the attempt", () => {
   /** A saved MCP session in the shape MCP writes: a tool heading, then a JSON result with `code`. */
   const sessionMd = (...calls: Array<[tool: string, code: string]>) =>
     calls
-      .map(([tool, code]) => `### Tool call: ${tool}\n- Result\n\`\`\`json\n${JSON.stringify({ code })}\n\`\`\`\n`)
+      .map(
+        ([tool, code]) =>
+          `### Tool call: ${tool}\n- Result\n\`\`\`json\n${JSON.stringify({ code })}\n\`\`\`\n`
+      )
       .join("\n");
 
   it("takes the sign-in run and the resumed run that reached the flow, in the order they ran", () => {
@@ -34,19 +39,38 @@ describe("the script is built from every browser run of the attempt", () => {
       write(
         "session-3000",
         sessionMd(
-          ["browser_click", "await page.getByRole('button', { name: 'Yes, Please continue to delete' }).click();"],
-          ["browser_wait_for", "await page.getByText(\"Account has been deleted successfully!\").first().waitFor({ state: 'visible' });"]
+          [
+            "browser_click",
+            "await page.getByRole('button', { name: 'Yes, Please continue to delete' }).click();",
+          ],
+          [
+            "browser_wait_for",
+            "await page.getByText(\"Account has been deleted successfully!\").first().waitFor({ state: 'visible' });",
+          ]
         )
       );
-      write("session-1000", sessionMd(["browser_navigate", "await page.goto('https://www.99acres.com');"]));
-      write("session-500", sessionMd(["browser_navigate", "await page.goto('https://an-earlier-attempt.example');"]));
+      write(
+        "session-1000",
+        sessionMd(["browser_navigate", "await page.goto('https://www.99acres.com');"])
+      );
+      write(
+        "session-500",
+        sessionMd(["browser_navigate", "await page.goto('https://an-earlier-attempt.example');"])
+      );
       mkdirSync(join(outputDir, "live"));
 
       const paths = attemptSessionMarkdowns(outputDir, 1000);
-      expect(paths.map((p) => p.split(/[\\/]/).slice(-2)[0])).toEqual(["session-1000", "session-3000"]);
+      expect(paths.map((p) => p.split(/[\\/]/).slice(-2)[0])).toEqual([
+        "session-1000",
+        "session-3000",
+      ]);
 
       const steps = paths.flatMap((p) => extractAuthoredSteps(readFileSync(p, "utf8")));
-      expect(steps.map((s) => s.tool)).toEqual(["browser_navigate", "browser_click", "browser_wait_for"]);
+      expect(steps.map((s) => s.tool)).toEqual([
+        "browser_navigate",
+        "browser_click",
+        "browser_wait_for",
+      ]);
       expect(whyStepsCannotMeasure(steps)).toBeNull();
     } finally {
       rmSync(outputDir, { recursive: true, force: true });
@@ -69,7 +93,10 @@ describe("the directory the CLI was launched from is not the session's to tidy",
       // A stand-in for `claude`: reads the prompt, then stays up past the one-second image poll.
       await runClaudeForTest(
         process.execPath,
-        ["-e", "process.stdin.resume(); process.stdin.on('end', () => setTimeout(() => {}, 1500));"],
+        [
+          "-e",
+          "process.stdin.resume(); process.stdin.on('end', () => setTimeout(() => {}, 1500));",
+        ],
         "prompt",
         { logger: { debug: () => {} } } as unknown as Runtime,
         sessionDir,
@@ -99,7 +126,11 @@ describe("a session the turn counter stopped", () => {
     const session = await runClaudeForTest(
       process.execPath,
       standIn(
-        { type: "assistant", session_id: "s-1", message: { content: [{ type: "text", text: "Ticking the consent box" }] } },
+        {
+          type: "assistant",
+          session_id: "s-1",
+          message: { content: [{ type: "text", text: "Ticking the consent box" }] },
+        },
         { type: "result", subtype: "error_max_turns", is_error: true, session_id: "s-1" }
       ),
       "prompt",
@@ -168,7 +199,9 @@ describe("recognising the ending", () => {
   it("reads a request to relaunch the browser as another platform", () => {
     // The operator said "mobile web only" after the browser was already open as desktop.
     expect(
-      readAuthoringOutcome("They want the mobile site.\n\nAUTHORING: PLATFORM pixel-7-chrome-mobile")
+      readAuthoringOutcome(
+        "They want the mobile site.\n\nAUTHORING: PLATFORM pixel-7-chrome-mobile"
+      )
     ).toEqual({ kind: "platform", profile: "pixel-7-chrome-mobile" });
   });
 
@@ -321,30 +354,32 @@ describe("formatting browser tool calls for live chat streaming", () => {
   });
 
   it("formats clicking with element description or selector", () => {
-    expect(
-      formatToolUse("mcp__playwright__browser_click", { element: "Submit button" })
-    ).toBe("👆 Clicking: Submit button");
-    expect(
-      formatToolUse("mcp__playwright__browser_click", { selector: "#submit" })
-    ).toBe("👆 Clicking: #submit");
+    expect(formatToolUse("mcp__playwright__browser_click", { element: "Submit button" })).toBe(
+      "👆 Clicking: Submit button"
+    );
+    expect(formatToolUse("mcp__playwright__browser_click", { selector: "#submit" })).toBe(
+      "👆 Clicking: #submit"
+    );
   });
 
   it("formats typing input", () => {
-    expect(
-      formatToolUse("mcp__playwright__browser_type", { text: "hello world" })
-    ).toBe("⌨️ Typing text: hello world");
+    expect(formatToolUse("mcp__playwright__browser_type", { text: "hello world" })).toBe(
+      "⌨️ Typing text: hello world"
+    );
   });
 
   it("formats form filling", () => {
     expect(
-      formatToolUse("mcp__playwright__browser_fill_form", { fields: { username: "admin", role: "qa" } })
+      formatToolUse("mcp__playwright__browser_fill_form", {
+        fields: { username: "admin", role: "qa" },
+      })
     ).toBe("📝 Filling form: username, role");
   });
 
   it("formats waiting for elements / assertions", () => {
-    expect(
-      formatToolUse("mcp__playwright__browser_wait_for", { text: "Dashboard loaded" })
-    ).toBe("⏳ Waiting for: Dashboard loaded");
+    expect(formatToolUse("mcp__playwright__browser_wait_for", { text: "Dashboard loaded" })).toBe(
+      "⏳ Waiting for: Dashboard loaded"
+    );
   });
 
   it("formats screenshots and snapshots", () => {
@@ -374,7 +409,9 @@ describe("formatting browser tool calls for live chat streaming", () => {
 
 describe("max turns handling in outcome", () => {
   it("recognises maximum number of turns reached as stuck", () => {
-    const out = readAuthoringOutcome("Error: Maximum number of turns (60) reached without stopping");
+    const out = readAuthoringOutcome(
+      "Error: Maximum number of turns (60) reached without stopping"
+    );
     expect(out.kind).toBe("stuck");
     if (out.kind === "stuck") {
       expect(out.reason).toMatch(/turn limit/i);
@@ -418,5 +455,45 @@ describe("buildPrompt credentials formatting", () => {
     });
 
     expect(prompt).toContain("No credentials were supplied. Ask if the flow needs one.");
+  });
+});
+
+describe("revising the plan before anything opens a browser", () => {
+  it("adds nothing to a first planning turn beyond the offer to ask", () => {
+    const text = planRevisionSection({ previousPlan: "", thatsAll: false }).join("\n");
+    expect(text).not.toContain("The plan you wrote last time");
+    expect(text).toContain("AUTHORING: QUESTION");
+  });
+
+  it("carries the previous plan and the operator's answer into the next turn", () => {
+    const text = planRevisionSection({
+      previousPlan: "1. Open /search",
+      answer: "use the QA account",
+      thatsAll: false,
+    }).join("\n");
+    expect(text).toContain("1. Open /search");
+    expect(text).toContain("use the QA account");
+  });
+
+  it('after "That\'s all I know", forbids another question and asks for the gaps to be marked', () => {
+    const text = planRevisionSection({ previousPlan: "1. Open /search", thatsAll: true }).join(
+      "\n"
+    );
+    expect(text).toContain("Do not ask anything");
+    expect(text).toContain("???");
+    expect(text).not.toContain("you may end with AUTHORING: QUESTION");
+  });
+
+  it("numbers the current plan one past the versions kept beside it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "plan-versions-"));
+    try {
+      const planPath = join(dir, "plan.md");
+      expect(planVersionOf(planPath)).toBe(1);
+      writeFileSync(join(dir, "plan.v1.md"), "old");
+      writeFileSync(join(dir, "plan.v2.md"), "older");
+      expect(planVersionOf(planPath)).toBe(3);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

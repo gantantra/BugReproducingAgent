@@ -66,7 +66,9 @@ describe("reading the platform a plan chose", () => {
   });
 
   it("keeps the line out of the plan the operator reads, and nothing else", () => {
-    expect(stripPlatformLine("1. Open the page\nPLATFORM: pixel-7-chrome-mobile")).toBe("1. Open the page");
+    expect(stripPlatformLine("1. Open the page\nPLATFORM: pixel-7-chrome-mobile")).toBe(
+      "1. Open the page"
+    );
   });
 });
 
@@ -108,7 +110,10 @@ describe("the recorded choice", () => {
   it("round-trips", () => {
     const path = file();
     writePlatformFile(path, { profile: "pixel-7-chrome-mobile", source: "plan" });
-    expect(readPlatformFile(path, PROFILES)).toEqual({ profile: "pixel-7-chrome-mobile", source: "plan" });
+    expect(readPlatformFile(path, PROFILES)).toEqual({
+      profile: "pixel-7-chrome-mobile",
+      source: "plan",
+    });
   });
 
   it("is not trusted when it names a profile config does not have, or is corrupt", () => {

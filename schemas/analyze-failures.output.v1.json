@@ -188,6 +188,55 @@
         "minLength": 1
       },
       "description": "Categories that were missing, redacted or corrupted and therefore could not be reasoned over. An absent signal in a missing category means 'not captured', never 'did not happen'."
+    },
+    "proposedConfirmations": {
+      "type": "array",
+      "maxItems": 3,
+      "description": "Conditions worth confirming, each as ONE factor to vary between otherwise identical runs of the authored script. The model names the factor; the harness applies it, interleaves variant and control runs, and counts only failures matching the target signature it derived itself. The model never writes steps.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["condition", "factor", "rationale", "falsifier"],
+        "properties": {
+          "condition": {
+            "type": "string",
+            "minLength": 1,
+            "description": "One sentence: the condition under which the bug is suspected to reproduce. A correlation until confirmed."
+          },
+          "factor": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "profile"],
+                "properties": {
+                  "kind": { "const": "network" },
+                  "profile": { "enum": ["slow-3g", "fast-3g"] }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "rate"],
+                "properties": {
+                  "kind": { "const": "cpu" },
+                  "rate": { "enum": [2, 4, 6] }
+                }
+              }
+            ]
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Which evidence points at this factor, citing what the tools returned."
+          },
+          "falsifier": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The result that would show the condition is wrong."
+          }
+        }
+      }
     }
   }
 }

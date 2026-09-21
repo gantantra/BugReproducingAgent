@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fail, sha256Prefixed, systemClock } from "@investigator/core";
 import { investigationDirs } from "@investigator/storage";
 import { LineageWriter } from "@investigator/lineage";
@@ -114,10 +114,15 @@ export function readAuthoringOutcome(finalMessage: string): AuthoringOutcome {
     if (verb === "QUESTION") return { kind: "question", question: rest || body() };
     return { kind: "stuck", reason: rest || body() };
   }
-  if (/maximum number of turns|max_turns_reached|maximum turns reached|turn limit reached/i.test(finalMessage)) {
+  if (
+    /maximum number of turns|max_turns_reached|maximum turns reached|turn limit reached/i.test(
+      finalMessage
+    )
+  ) {
     return {
       kind: "stuck",
-      reason: "Authoring reached the turn limit without completing. You can inspect screenshots, supply credentials or instructions, and resume.",
+      reason:
+        "Authoring reached the turn limit without completing. You can inspect screenshots, supply credentials or instructions, and resume.",
     };
   }
   // No sentinel. Reported as unknown rather than assumed complete: treating an unrecognised
@@ -149,6 +154,16 @@ export interface AuthorOptions {
    * server at all — see `runPlanningPhase`.
    */
   approvePlan?: boolean;
+  /**
+   * In the planning phase: the operator has nothing more to add. The turn must write its plan with
+   * any remaining gaps marked, rather than ask again.
+   */
+  thatsAll?: boolean;
+  /**
+   * With `approvePlan`: the checksum of the plan the operator read. The plan on disk must still
+   * hash to it, so an approval cannot land on a plan that was rewritten after it was shown.
+   */
+  planChecksum?: string;
 }
 
 export interface AuthorResult {
@@ -166,6 +181,17 @@ export async function authorCommand(
     fail("INPUT_INVALID", "`investigate author` requires --investigation <id>", {
       context: { flag: "--investigation" },
     });
+  }
+  // Checked with the other arguments, before anything else: without --resume this used to fall
+  // through to a planning turn, silently doing something other than what was asked.
+  if (opts.repair && !opts.resume) {
+    fail(
+      "INPUT_INVALID",
+      "`--repair` re-records a session's script, so it needs --resume <sessionId>",
+      {
+        context: { flag: "--repair" },
+      }
+    );
   }
 
   const cli = findClaudeCli();
@@ -222,7 +248,9 @@ export async function authorCommand(
   const writeBrowserConfig = (profileName: string): void => {
     const profile = profiles[profileName];
     if (!profile) {
-      return fail("CONFIG_INVALID", "Emulation profile is not defined", { context: { profileName } });
+      return fail("CONFIG_INVALID", "Emulation profile is not defined", {
+        context: { profileName },
+      });
     }
     const browserConfigPath = join(sessionDir, "browser-config.json");
     writeFileSync(
@@ -280,16 +308,52 @@ export async function authorCommand(
       profiles,
       defaultProfile: defaultPlatform.profile,
       platformPath,
+      ...(opts.answer ? { answer: opts.answer } : {}),
+      thatsAll: opts.thatsAll === true,
     });
+  }
+
+  if (opts.approvePlan && opts.planChecksum !== undefined) {
+    const onDisk = existsSync(planPath) ? sha256Prefixed(readFileSync(planPath, "utf8")) : null;
+    if (onDisk !== opts.planChecksum) {
+      fail(
+        "GATE_CHECKSUM_MISMATCH",
+        "The plan on disk is not the plan that was approved. Read the current plan and approve it again.",
+        { context: { expected: opts.planChecksum, actual: onDisk ?? "(no plan)" } }
+      );
+    }
   }
 
   const approvedPlan =
     opts.approvePlan && existsSync(planPath) ? readFileSync(planPath, "utf8") : "";
+  if (opts.approvePlan && approvedPlan) {
+    // The plan the browser session is about to act on, bound by its hash. The operator's click is
+    // recorded as the reason, not as a gate approval: a plan authorizes an attended authoring
+    // session, never a measured run.
+    await new LineageWriter(rt.metadata, systemClock).append({
+      investigationId,
+      edge: "interpreted_as",
+      fromKind: "intake_report",
+      fromId: "intake_report",
+      toKind: "flow",
+      toId: `PLAN-${investigationId}-v${planVersionOf(planPath)}`,
+      actor: {
+        kind: "deterministic",
+        component: "author.approve-plan",
+        version: AUTHORING_BRIEF_VERSION,
+      },
+      inputs: {
+        planChecksum: sha256Prefixed(approvedPlan),
+        checksumConfirmed: opts.planChecksum !== undefined,
+      },
+    });
+  }
 
   // The platform the plan chose, or the session later asked for. With neither on record the
   // configured default is used, and the log names it either way.
   let platform: PlatformChoice = readPlatformFile(platformPath, profiles) ?? defaultPlatform;
-  const describePlatform = (): string => describeProfile(platform.profile, profiles[platform.profile]!);
+  const describePlatform = (): string =>
+    describeProfile(platform.profile, profiles[platform.profile]!);
   writeBrowserConfig(platform.profile);
   process.stderr.write(`📱 Browser: ${describePlatform()}\n`);
 
@@ -298,7 +362,8 @@ export async function authorCommand(
   const attemptPath = join(sessionDir, "attempt.json");
   // A repair re-records the whole flow, so it is a new attempt too: the script it produces must
   // not include the recording it replaces.
-  if (!opts.resume || opts.repair) writeFileSync(attemptPath, `${JSON.stringify({ startedAt: Date.now() })}\n`, "utf8");
+  if (!opts.resume || opts.repair)
+    writeFileSync(attemptPath, `${JSON.stringify({ startedAt: Date.now() })}\n`, "utf8");
   const attemptStartedAt = readAttemptStart(attemptPath);
 
   const resumeCreds = rt.credentials.entries();
@@ -315,11 +380,6 @@ export async function authorCommand(
    * it, the same rule as everywhere else: the model names a secret, it never learns one. */
   let repairPrompt = "";
   if (opts.repair) {
-    if (!opts.resume) {
-      fail("INPUT_INVALID", "`--repair` re-records a session's script, so it needs --resume <sessionId>", {
-        context: { flag: "--repair" },
-      });
-    }
     const suiteDirForRepair = join(sessionDir, "suite");
     const evidence = readRepairEvidence(suiteDirForRepair);
     if (!evidence || evidence.stoppedEarly === 0) {
@@ -340,7 +400,9 @@ export async function authorCommand(
     "\n\n(The browser restarted for this turn: the page is fresh, the browser profile and any sign-in in it are kept, and the steps from your earlier turns are already part of the script. Navigate back and carry on from where the flow stands.)";
 
   const prompt = opts.resume
-    ? (opts.repair ? repairPrompt : (opts.answer ?? "") + resumeNote) + credsReminder + platformReminder
+    ? (opts.repair ? repairPrompt : (opts.answer ?? "") + resumeNote) +
+      credsReminder +
+      platformReminder
     : buildPrompt({
         report,
         targetName: targetName!,
@@ -354,18 +416,19 @@ export async function authorCommand(
         platforms: profileCatalogue(profiles),
       });
 
-  const argsFor = (resume?: string): string[] => claudeCliArgs({
-    mcpConfigPath,
-    strictMcpConfig: true,
-    // Without this the session stops on its first navigation asking for permission, which is not
-    // a question the operator can usefully answer -- they approve the SCRIPT, at a gate, after
-    // watching it. The allowlist is where "what may this session do" is decided, once.
-    allowedTools: ALLOWED_PLAYWRIGHT_TOOLS,
-    appendSystemPrompt: brief,
-    maxTurns: opts.maxTurns ?? 60,
-    outputFormat: "stream-json",
-    ...(resume ? { resume } : {}),
-  });
+  const argsFor = (resume?: string): string[] =>
+    claudeCliArgs({
+      mcpConfigPath,
+      strictMcpConfig: true,
+      // Without this the session stops on its first navigation asking for permission, which is not
+      // a question the operator can usefully answer -- they approve the SCRIPT, at a gate, after
+      // watching it. The allowlist is where "what may this session do" is decided, once.
+      allowedTools: ALLOWED_PLAYWRIGHT_TOOLS,
+      appendSystemPrompt: brief,
+      maxTurns: opts.maxTurns ?? 60,
+      outputFormat: "stream-json",
+      ...(resume ? { resume } : {}),
+    });
 
   // The web server names this session's folder as `--workspace` and serves screenshots relative
   // to it. A hand run without the flag has no page watching, and keeps the workspace root.
@@ -413,7 +476,14 @@ export async function authorCommand(
         process.stderr.write(`📱 Relaunching the browser as ${describePlatform()}\n`);
         note = `The browser has been relaunched as ${describePlatform()}. The page was reset but the browser profile, and any sign-in in it, was kept, and the steps from your earlier turns are already part of the script. Navigate again and carry on from where the flow stands.`;
       }
-      session = await runClaude(cli!, argsFor(session.sessionId), note, rt, sessionDir, workspaceDir);
+      session = await runClaude(
+        cli!,
+        argsFor(session.sessionId),
+        note,
+        rt,
+        sessionDir,
+        workspaceDir
+      );
       outcome = readAuthoringOutcome(session.finalMessage);
       continue;
     }
@@ -422,7 +492,14 @@ export async function authorCommand(
       process.stderr.write(
         `⏭️ Out of turns part-way through — continuing the same session (${continuations} of ${maxTurnLimitContinuations})\n`
       );
-      session = await runClaude(cli!, argsFor(session.sessionId), turnLimitNote, rt, sessionDir, workspaceDir);
+      session = await runClaude(
+        cli!,
+        argsFor(session.sessionId),
+        turnLimitNote,
+        rt,
+        sessionDir,
+        workspaceDir
+      );
       outcome = readAuthoringOutcome(session.finalMessage);
       continue;
     }
@@ -479,7 +556,11 @@ export async function authorCommand(
       investigationId,
       target: targetName,
       outcome: outcome.kind,
-      platform: { profile: platform.profile, description: describePlatform(), source: platform.source },
+      platform: {
+        profile: platform.profile,
+        description: describePlatform(),
+        source: platform.source,
+      },
       ...(outcome.kind === "question" ? { question: outcome.question } : {}),
       ...(outcome.kind === "stuck" ? { reason: outcome.reason } : {}),
       // Stopped by the turn counter even after the automatic continuation; the page offers to keep going.
@@ -564,7 +645,11 @@ export function formatToolUse(name: string, input: unknown): string {
     // Not browser actions: the session reading files MCP saved (a snapshot, a response body).
     // Labelled as what they are, so a log full of them reads as a session digging, not browsing.
     case "Read":
-      return `📄 Reading saved file: ${String(inp.file_path ?? "").split(/[\\/]/).pop() || "file"}`;
+      return `📄 Reading saved file: ${
+        String(inp.file_path ?? "")
+          .split(/[\\/]/)
+          .pop() || "file"
+      }`;
     case "Grep":
       return `🔎 Searching saved files for: ${String(inp.pattern ?? "").slice(0, 60)}`;
     case "browser_navigate":
@@ -654,7 +739,12 @@ function runClaude(
   sessionDir?: string,
   /** The folder screenshot paths are made relative to; see `screenshotLine`. */
   workspaceDir?: string
-): Promise<{ sessionId: string | null; finalMessage: string; exitCode: number | null; turnLimit: boolean }> {
+): Promise<{
+  sessionId: string | null;
+  finalMessage: string;
+  exitCode: number | null;
+  turnLimit: boolean;
+}> {
   return new Promise((resolvePromise) => {
     // `shell: false`, always. The prompt embeds a bug report written by someone else, and a shell
     // on Windows concatenates arguments rather than escaping them -- a report containing
@@ -721,7 +811,9 @@ function runClaude(
             attachment?: { type?: string };
             session_id?: string;
             result?: string;
-            message?: { content?: Array<{ type: string; name?: string; input?: unknown; text?: string }> };
+            message?: {
+              content?: Array<{ type: string; name?: string; input?: unknown; text?: string }>;
+            };
           };
           if (
             (parsed.type === "attachment" && parsed.attachment?.type === "max_turns_reached") ||
@@ -792,7 +884,8 @@ function runClaude(
       // it was stuck, so the caller may continue it.
       const turnLimit = maxTurnsReached && !finalMessage.includes("AUTHORING:");
       if (turnLimit) {
-        finalMessage = "AUTHORING: STUCK Authoring reached the maximum turn limit without completing.";
+        finalMessage =
+          "AUTHORING: STUCK Authoring reached the maximum turn limit without completing.";
       }
 
       resolvePromise({ sessionId, finalMessage, exitCode, turnLimit });
@@ -833,7 +926,9 @@ export function buildPrompt(a: {
   const credLines: string[] = [];
   if (a.credentialEntries && a.credentialEntries.length > 0) {
     for (const entry of a.credentialEntries) {
-      credLines.push(entry.description ? `- ${entry.name}: ${entry.description}` : `- ${entry.name}`);
+      credLines.push(
+        entry.description ? `- ${entry.name}: ${entry.description}` : `- ${entry.name}`
+      );
     }
   } else if (a.credentialNames.length > 0) {
     for (const name of a.credentialNames) {
@@ -846,7 +941,7 @@ export function buildPrompt(a: {
       ? [
           "## Session Credentials & Variables",
           "The following credentials and variables are configured for this session in the MCP secret store.",
-          "IMPORTANT: You MUST reference them strictly by their exact KEY NAME (e.g. browser_type with text set to the key name like \"ACCOUNT_PHONE\").",
+          'IMPORTANT: You MUST reference them strictly by their exact KEY NAME (e.g. browser_type with text set to the key name like "ACCOUNT_PHONE").',
           "NEVER guess, ask for, or type raw values; the browser tool resolves them automatically from the secret store.",
           ...credLines,
         ].join("\n")
@@ -912,14 +1007,24 @@ async function runPlanningPhase(a: {
   profiles: Readonly<Record<string, EmulationProfile>>;
   defaultProfile: string;
   platformPath: string;
+  /** What the operator said about the previous plan: an answer, a correction, or more detail. */
+  answer?: string;
+  /** The operator has nothing more to add; write the plan with the gaps marked. */
+  thatsAll?: boolean;
 }): Promise<AuthorResult> {
+  // A planning turn with something new from the operator revises the plan it already wrote rather
+  // than starting from the report alone, so nothing they were already told is lost.
+  const previousPlan =
+    (a.answer !== undefined || a.thatsAll === true) && existsSync(a.planPath)
+      ? readFileSync(a.planPath, "utf8")
+      : "";
   const credEntries = a.rt.credentials.entries();
   const credSummary =
     credEntries.length > 0
       ? `Credentials & variables available by name:\n${credEntries.map((e) => (e.description ? `- ${e.name}: ${e.description}` : `- ${e.name}`)).join("\n")}`
       : a.rt.credentials.names().length
-      ? `Credentials available by name: ${a.rt.credentials.names().join(", ")}`
-      : "No credentials were supplied.";
+        ? `Credentials available by name: ${a.rt.credentials.names().join(", ")}`
+        : "No credentials were supplied.";
 
   const prompt = [
     "Write the plan for reproducing this reported bug. Do not reproduce it yet.",
@@ -946,6 +1051,7 @@ async function runPlanningPhase(a: {
     `Default, when nothing the operator said names a platform: ${a.defaultProfile}`,
     "",
     "Put PLATFORM: <profile name> on its own line directly above AUTHORING: PLAN.",
+    ...planRevisionSection({ previousPlan, answer: a.answer, thatsAll: a.thatsAll === true }),
   ].join("\n");
 
   const args = claudeCliArgs({
@@ -965,7 +1071,9 @@ async function runPlanningPhase(a: {
    * whichever sentinel was used, and a question is carried alongside rather than replacing it.
    * Keeping the sentinel line out of the plan matters: it is shown to the operator verbatim. */
   const plan = stripPlatformLine(stripSentinel(session.finalMessage));
-  const question = outcome.kind === "question" ? outcome.question : "";
+  // After "That's all I know" there is nobody left to ask. A question is dropped rather than put
+  // back to the operator; the gap it named stays in the plan for the browser session to meet.
+  const question = outcome.kind === "question" && a.thatsAll !== true ? outcome.question : "";
   const ok = outcome.kind === "plan" || outcome.kind === "question";
 
   // The model proposes a profile name; config decides whether it exists. The operator sees the
@@ -981,9 +1089,12 @@ async function runPlanningPhase(a: {
       : undefined;
   const platformDescription = describeProfile(platform.profile, a.profiles[platform.profile]!);
   if (ok) {
+    archivePlan(a.planPath);
     writeFileSync(a.planPath, plan, "utf8");
     writePlatformFile(a.platformPath, platform);
   }
+  const planVersion = ok ? planVersionOf(a.planPath) : null;
+  const planChecksum = ok ? sha256Prefixed(plan) : null;
 
   return {
     json: {
@@ -999,6 +1110,7 @@ async function runPlanningPhase(a: {
         ...(platformNote ? { note: platformNote } : {}),
       },
       ...(question ? { question } : {}),
+      ...(planVersion !== null ? { planVersion, planChecksum } : {}),
       sessionId: session.sessionId,
       suite: null,
       message: session.finalMessage,
@@ -1014,11 +1126,72 @@ async function runPlanningPhase(a: {
             ...(platformNote ? [platformNote] : []),
             ...(question ? ["", `It needs to know: ${question}`] : []),
             "",
-            `Approve it with:  investigate author --investigation ${a.investigationId} --approve-plan`,
+            `Approve it with:  investigate author --investigation ${a.investigationId} --approve-plan --plan-checksum ${planChecksum}`,
             `Answer or change: the same command plus --answer "<your answer>"`,
+            `Revise the plan:  investigate author --investigation ${a.investigationId} --answer "<more detail>"   (add --thats-all when you have nothing more)`,
           ].join("\n")
         : renderHuman(outcome, session, null, a.investigationId),
   };
+}
+
+/**
+ * What a revising planning turn is told on top of the report: the plan it wrote last time and
+ * what the operator added. Empty when there is nothing to revise, so a first planning turn reads
+ * exactly as it always has.
+ */
+export function planRevisionSection(a: {
+  previousPlan: string;
+  answer?: string | undefined;
+  thatsAll: boolean;
+}): string[] {
+  const lines: string[] = [];
+  if (a.previousPlan) {
+    lines.push("", "## The plan you wrote last time", "", a.previousPlan);
+  }
+  if (a.answer) {
+    lines.push(
+      "",
+      "## What the operator added",
+      "",
+      a.answer,
+      "",
+      "Revise the plan with this. Use what they supplied as given; do not ask again about anything it answers."
+    );
+  }
+  if (a.thatsAll) {
+    lines.push(
+      "",
+      "## The operator has nothing more to add",
+      "",
+      "Do not ask anything. Write the complete plan now, mark every value still missing as ??? with what",
+      "it is for, and end with AUTHORING: PLAN. The browser session will work out what the page can show it."
+    );
+  } else {
+    lines.push(
+      "",
+      "If something only the operator can know is still missing, you may end with AUTHORING: QUESTION",
+      "instead. Ask at most three things at once, the one that matters most first, and never anything",
+      "the page itself would show."
+    );
+  }
+  return lines;
+}
+
+/**
+ * Keep the plan about to be replaced as `plan.v<N>.md`, so every version the operator was shown
+ * stays on disk and the current one is always `plan.md`.
+ */
+function archivePlan(planPath: string): void {
+  if (!existsSync(planPath)) return;
+  const version = planVersionOf(planPath);
+  writeFileSync(planPath.replace(/plan\.md$/, `plan.v${version}.md`), readFileSync(planPath));
+}
+
+/** The version number of the current `plan.md`: one more than the versions archived beside it. */
+export function planVersionOf(planPath: string): number {
+  const dir = dirname(planPath);
+  if (!existsSync(dir)) return 1;
+  return readdirSync(dir).filter((f) => /^plan\.v\d+\.md$/.test(f)).length + 1;
 }
 
 /**
@@ -1214,7 +1387,9 @@ function emitSuite(a: {
     steps: steps.length,
     ...(proposalPath ? { proposalPath } : {}),
     ...(proposalRefusal ? { proposalRefusal } : {}),
-    ...(optionalPlan.blocks.length ? { optionalScreens: optionalPlan.blocks.map((b) => b.trigger) } : {}),
+    ...(optionalPlan.blocks.length
+      ? { optionalScreens: optionalPlan.blocks.map((b) => b.trigger) }
+      : {}),
     ...(optionalPlan.refused.length ? { optionalRefused: optionalPlan.refused } : {}),
   };
 }

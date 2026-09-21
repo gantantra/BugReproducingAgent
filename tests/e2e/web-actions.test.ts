@@ -39,6 +39,8 @@ const PARAMS: Record<string, unknown> = {
   approver: "tester",
   title: "A title",
   ai: false,
+  batch: "BATCH-001",
+  condition: 1,
 };
 
 let dir: string;
@@ -97,6 +99,52 @@ describe("every web action produces argv the CLI parser accepts", () => {
       rejection?.[0],
       `\`investigate ${argv.join(" ")}\` was rejected by the parser: ${rejection?.[0] ?? ""}`
     ).toBeUndefined();
+  });
+});
+
+describe("the planner's author calls reach the parser intact", () => {
+  const ctx: BuildContext = { inWorkspace: (rel) => resolve(dir, rel) };
+  const author = () => ACTIONS.find((a) => a.id === "author")!;
+
+  it.each([
+    ["a plan revision", { investigation: "INV-001", answer: "use the QA account" }],
+    ["That's all I know", { investigation: "INV-001", thatsAll: true, answer: "Android" }],
+    [
+      "an approval bound to the plan checksum",
+      { investigation: "INV-001", approvePlan: true, planChecksum: `sha256:${"a".repeat(64)}` },
+    ],
+    [
+      "Re-plan with this, carrying why the session stopped",
+      {
+        investigation: "INV-001",
+        answer: "The browser session stopped: no control named Delete account on /profile, line 12",
+      },
+    ],
+    [
+      "That's all I know, answering a browser-session question",
+      {
+        investigation: "INV-001",
+        resume: "62433c00-f352-4735-94b0-d5210d3da831",
+        answer: "That's all I know. I have no more information: don't ask again.",
+      },
+    ],
+    [
+      "a repair of the replayed script",
+      { investigation: "INV-001", resume: "62433c00-f352-4735-94b0-d5210d3da831", repair: true },
+    ],
+  ])("%s", async (_label, params) => {
+    const argv = author().build(params as Record<string, unknown>, ctx);
+    const { output } = await invoke(argv);
+    expect(PARSER_REJECTION.exec(output)?.[0]).toBeUndefined();
+  });
+});
+
+describe("author refuses flag combinations it cannot honour", () => {
+  it("refuses --repair without --resume instead of planning", async () => {
+    const { status, output } = await invoke(["author", "--investigation", "INV-001", "--repair"]);
+    expect(status).toBe(1);
+    expect(output).toContain("INPUT_INVALID");
+    expect(output).toContain("--resume");
   });
 });
 

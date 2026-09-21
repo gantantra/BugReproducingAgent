@@ -1,9 +1,30 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fail } from "@investigator/core";
 import { investigationDirs } from "@investigator/storage";
-import type { GlobalOptions, Runtime } from "../runtime.js";
+import { resolvePolicyPath, type GlobalOptions, type Runtime } from "../runtime.js";
+import {
+  CAPTURE_DIR,
+  captureSettings,
+  classifyEachRun,
+  ingestRerunBatch,
+  prepareSuiteCapture,
+  suiteChecksum,
+  type CapturePreparation,
+  type IngestedBatch,
+} from "../rerun-capture.js";
+import type { SuiteCaptureConfig } from "@investigator/execution";
+
+/**
+ * A confirmation batch (ADR-0031). Internal: `investigate confirm` passes it; there is no rerun
+ * flag for it, so a plain rerun can never vary a factor.
+ */
+export interface RerunConfirmation {
+  run: NonNullable<SuiteCaptureConfig["confirmation"]>;
+  configArtifactId: string;
+  configChecksum: string;
+}
 
 /**
  * `investigate rerun --repeat N` — run the authored Playwright suite N times and count the failures.
@@ -49,7 +70,8 @@ export interface SuiteCounts {
 export function summarizeReport(report: unknown): SuiteCounts {
   const stats = (report as { stats?: Record<string, unknown> } | null)?.stats;
   if (stats && typeof stats === "object") {
-    const n = (key: string): number => (typeof stats[key] === "number" ? (stats[key] as number) : 0);
+    const n = (key: string): number =>
+      typeof stats[key] === "number" ? (stats[key] as number) : 0;
     const passed = n("expected");
     const failed = n("unexpected");
     const flaky = n("flaky");
@@ -152,7 +174,9 @@ export function classifyRuns(report: unknown, specText: string): RunBreakdown {
           if (result.status !== "failed" && result.status !== "timedOut") continue;
 
           const errors = result.errors ?? [];
-          const line = errors.map((e) => e.location?.line).find((n): n is number => typeof n === "number") ?? null;
+          const line =
+            errors.map((e) => e.location?.line).find((n): n is number => typeof n === "number") ??
+            null;
           if (line !== null && line === checkLine) {
             reachedCheck++;
             failedAtCheck++;
@@ -160,7 +184,10 @@ export function classifyRuns(report: unknown, specText: string): RunBreakdown {
           }
 
           stoppedEarly++;
-          const text = errors.map((e) => String(e.message ?? "")).join("\n").replace(ANSI_COLOUR, "");
+          const text = errors
+            .map((e) => String(e.message ?? ""))
+            .join("\n")
+            .replace(ANSI_COLOUR, "");
           const waitingFor = /waiting for ([^\n]+)/.exec(text)?.[1]?.trim() ?? null;
           const key = `${line ?? "none"}|${waitingFor ?? ""}`;
           const existing = stops.get(key);
@@ -168,10 +195,13 @@ export function classifyRuns(report: unknown, specText: string): RunBreakdown {
             existing.runs++;
             continue;
           }
-          const context = (result.attachments ?? []).find((a) => /error-context/.test(a.name ?? "") && a.path);
+          const context = (result.attachments ?? []).find(
+            (a) => /error-context/.test(a.name ?? "") && a.path
+          );
           stops.set(key, {
             line,
-            statement: line !== null ? (lines[line - 1] ?? "").trim() : text.split("\n")[0]!.slice(0, 200),
+            statement:
+              line !== null ? (lines[line - 1] ?? "").trim() : text.split("\n")[0]!.slice(0, 200),
             waitingFor,
             runs: 1,
             ...(context?.path ? { errorContextPath: context.path } : {}),
@@ -299,7 +329,8 @@ function runNode(args: string[], cwd: string, env: NodeJS.ProcessEnv): Promise<n
 export async function rerunCommand(
   rt: Runtime,
   opts: RerunOptions,
-  globals: GlobalOptions
+  globals: GlobalOptions,
+  confirmation?: RerunConfirmation
 ): Promise<RerunResult> {
   const investigationId = globals.investigation;
   if (!investigationId) {
@@ -315,7 +346,11 @@ export async function rerunCommand(
     });
   }
 
-  const suiteDir = join(investigationDirs(rt.workspace, investigationId).root, "authoring", "suite");
+  const suiteDir = join(
+    investigationDirs(rt.workspace, investigationId).root,
+    "authoring",
+    "suite"
+  );
   if (!existsSync(join(suiteDir, "package.json"))) {
     fail(
       "INPUT_INVALID",
@@ -339,7 +374,13 @@ export async function rerunCommand(
       fail(
         "EXEC_ACTION_FAILED",
         `Could not install the suite's Playwright.${whyItWouldNotStart(suiteDir)}`,
-        { context: { suiteDir, pathLength: String(suiteDir.length), exitCode: String(installed ?? "null") } }
+        {
+          context: {
+            suiteDir,
+            pathLength: String(suiteDir.length),
+            exitCode: String(installed ?? "null"),
+          },
+        }
       );
     }
   }
@@ -356,11 +397,13 @@ export async function rerunCommand(
    * the runner's own reporter and are untouched. */
   const env: NodeJS.ProcessEnv = { ...process.env, NODE_NO_WARNINGS: "1" };
   const supplied: string[] = [];
+  const suppliedValues: string[] = [];
   for (const name of rt.credentials.names()) {
     const value = rt.credentials.revealSync(name);
     if (value !== undefined) {
       env[name] = value;
       supplied.push(name);
+      suppliedValues.push(value);
     }
   }
 
@@ -369,19 +412,52 @@ export async function rerunCommand(
   const reportPath = join(artifactsDir, "last-run.report.json");
   env["PLAYWRIGHT_JSON_OUTPUT_NAME"] = reportPath;
 
+  /* Evidence capture around every repeat (ADR-0029). Preparing it only writes a copy of the
+   * tests beside the suite; if it cannot be prepared the suite runs exactly as before. */
+  let capture: CapturePreparation;
+  try {
+    capture = prepareSuiteCapture({
+      suiteDir,
+      policyPath: resolvePolicyPath(rt.workspace, rt.config.storage.redactionPolicy),
+      credentialNames: supplied,
+      capture: captureSettings(rt.config),
+      ...(confirmation ? { confirmation: confirmation.run } : {}),
+    });
+  } catch (e) {
+    capture = { supported: false, reason: (e as Error).message };
+  }
+  // A confirmation cannot run without the fixture: it is what applies the factor.
+  if (confirmation && !capture.supported) {
+    fail("INPUT_INVALID", `This script cannot be run with a condition applied: ${capture.reason}`, {
+      context: { suiteDir },
+    });
+  }
+  if (capture.supported) Object.assign(env, capture.env);
+  else process.stderr.write(`(evidence capture unavailable: ${capture.reason})\n`);
+
   process.stderr.write(
     `▶️ Running the authored script ${repetitions}× (video per run, no retries)...\n`
   );
   const exitCode = await runNode(
-    [runnerCli, "test", `--repeat-each=${repetitions}`, "--reporter=list,json"],
+    [
+      runnerCli,
+      "test",
+      ...(capture.supported ? capture.configArgs : []),
+      `--repeat-each=${repetitions}`,
+      "--reporter=list,json",
+    ],
     suiteDir,
     env
   );
 
   if (exitCode === -1) {
-    fail("EXEC_ACTION_FAILED", `The Playwright runner could not start.${whyItWouldNotStart(suiteDir)}`, {
-      context: { suiteDir, pathLength: String(suiteDir.length) },
-    });
+    fail(
+      "EXEC_ACTION_FAILED",
+      `The Playwright runner could not start.${whyItWouldNotStart(suiteDir)}`,
+      {
+        context: { suiteDir, pathLength: String(suiteDir.length) },
+      }
+    );
   }
 
   let counts: SuiteCounts = { total: 0, passed: 0, failed: 0, flaky: 0, skipped: 0 };
@@ -399,7 +475,10 @@ export async function rerunCommand(
   }
 
   const specPath = join(suiteDir, "tests", "repro.spec.ts");
-  const breakdown = classifyRuns(parsedReport, existsSync(specPath) ? readFileSync(specPath, "utf8") : "");
+  const breakdown = classifyRuns(
+    parsedReport,
+    existsSync(specPath) ? readFileSync(specPath, "utf8") : ""
+  );
   const summary = reportRead ? describeBreakdown(breakdown) : describeFailures(counts);
   // Kept beside the report, so a later step can see where runs stopped without re-running them.
   if (reportRead) {
@@ -409,6 +488,44 @@ export async function rerunCommand(
       "utf8"
     );
   }
+
+  /* Every run's evidence, stored as a batch the Investigator reads. A batch that cannot be stored
+   * leaves the counts above exactly as they are and says why; it never fails the run. */
+  let batch: IngestedBatch | null = null;
+  let evidenceError: string | null = null;
+  if (reportRead) {
+    try {
+      batch = await ingestRerunBatch({
+        investigationId,
+        runs: classifyEachRun(
+          parsedReport,
+          existsSync(specPath) ? readFileSync(specPath, "utf8") : ""
+        ),
+        stagingDir: capture.supported ? capture.stagingDir : null,
+        suiteChecksum: suiteChecksum(suiteDir),
+        captureSupported: capture.supported,
+        ...(capture.supported ? {} : { captureReason: capture.reason }),
+        ...(confirmation
+          ? {
+              confirmation: {
+                configArtifactId: confirmation.configArtifactId,
+                configChecksum: confirmation.configChecksum,
+                schedule: confirmation.run.schedule,
+              },
+            }
+          : {}),
+        credentialValues: suppliedValues,
+        redactor: rt.redactor,
+        artifacts: rt.artifacts,
+        metadata: rt.metadata,
+        now: () => new Date().toISOString(),
+      });
+    } catch (e) {
+      evidenceError = (e as Error).message;
+      process.stderr.write(`(the runs' evidence could not be stored: ${evidenceError})\n`);
+    }
+  }
+  if (capture.supported) rmSync(join(suiteDir, CAPTURE_DIR), { recursive: true, force: true });
   return {
     json: {
       // A failing run is the POINT here: the command succeeded if the suite ran and was counted.
@@ -418,12 +535,26 @@ export async function rerunCommand(
       repetitions,
       ...breakdown,
       // Of the runs that reached the check. A run that stopped earlier says nothing about the bug.
-      failureRate: breakdown.reachedCheck > 0 ? breakdown.failedAtCheck / breakdown.reachedCheck : 0,
+      failureRate:
+        breakdown.reachedCheck > 0 ? breakdown.failedAtCheck / breakdown.reachedCheck : 0,
       summary,
       exitCode,
       reportPath,
       artifactsDir,
       credentialsSupplied: supplied,
+      capture: capture.supported
+        ? { supported: true }
+        : { supported: false, reason: capture.reason },
+      evidenceIngested: batch !== null,
+      ...(batch
+        ? {
+            batchId: batch.batchId,
+            runIds: batch.runs.map((r) => r.runId),
+            evidenceQualityRef: batch.evidenceQualityArtifactId,
+            batchRef: batch.batchArtifactId,
+          }
+        : {}),
+      ...(evidenceError ? { evidenceError } : {}),
       ...(reportRead
         ? {}
         : {
