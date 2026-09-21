@@ -1352,7 +1352,12 @@
         setBusy(false);
         const r = payload.result || {};
         if (r.ok !== true) {
-          showFailure(r, "Analysis failed");
+          // A model reading can fail on one bad citation; the evidence is still there, so the
+          // operator can ask again without re-running the script.
+          const failed = showFailure(r, "Analysis failed");
+          buttons(failed, [
+            { label: "Analyse again", kind: "primary", onClick: () => analyse(withAi, batch) },
+          ]);
           return;
         }
         renderAnalysis(r);

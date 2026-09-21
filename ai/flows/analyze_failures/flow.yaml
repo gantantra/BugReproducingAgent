@@ -5,7 +5,9 @@
 # The allowlist is what it may look at, and it is short on purpose.
 id: analyze_failures
 version: 1.1.0
-modelAlias: REASONING_MODEL
+# The fast model: the reasoning model's calls on a rerun batch of a dozen runs outlasted the
+# 120 s per-call limit. The reading is anchored in contrast_runs, which does the arithmetic.
+modelAlias: FAST_MODEL
 temperature: 0
 tools:
   - get_flow

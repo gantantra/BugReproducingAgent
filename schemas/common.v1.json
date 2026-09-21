@@ -26,7 +26,7 @@
     },
     "runId": {
       "type": "string",
-      "pattern": "^RUN-[0-9]{1,6}$"
+      "pattern": "^(RUN-[0-9]{1,6}|ARUN-[0-9]{3,6}-[0-9]{3,6})$"
     },
     "eventId": {
       "type": "string",

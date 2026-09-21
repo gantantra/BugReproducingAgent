@@ -61,6 +61,28 @@ describe("withholding a finding for incomplete evidence", () => {
     ]);
   });
 
+  it("also reads the runs a comparison reference cites", () => {
+    const viaComparison = {
+      level: "correlated",
+      statement: "a console claim cited through the contrast",
+      claimCategory: "console",
+      supportingEvidence: [
+        {
+          kind: "comparison",
+          comparisonId: "CMP-001",
+          runIdsA: ["ARUN-001-002"],
+          runIdsB: ["ARUN-001-001"],
+        } as never,
+      ],
+      confidence: 0.5,
+    };
+    const { withheld } = withholdByEvidence([viaComparison], quality);
+    expect(withheld).toHaveLength(1);
+    expect(withheld[0]!.incomplete).toEqual([
+      { runId: "ARUN-001-002", category: "console", status: "partial" },
+    ]);
+  });
+
   it("changes nothing for measured runs, which have no quality record", () => {
     const findings = [finding("console", ["RUN-001"])];
     expect(withholdByEvidence(findings, null)).toEqual({ kept: findings, withheld: [] });

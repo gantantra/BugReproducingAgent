@@ -71,6 +71,12 @@ export class Collector {
   private readonly notes: CollectorNote[] = [];
   private seq = 0;
   private requestUids = new WeakMap<Request, string>();
+  /**
+   * When each request started. Every later event of a request (response, finish, failure) is
+   * timed FROM this. Each used to stamp its own moment as the start as well, so every request
+   * duration came out as 0 ms and no timing difference between runs could ever be seen.
+   */
+  private requestStarts = new WeakMap<Request, number>();
   private requestCounter = 0;
   private detached = false;
   private readonly maxEvents: number;
@@ -266,6 +272,16 @@ export class Collector {
       return uid;
     };
 
+    /** The request's start, recorded the first time it is seen; `now` if it never was. */
+    const startOf = (req: Request, now: number): number => {
+      let start = this.requestStarts.get(req);
+      if (start === undefined) {
+        start = now;
+        this.requestStarts.set(req, start);
+      }
+      return start;
+    };
+
     const onRequest = (req: Request): void => {
       const t = this.now();
       const headers = req.headers();
@@ -283,7 +299,7 @@ export class Collector {
         headerNames,
         headerValues: values,
         requestBodyBytes: req.postDataBuffer()?.byteLength ?? null,
-        timing: { startDeltaMs: t.tDeltaMs },
+        timing: { startDeltaMs: startOf(req, t.tDeltaMs) },
       });
     };
 
@@ -305,7 +321,7 @@ export class Collector {
         fromServiceWorker: res.fromServiceWorker(),
         headerNames,
         headerValues: values,
-        timing: { startDeltaMs: t.tDeltaMs, responseStartDeltaMs: t.tDeltaMs },
+        timing: { startDeltaMs: startOf(req, t.tDeltaMs), responseStartDeltaMs: t.tDeltaMs },
       });
       void this.maybeCaptureBody(res, uidFor(req));
     };
@@ -318,7 +334,7 @@ export class Collector {
         requestUid: uidFor(req),
         method: req.method(),
         url: this.opts.redactor.redactUrlString("network.url", req.url()),
-        timing: { startDeltaMs: t.tDeltaMs, responseEndDeltaMs: t.tDeltaMs },
+        timing: { startDeltaMs: startOf(req, t.tDeltaMs), responseEndDeltaMs: t.tDeltaMs },
       });
     };
 
@@ -331,7 +347,7 @@ export class Collector {
         method: req.method(),
         url: this.opts.redactor.redactUrlString("network.url", req.url()),
         failureReason: req.failure()?.errorText ?? "unknown",
-        timing: { startDeltaMs: t.tDeltaMs },
+        timing: { startDeltaMs: startOf(req, t.tDeltaMs) },
       });
     };
 

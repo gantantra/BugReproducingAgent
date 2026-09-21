@@ -77,10 +77,18 @@ export function withholdByEvidence(
       kept.push(f);
       continue;
     }
+    // A run is cited directly (`runId`) or as one side of a comparison (`runIdsA`/`runIdsB`).
     const runIds = [
       ...new Set(
         (f.supportingEvidence ?? [])
-          .map((r) => r.runId)
+          .flatMap((r) => {
+            const ref = r as { runId?: unknown; runIdsA?: unknown; runIdsB?: unknown };
+            return [
+              ref.runId,
+              ...(Array.isArray(ref.runIdsA) ? ref.runIdsA : []),
+              ...(Array.isArray(ref.runIdsB) ? ref.runIdsB : []),
+            ];
+          })
           .filter((id): id is string => typeof id === "string")
       ),
     ];
@@ -126,11 +134,25 @@ interface AnalysisOutput {
  * citation resolve against a run the tools never surfaced would validate a claim the model had no
  * basis to make and could not have checked.
  */
+/** Resolve a JSON pointer in a plain value. */
+function resolvePointer(root: unknown, field: string): { found: boolean; value: unknown } {
+  let cur: unknown = root;
+  for (const part of field.replace(/^\//, "").split("/")) {
+    if (cur === null || typeof cur !== "object") return { found: false, value: undefined };
+    cur = (cur as Record<string, unknown>)[
+      decodeURIComponent(part.replace(/~1/g, "/").replace(/~0/g, "~"))
+    ];
+    if (cur === undefined) return { found: false, value: undefined };
+  }
+  return { found: true, value: cur };
+}
+
 function worldFor(
   investigationId: string,
   runs: readonly RunEvidenceFacts[],
-  comparisonId: string
+  contrast: ReturnType<typeof contrastRuns>
 ): ReferenceWorld {
+  const comparisonId = contrast.comparisonId;
   const byRun = new Map(runs.map((r) => [r.runId, r]));
   return {
     investigationExists: (id) => id === investigationId,
@@ -142,20 +164,40 @@ function worldFor(
     artifactExists: () => false,
     artifactKind: () => null,
     resolveField: (ref) => {
+      if (!ref.field) return { found: false, value: undefined };
+      // A field on a comparison reference points into THIS contrast -- the deterministic object
+      // the model was shown -- and must match it exactly, like any other citation.
+      if ((ref as { comparisonId?: unknown }).comparisonId === comparisonId) {
+        const inContrast = resolvePointer(contrast, ref.field);
+        if (inContrast.found) return inContrast;
+        // A run field on a comparison ("every failing run shows this") must hold, with one and
+        // the same value, in EVERY run of the cited side -- not in some of them.
+        const side = (ref as { runIdsA?: unknown }).runIdsA;
+        if (!Array.isArray(side) || side.length === 0) return { found: false, value: undefined };
+        let common: { found: boolean; value: unknown } | null = null;
+        for (const id of side) {
+          const run = typeof id === "string" ? byRun.get(id) : undefined;
+          if (!run) return { found: false, value: undefined };
+          const r = resolvePointer(
+            { features: run.features, outcome: run.outcome, actions: run.actions },
+            ref.field
+          );
+          if (!r.found) return { found: false, value: undefined };
+          if (common && JSON.stringify(common.value) !== JSON.stringify(r.value)) {
+            return { found: false, value: undefined };
+          }
+          common = r;
+        }
+        return common ?? { found: false, value: undefined };
+      }
       if (ref.statisticId === comparisonId || ref.runId === undefined)
         return { found: false, value: undefined };
       const run = byRun.get(ref.runId);
-      if (!run || !ref.field) return { found: false, value: undefined };
-      const parts = ref.field.replace(/^\//, "").split("/");
-      let cur: unknown = { features: run.features, outcome: run.outcome, actions: run.actions };
-      for (const part of parts) {
-        if (cur === null || typeof cur !== "object") return { found: false, value: undefined };
-        cur = (cur as Record<string, unknown>)[
-          decodeURIComponent(part.replace(/~1/g, "/").replace(/~0/g, "~"))
-        ];
-        if (cur === undefined) return { found: false, value: undefined };
-      }
-      return { found: true, value: cur };
+      if (!run) return { found: false, value: undefined };
+      return resolvePointer(
+        { features: run.features, outcome: run.outcome, actions: run.actions },
+        ref.field
+      );
     },
     unusableCategories: (runId) => {
       const run = byRun.get(runId);
@@ -274,7 +316,7 @@ export async function analyzeCommand(
     }
 
     const value = result.value;
-    const world = worldFor(investigationId, runs, contrast.comparisonId);
+    const world = worldFor(investigationId, runs, contrast);
 
     // Reference validation is applied HERE, outside the flow runner, because only this layer
     // knows which runs were actually shown to the model.
@@ -282,6 +324,19 @@ export async function analyzeCommand(
       const refs = [...(f.supportingEvidence ?? []), ...(f.contradictingEvidence ?? [])];
       for (const r of validateReferences(refs, investigationId, world, `/findings/${i}`).issues) {
         referenceIssues.push(`${r.path}: ${r.message}`);
+      }
+      // A comparison names its runs in lists the single-run check does not see; each must be a
+      // run the tools returned, or it is a fabrication like any other.
+      for (const [j, ref] of refs.entries()) {
+        const lists = ref as { runIdsA?: unknown; runIdsB?: unknown };
+        for (const id of [
+          ...(Array.isArray(lists.runIdsA) ? lists.runIdsA : []),
+          ...(Array.isArray(lists.runIdsB) ? lists.runIdsB : []),
+        ]) {
+          if (typeof id !== "string" || !world.runBelongsTo(id, investigationId)) {
+            referenceIssues.push(`/findings/${i}/${j}: run ${String(id)} was not in evidence`);
+          }
+        }
       }
       for (const r of validateClaimSupport(
         f.level,

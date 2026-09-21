@@ -62,6 +62,39 @@ Every finding needs `supportingEvidence`, and every reference must point at some
 actually returned. A reference to a run that was not in the tool results is a fabrication and the
 output is rejected.
 
+Cite with `comparison` references only: the tools here do not expose event or artifact ids, so a
+citation of any other kind cannot be checked and rejects the whole output. There is no `run` kind.
+A comparison reference cites the contrast itself, exactly in this shape:
+
+```json
+{
+  "kind": "comparison",
+  "comparisonId": "CMP-001",
+  "runIdsA": ["<failing run ids>"],
+  "runIdsB": ["<passing run ids>"]
+}
+```
+
+`comparisonId` is the one `contrast_runs` returned, and the run ids are copied from its
+`failingRunIds` and `passingRunIds` -- including ids like `ARUN-001-003`, which are runs of an
+authored script. A `statistic` reference needs `investigationId` and a `statisticId`; do not use
+it for a comparison.
+
+On a comparison reference, a `field` is looked up in the contrast `contrast_runs` returned (for
+example `/perfectDiscriminators/0`); failing that, as a run field (for example
+`/features/consoleCounts/byLevel/error`) that must hold the SAME value in every run of
+`runIdsA`. Cite a run field only when that is true of all of them.
+
+Cite the leaf, never an object: the contrast's entries are objects like
+`{ "value": "cf_95fc620b", "failing": 4, "passing": 0, "discriminating": true }`, so the value
+`"cf_95fc620b"` is at `/consoleFingerprints/0/value`, and `/consoleFingerprints/0` is the whole
+object. `expectedValue` is compared by strict equality with whatever the field holds.
+
+A `field`, when you give one, is a JSON Pointer: it starts with `/` and separates keys with `/`,
+for example `/features/consoleCounts/byLevel/error` -- never a dotted path like
+`features.consoleCounts`. A finding at `correlated` or below does not need a `field`; leave it out
+rather than guess its form.
+
 For any finding at `probable_trigger` or above, at least one reference must carry both a `field`
 and an `expectedValue`. "See RUN-17" establishes that RUN-17 exists; it does not establish that
 RUN-17 shows what you say it shows.
@@ -98,8 +131,12 @@ Produce the steps the evidence supports, and say how confidently it supports the
   it is the thing they will otherwise get wrong and conclude the bug is not real.
 - `notReproducedBy` is as valuable as the steps. A variation that was measured and did NOT
   trigger the defect narrows the search as much as a positive step does.
-- If the evidence supports only vague steps, say so with `confidence: low` and vague steps.
-  Inventing precision is the failure mode here.
+- If the evidence supports only vague steps, say so with `reproductionSteps.confidence: "low"`
+  and vague steps. Inventing precision is the failure mode here.
+
+Two different fields are both called `confidence`. `reproductionSteps.confidence` is a word
+(`"low"`, `"medium"`, `"high"`). Each finding's `confidence` is a NUMBER from 0 to 1, such as
+`0.6` -- never a word and never a quoted string.
 
 ## Open questions
 
@@ -120,7 +157,12 @@ failures cluster around slow responses, or around heavy page work -- propose up 
 - `{ "kind": "cpu", "rate": 2 | 4 | 6 }` when the page's own work, not the network, looks decisive.
 
 Give the `condition` in one sentence, the `rationale` from what the tools returned, and the
-`falsifier`: the result that would show you are wrong. You do not choose which failures count --
+`falsifier`: the result that would show you are wrong. Each item has exactly these four keys, with
+the factor as a nested object:
+
+````json
+{ "condition": "…", "factor": { "kind": "network", "profile": "slow-3g" }, "rationale": "…", "falsifier": "…" }
+``` You do not choose which failures count --
 the harness has already fixed that from the runs -- and you never write steps. Propose nothing when
 no factor is suggested by the evidence; an empty list is a correct answer.
 
@@ -132,3 +174,4 @@ An empty `findings` array with a clear `summary`, honest `evidenceGaps` and good
 is a correct and useful answer when the runs support nothing more. Reaching for a conclusion the
 evidence does not carry is the one failure that cannot be recovered from downstream, because
 everything after this point treats your output as the reading of the evidence.
+````

@@ -13,9 +13,9 @@ describe("bounding the end-of-run storage read", () => {
 
   it("gives up on a page that never answers, instead of waiting out another test timeout", async () => {
     const never = new Promise<number>(() => {});
-    const started = Date.now();
+    const started = performance.now();
     await expect(withinMs(50, never)).rejects.toThrow(/timed out after 50ms/);
-    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(performance.now() - started).toBeLessThan(1_000);
   });
 });
 

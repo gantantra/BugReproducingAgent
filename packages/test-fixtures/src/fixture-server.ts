@@ -22,6 +22,7 @@ export type FixtureKind =
   | "product-failing-intermittent"
   | "product-failing-counter"
   | "product-failing-when-slow"
+  | "product-failing-slow-intermittent"
   | "automation-failing"
   | "infrastructure-failing"
   | "straddling-requests"
@@ -189,6 +190,15 @@ const WHEN_SLOW_SCRIPT = `
   });
 `;
 
+/**
+ * The same page as "product-failing-when-slow", but the server itself is sometimes slow: whether
+ * a filter request takes `SLOW_RESPONSE_MS` -- past the page's patience -- is `intermittentFails`
+ * of its sequence number, about one in five. An intermittent bug whose cause is response time,
+ * visible in the evidence as the failing runs' slow filter request, and which a slowed network
+ * reproduces every time.
+ */
+export const SLOW_RESPONSE_MS = 700;
+
 /** Every `COUNTER_FAILS_EVERY`th filter request of a counter fixture returns no results. */
 export const COUNTER_FAILS_EVERY = 3;
 
@@ -210,6 +220,18 @@ function handler(kind: FixtureKind, state: { filters: number } = { filters: 0 })
         fails: intermittentFails(seed),
         targetRate: INTERMITTENT_TARGET_RATE,
       });
+      return;
+    }
+
+    if (url.pathname === "/api/filter" && kind === "product-failing-slow-intermittent") {
+      state.filters += 1;
+      // Seeded per request, not every Nth: how many times a script clicks must not decide which
+      // of its runs fail, or an authored script that clicks three times meets no slow response.
+      const slow = intermittentFails(state.filters);
+      setTimeout(
+        () => json(res, 200, { items: ["alpha", "beta", "gamma"] }),
+        slow ? SLOW_RESPONSE_MS : 0
+      );
       return;
     }
 
@@ -258,6 +280,7 @@ function handler(kind: FixtureKind, state: { filters: number } = { filters: 0 })
         send(res, 200, "text/html", SHELL(SEARCH_BODY, COUNTER_SCRIPT));
         return;
       case "product-failing-when-slow":
+      case "product-failing-slow-intermittent":
         send(res, 200, "text/html", SHELL(SEARCH_BODY, WHEN_SLOW_SCRIPT));
         return;
       case "automation-failing":
