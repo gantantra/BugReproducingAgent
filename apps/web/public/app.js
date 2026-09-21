@@ -1922,7 +1922,7 @@
         renderRunControls(
           r,
           `After ${MAX_REPAIRS} repairs it still stops before the final check when replayed: ${result.summary}. Running it many times now would mostly measure that, not the bug.`,
-          `Replaying the recorded script stopped before the final check: ${result.summary}`
+          replayStopReason(result)
         );
         return;
       }
@@ -1932,6 +1932,22 @@
       );
       void resumeAuthoring(null, true);
     });
+  }
+
+  /* What the replay's own runner recorded about where it stopped: the line, the statement, and
+   * what it was waiting for. A new plan needs that, not just the one-line summary. */
+  function replayStopReason(result) {
+    const lines = [
+      `Replaying the recorded script stopped before the final check: ${result.summary}`,
+    ];
+    for (const stop of (result.stops || []).slice(0, 3)) {
+      const where = stop.line ? `line ${stop.line}` : "an unknown line";
+      const waiting = stop.waitingFor ? `, waiting for ${stop.waitingFor}` : "";
+      lines.push(
+        `- ${where}: ${stop.statement || "(no statement)"}${waiting} (${stop.runs} run(s))`
+      );
+    }
+    return lines.join("\n");
   }
 
   /* A new plan from what stopped the session, through the same planning turn an answer uses.

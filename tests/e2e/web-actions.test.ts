@@ -137,6 +137,15 @@ describe("the planner's author calls reach the parser intact", () => {
   });
 });
 
+describe("author refuses flag combinations it cannot honour", () => {
+  it("refuses --repair without --resume instead of planning", async () => {
+    const { status, output } = await invoke(["author", "--investigation", "INV-001", "--repair"]);
+    expect(status).toBe(1);
+    expect(output).toContain("INPUT_INVALID");
+    expect(output).toContain("--resume");
+  });
+});
+
 describe("the UI cannot walk past a gate", () => {
   const ctx: BuildContext = { inWorkspace: (rel) => resolve(dir, rel) };
 

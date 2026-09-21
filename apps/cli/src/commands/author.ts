@@ -182,6 +182,17 @@ export async function authorCommand(
       context: { flag: "--investigation" },
     });
   }
+  // Checked with the other arguments, before anything else: without --resume this used to fall
+  // through to a planning turn, silently doing something other than what was asked.
+  if (opts.repair && !opts.resume) {
+    fail(
+      "INPUT_INVALID",
+      "`--repair` re-records a session's script, so it needs --resume <sessionId>",
+      {
+        context: { flag: "--repair" },
+      }
+    );
+  }
 
   const cli = findClaudeCli();
   if (!cli) {
@@ -369,15 +380,6 @@ export async function authorCommand(
    * it, the same rule as everywhere else: the model names a secret, it never learns one. */
   let repairPrompt = "";
   if (opts.repair) {
-    if (!opts.resume) {
-      fail(
-        "INPUT_INVALID",
-        "`--repair` re-records a session's script, so it needs --resume <sessionId>",
-        {
-          context: { flag: "--repair" },
-        }
-      );
-    }
     const suiteDirForRepair = join(sessionDir, "suite");
     const evidence = readRepairEvidence(suiteDirForRepair);
     if (!evidence || evidence.stoppedEarly === 0) {
