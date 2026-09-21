@@ -1328,9 +1328,13 @@
     return candidates[0] || null;
   }
 
-  async function analyse(withAi) {
+  async function analyse(withAi, batch) {
     setBusy(true);
-    const started = await act("analyze", { investigation: state.investigation, ai: withAi });
+    const started = await act("analyze", {
+      investigation: state.investigation,
+      ai: withAi,
+      ...(batch ? { batch } : {}),
+    });
     if (started.ok !== true || !started.jobId) {
       setBusy(false);
       showFailure(resultOf(started), "Could not start the analysis");
@@ -1357,8 +1361,11 @@
   }
 
   function renderAnalysis(r) {
+    setStep("rca");
+    const contrast = r.contrast || r.comparison || {};
     const c = card("What separates failing from passing");
-    const disc = (r.comparison && r.comparison.perfectDiscriminators) || r.perfectDiscriminators;
+    if (r.analysis && r.analysis.summary) c.appendChild(node("p", null, r.analysis.summary));
+    const disc = contrast.perfectDiscriminators || r.perfectDiscriminators;
     if (disc && disc.length) {
       const ul = node("ul", "plain");
       for (const d of disc) ul.appendChild(node("li", null, typeof d === "string" ? d : d.name));
@@ -1366,23 +1373,163 @@
     } else {
       c.appendChild(node("p", null, "No signal separated the two groups cleanly."));
     }
-    for (const caveat of (r.comparison && r.comparison.caveats) || r.caveats || []) {
+    for (const caveat of contrast.caveats || r.caveats || []) {
       const p = node("p", null, `Caveat: ${typeof caveat === "string" ? caveat : caveat.message}`);
       p.style.color = "var(--warn)";
       c.appendChild(p);
     }
-    if (r.findings && r.findings.length) {
+    const findings = (r.analysis && r.analysis.findings) || r.findings || [];
+    const withheld = r.withheldFindings || [];
+    if (findings.length || withheld.length) {
       const f = card("Findings");
-      for (const finding of r.findings) {
+      for (const finding of findings) {
+        const refs = finding.supportingEvidence || finding.evidence || [];
         kv(f, [
-          ["claim", finding.claim || finding.title],
+          ["claim", finding.statement || finding.claim || finding.title],
           ["level", finding.level],
-          ["evidence", (finding.evidence || []).length + " reference(s)"],
+          ["evidence", refs.length + " reference(s)"],
         ]);
+      }
+      // Shown only for a finding the evidence could not carry, as one plain line (ADR-0032).
+      for (const w of withheld) {
+        const cats = [...new Set((w.incomplete || []).map((i) => i.category))].join(", ");
+        const runs = new Set((w.incomplete || []).map((i) => i.runId)).size;
+        const p = node(
+          "p",
+          "hint",
+          `Held back: “${w.finding.statement}” rests on ${cats} evidence that was incomplete in ${runs} of the runs it cites.`
+        );
+        f.appendChild(p);
       }
     }
     state.done.add("rca");
     renderRail();
+    const proposals = (r.analysis && r.analysis.proposedConfirmations) || [];
+    if (r.source && r.source.kind === "rerun-batch" && proposals.length) {
+      void seeCondition(r.source.batchId, proposals[0]);
+    }
+  }
+
+  function describeFactor(f) {
+    if (!f) return "the proposed change";
+    return f.kind === "network"
+      ? `the network slowed to ${f.profile === "slow-3g" ? "slow 3G" : "fast 3G"}`
+      : `the CPU slowed ${f.rate}×`;
+  }
+
+  /* See condition: the one condition worth testing, what would disprove it, and exactly what a
+   * Confirm will run. The experiment is built by the CLI, and the Confirm click carries the
+   * checksum of those bytes, so what runs is what was shown. */
+  async function seeCondition(batchId, proposal) {
+    const preview = await act("confirm", {
+      investigation: state.investigation,
+      condition: 1,
+      batch: batchId,
+    });
+    const job = preview.jobId ? await waitForJob(preview.jobId) : resultOf(preview);
+    const c = card("See condition");
+    c.appendChild(node("p", null, proposal.condition));
+    c.appendChild(node("p", "hint", `Disproved if: ${proposal.falsifier}`));
+    if (!job || job.ok !== true || !job.checksum) {
+      c.appendChild(
+        node("p", null, `It cannot be confirmed here: ${(job && job.message) || "no experiment"}.`)
+      );
+      return;
+    }
+    const perArm = job.config.perArm;
+    c.appendChild(
+      node(
+        "p",
+        null,
+        `Confirm runs the script ${perArm} times with ${describeFactor(job.config.factor)} and ${perArm} times without, interleaved, and counts only failures that look like the ones already seen.`
+      )
+    );
+    buttons(c, [
+      {
+        label: "Confirm",
+        kind: "primary",
+        onClick: () => confirmCondition(batchId, job.checksum),
+      },
+    ]);
+  }
+
+  async function waitForJob(jobId) {
+    let result = null;
+    await streamJob(
+      jobId,
+      () => {},
+      (payload) => {
+        result = payload.result || null;
+      }
+    );
+    return result;
+  }
+
+  async function confirmCondition(batchId, checksum) {
+    setBusy(true);
+    const started = await act("confirm", {
+      investigation: state.investigation,
+      condition: 1,
+      batch: batchId,
+      checksum,
+    });
+    if (started.ok !== true || !started.jobId) {
+      setBusy(false);
+      showFailure(resultOf(started), "Could not start the confirmation");
+      return;
+    }
+    const c = card("Confirming");
+    const log = node("div", "log");
+    c.appendChild(log);
+    await streamJob(
+      started.jobId,
+      (line) => appendLogLine(log, line),
+      (payload) => {
+        setBusy(false);
+        const r = payload.result || {};
+        if (r.ok !== true) {
+          showFailure(r, "The confirmation did not finish");
+          return;
+        }
+        renderConfirmation(r);
+      }
+    );
+  }
+
+  /* View result: the verdict and plain counts. No statistics are shown; they were frozen with the
+   * experiment and decided the verdict. */
+  function renderConfirmation(r) {
+    const d = r.decision || {};
+    const confirmed = d.verdict === "high_confidence_trigger";
+    const c = card(confirmed ? "Confirmed" : "Not confirmed", !confirmed);
+    c.appendChild(node("p", null, r.condition));
+    kv(c, [
+      [`with ${describeFactor(r.factor)}`, `${r.variant.matched} of ${r.variant.reached} failed`],
+      ["without it", `${r.control.matched} of ${r.control.reached} failed`],
+    ]);
+    const other = (r.variant.otherFailures || 0) + (r.control.otherFailures || 0);
+    if (other) {
+      c.appendChild(
+        node(
+          "p",
+          "hint",
+          `${other} other failure(s) at the final check did not look like this bug and were not counted.`
+        )
+      );
+    }
+    if (r.factorNotApplied) {
+      c.appendChild(
+        node(
+          "p",
+          "hint",
+          `${r.factorNotApplied} run(s) where the change did not take were not counted.`
+        )
+      );
+    }
+    if (d.reason) c.appendChild(node("p", null, `Why not: ${d.reason}.`));
+    if (r.rootCauseHypothesis) {
+      c.appendChild(node("p", null, `Likely cause: ${r.rootCauseHypothesis.mechanism}`));
+    }
   }
 
   // -------------------------------------------------------------------------------- composer
@@ -2116,7 +2263,14 @@ ${why}`,
       )
     );
     buttons(c, [
-      { label: "Run it 30× more", kind: "primary", onClick: () => runSuite(30) },
+      ...(r.batchId
+        ? [{ label: "Analyse", kind: "primary", onClick: () => analyse(true, r.batchId) }]
+        : []),
+      {
+        label: "Run it 30× more",
+        ...(r.batchId ? {} : { kind: "primary" }),
+        onClick: () => runSuite(30),
+      },
       { label: "Run it 100× more", onClick: () => runSuite(100) },
     ]);
   }

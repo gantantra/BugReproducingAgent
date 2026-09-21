@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://investigator.local/schemas/evidence-quality.v1.json",
+  "title": "EvidenceQuality",
+  "description": "Which evidence was complete across one batch of authored-suite runs, summarised from each run's CaptureStatus, and the fixed table of evidence categories each kind of claim rests on. Internal: never blocks a batch, never shown by default. A finding is withheld only when a category ITS claim needs was not complete in a run it cites (ADR-0032).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "batchId", "runCount", "categories", "runs", "requirements"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "batchId": { "type": "string", "pattern": "^BATCH-\\d{3,}$" },
+    "runCount": { "type": "integer", "minimum": 0 },
+    "categories": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["runs", "reasons"],
+        "properties": {
+          "runs": {
+            "type": "object",
+            "additionalProperties": { "type": "integer", "minimum": 0 }
+          },
+          "reasons": {
+            "type": "object",
+            "additionalProperties": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["runId", "statuses"],
+        "properties": {
+          "runId": { "type": "string" },
+          "statuses": {
+            "type": "object",
+            "additionalProperties": {
+              "enum": [
+                "complete",
+                "partial",
+                "missing",
+                "redacted",
+                "unsupported",
+                "corrupted",
+                "disabled"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "requirements": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" },
+        "minItems": 1
+      }
+    }
+  }
+}

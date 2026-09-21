@@ -15,3 +15,6 @@ export * from "./timeline.js";
 export * from "./extract.js";
 export * from "./outcome.js";
 export * from "./plane.js";
+export * from "./evidence-quality.js";
+export * from "./signature.js";
+export * from "./statistics.js";

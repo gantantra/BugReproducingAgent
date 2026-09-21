@@ -9,9 +9,22 @@ import {
   type ReferenceWorld,
 } from "@investigator/ai-gateway";
 import { contrastRuns, type RunEvidenceFacts } from "@investigator/tools";
+import {
+  CLAIM_EVIDENCE_REQUIREMENTS,
+  deriveTargetSignature,
+  incompleteEvidenceFor,
+  type ClaimCategory,
+  type EvidenceQuality,
+  type TargetSignature,
+} from "@investigator/evidence";
 import type { GlobalOptions, Runtime } from "../runtime.js";
 import { openAiSession } from "../ai.js";
-import { buildAnalysisRegistry, readFlowFacts, readRunEvidence } from "../tool-registry.js";
+import {
+  buildAnalysisRegistry,
+  readBatchEvidence,
+  readFlowFacts,
+  readRunEvidence,
+} from "../tool-registry.js";
 
 /**
  * `investigate analyze` — read the runs that were measured and say what they show.
@@ -33,6 +46,52 @@ export interface AnalyzeOptions {
   ai?: boolean;
   replay?: string;
   json?: boolean;
+  /** A rerun batch to analyse instead of the measured runs (ADR-0029). */
+  batch?: string;
+}
+
+/** What was analysed: the measured path's runs, or one batch of an authored suite's runs. */
+export type AnalysisSource = { kind: "measured" } | { kind: "rerun-batch"; batchId: string };
+
+export interface WithheldFinding {
+  finding: AnalysisFinding;
+  reason: "EVIDENCE_INCOMPLETE_FOR_CLAIM";
+  incomplete: Array<{ runId: string; category: string; status: string }>;
+}
+
+/**
+ * Withhold each finding whose claim needs evidence that was incomplete in a run it cites -- that
+ * finding alone (ADR-0032). A finding with no claim category, or one whose evidence was complete,
+ * is untouched, whatever else in the batch was incomplete.
+ */
+export function withholdByEvidence(
+  findings: readonly AnalysisFinding[],
+  quality: EvidenceQuality | null
+): { kept: AnalysisFinding[]; withheld: WithheldFinding[] } {
+  if (!quality) return { kept: [...findings], withheld: [] };
+  const kept: AnalysisFinding[] = [];
+  const withheld: WithheldFinding[] = [];
+  for (const f of findings) {
+    const claim = f.claimCategory;
+    if (!claim || !(claim in CLAIM_EVIDENCE_REQUIREMENTS)) {
+      kept.push(f);
+      continue;
+    }
+    const runIds = [
+      ...new Set(
+        (f.supportingEvidence ?? [])
+          .map((r) => r.runId)
+          .filter((id): id is string => typeof id === "string")
+      ),
+    ];
+    const incomplete = incompleteEvidenceFor(quality, claim as ClaimCategory, runIds);
+    if (incomplete.length > 0) {
+      withheld.push({ finding: f, reason: "EVIDENCE_INCOMPLETE_FOR_CLAIM", incomplete });
+    } else {
+      kept.push(f);
+    }
+  }
+  return { kept, withheld };
 }
 
 interface AnalysisFinding {
@@ -125,12 +184,44 @@ export async function analyzeCommand(
     });
   }
 
-  const runs = await readRunEvidence(rt, investigationId);
-  if (runs.length === 0) {
-    fail("INPUT_INVALID", "No runs with normalized evidence. Run experiments before analysing.", {
-      context: { investigationId },
-    });
+  /* The measured runs, as before. A named batch, or -- only when there are no measured runs,
+   * which used to be a refusal -- the latest rerun batch of the authored suite. */
+  let runs: RunEvidenceFacts[];
+  let source: AnalysisSource = { kind: "measured" };
+  let quality: EvidenceQuality | null = null;
+  if (opts.batch) {
+    const batch = await readBatchEvidence(rt, investigationId, opts.batch);
+    if (!batch) {
+      fail("GATE_REFERENCE_UNKNOWN", `Unknown rerun batch ${opts.batch}`, {
+        context: { investigationId, batch: opts.batch },
+      });
+    }
+    runs = batch.runs;
+    source = { kind: "rerun-batch", batchId: batch.batchId };
+    quality = batch.quality;
+  } else {
+    runs = await readRunEvidence(rt, investigationId);
+    if (runs.length === 0) {
+      const batch = await readBatchEvidence(rt, investigationId);
+      if (batch) {
+        runs = batch.runs;
+        source = { kind: "rerun-batch", batchId: batch.batchId };
+        quality = batch.quality;
+      }
+    }
   }
+  if (runs.length === 0) {
+    fail(
+      "INPUT_INVALID",
+      "No runs with normalized evidence. Run experiments, or run the authored script, before analysing.",
+      { context: { investigationId } }
+    );
+  }
+
+  // Which failure a confirmation would count, fixed from the runs before any model reads them.
+  const targetSignature: TargetSignature | null =
+    source.kind === "rerun-batch" ? deriveTargetSignature(runs) : null;
+  let withheld: WithheldFinding[] = [];
 
   // Deterministic first, and unconditional. This is the answer that does not need a provider.
   const contrast = contrastRuns(runs);
@@ -220,14 +311,22 @@ export async function analyzeCommand(
       );
     }
 
-    analysis = value;
+    const gated = withholdByEvidence(value.findings ?? [], quality);
+    withheld = gated.withheld;
+    analysis = { ...value, findings: gated.kept };
     aiRequestIds = result.record.aiRequestIds;
 
     const ref = await rt.artifacts.put({
       investigationId,
       kind: "report",
       filename: `${investigationId}-analysis.json`,
-      bytes: canonicalJson({ ...value, investigationId, comparisonId: contrast.comparisonId }),
+      bytes: canonicalJson({
+        ...analysis,
+        investigationId,
+        comparisonId: contrast.comparisonId,
+        source,
+        ...(withheld.length ? { withheldFindings: withheld } : {}),
+      }),
       contentType: "application/json",
       redactionApplied: rt.redactor.policyStamp(),
     });
@@ -258,8 +357,11 @@ export async function analyzeCommand(
       ok: true,
       investigationId,
       runsAnalysed: runs.length,
+      source,
+      ...(targetSignature ? { targetSignature } : {}),
       contrast,
       analysis,
+      ...(withheld.length ? { withheldFindings: withheld } : {}),
       aiRequestIds,
     },
     human: () => renderHuman(investigationId, runs, contrast, analysis),

@@ -39,6 +39,8 @@ const PARAMS: Record<string, unknown> = {
   approver: "tester",
   title: "A title",
   ai: false,
+  batch: "BATCH-001",
+  condition: 1,
 };
 
 let dir: string;

@@ -276,7 +276,7 @@ const TRANSPORT_ERROR =
   /net::ERR_|ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ERR_EMPTY_RESPONSE|ERR_CONNECTION|ERR_SOCKET|ERR_ADDRESS|ERR_NAME_NOT_RESOLVED|socket hang up|Connection closed/i;
 
 /** FIXED in-page storage reader. Literal source, no parameters. */
-const STORAGE_READER = (): {
+export const STORAGE_READER = (): {
   local: Array<{ k: string; v: string }>;
   session: Array<{ k: string; v: string }>;
 } => {

@@ -224,7 +224,11 @@
         "reproducer-package",
         "report",
         "reset-script-output",
-        "storage-state"
+        "storage-state",
+        "rerun-batch",
+        "evidence-quality",
+        "confirmation-config",
+        "confirmation-result"
       ]
     },
     "redactionStamp": {

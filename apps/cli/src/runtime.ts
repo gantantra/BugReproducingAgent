@@ -54,7 +54,7 @@ export interface Runtime {
 }
 
 /** Resolve the redaction policy path, preferring the workspace copy over the repo default. */
-function resolvePolicyPath(ws: Workspace, configured: string): string {
+export function resolvePolicyPath(ws: Workspace, configured: string): string {
   const candidates = [
     resolve(ws.root, configured),
     resolve(ws.root, "..", configured),

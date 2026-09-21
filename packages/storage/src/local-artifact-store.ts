@@ -49,6 +49,10 @@ const KIND_PREFIX: Record<ArtifactKind, string> = {
   report: "RPTOUT",
   "reset-script-output": "RESET",
   "storage-state": "STATE",
+  "rerun-batch": "BATCH",
+  "evidence-quality": "EVQUALITY",
+  "confirmation-config": "CONFIRMCFG",
+  "confirmation-result": "CONFIRMED",
 };
 
 const EXTENSION: Partial<Record<ArtifactKind, string>> = {
@@ -71,6 +75,10 @@ const EXTENSION: Partial<Record<ArtifactKind, string>> = {
   report: "md",
   "reset-script-output": "txt",
   "storage-state": "json",
+  "rerun-batch": "json",
+  "evidence-quality": "json",
+  "confirmation-config": "json",
+  "confirmation-result": "json",
 };
 
 export interface LocalArtifactStoreOptions {

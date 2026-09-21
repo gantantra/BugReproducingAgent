@@ -375,3 +375,51 @@ describe("approving the plan", () => {
     ]);
   });
 });
+
+describe("analysing a rerun batch and confirming a condition", () => {
+  it("passes a batch to analyse, and refuses one that is not a batch id", () => {
+    expect(build("analyze", { investigation: "INV-001", ai: true, batch: "BATCH-002" })).toEqual([
+      "analyze",
+      "--investigation",
+      "INV-001",
+      "--ai",
+      "--batch",
+      "BATCH-002",
+    ]);
+    for (const bad of ["RUN-001", "BATCH-1", "BATCH-001 --ai", "../BATCH-001"]) {
+      expect(() => build("analyze", { investigation: "INV-001", batch: bad }), bad).toThrow(
+        ParamError
+      );
+    }
+  });
+
+  it("previews a condition without a checksum, and runs it only with one", () => {
+    expect(build("confirm", { investigation: "INV-001", condition: 1 })).toEqual([
+      "confirm",
+      "--investigation",
+      "INV-001",
+      "--condition",
+      "1",
+    ]);
+    const checksum = `sha256:${"c".repeat(64)}`;
+    expect(build("confirm", { investigation: "INV-001", condition: 1, checksum })).toContain(
+      checksum
+    );
+  });
+
+  it("refuses a condition out of range and a malformed checksum", () => {
+    for (const condition of [0, 4, -1, 1.5, "one"]) {
+      expect(
+        () => build("confirm", { investigation: "INV-001", condition }),
+        String(condition)
+      ).toThrow(ParamError);
+    }
+    expect(() =>
+      build("confirm", { investigation: "INV-001", condition: 1, checksum: "a".repeat(64) })
+    ).toThrow(ParamError);
+  });
+
+  it("streams, because a confirmation runs the script many times", () => {
+    expect(findAction("confirm")?.streams).toBe(true);
+  });
+});

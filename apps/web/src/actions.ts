@@ -77,6 +77,7 @@ const ARTIFACT_KIND = /^[a-z0-9-]{1,40}$/;
 const SUBJECT = /^[A-Za-z0-9:_-]{1,100}$/;
 /** A Claude CLI session id, as returned by a previous authoring turn. */
 const SESSION_ID = /^[0-9a-fA-F-]{8,64}$/;
+const BATCH_ID = /^BATCH-\d{3,6}$/;
 /**
  * The operator's answer to a question the authoring session asked.
  *
@@ -265,6 +266,22 @@ export const ACTIONS: readonly ActionDef[] = [
   def("analyze", "contrast failing against passing runs", true, (p) => {
     const argv = ["analyze", ...inv(p)];
     if (flag(p, "ai")) argv.push("--ai");
+    const batch = optionalStr(p, "batch", BATCH_ID, "a rerun batch id like BATCH-001");
+    if (batch) argv.push("--batch", batch);
+    return argv;
+  }),
+
+  /*
+   * Confirm -> View result. Without a checksum it only builds the experiment the condition card
+   * shows; with one -- the checksum of exactly those bytes -- it runs it. Nothing here chooses
+   * what runs: the CLI rebuilds the config and refuses a checksum that does not match it.
+   */
+  def("confirm", "confirm a proposed condition by running it against a control", true, (p) => {
+    const argv = ["confirm", ...inv(p), "--condition", String(int(p, "condition", 1, 3))];
+    const checksum = optionalStr(p, "checksum", PROPOSAL_CHECKSUM, "a sha256: checksum");
+    if (checksum) argv.push("--checksum", checksum);
+    const batch = optionalStr(p, "batch", BATCH_ID, "a rerun batch id like BATCH-001");
+    if (batch) argv.push("--batch", batch);
     return argv;
   }),
 

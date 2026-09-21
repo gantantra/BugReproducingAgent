@@ -22,6 +22,7 @@ import { retentionApplyCommand } from "./commands/retention.js";
 import { analyzeCommand } from "./commands/analyze.js";
 import { authorCommand } from "./commands/author.js";
 import { rerunCommand } from "./commands/rerun.js";
+import { confirmCommand } from "./commands/confirm.js";
 import { loadEnvFile } from "./env-file.js";
 import { loadDeepSeekCredentials } from "./deepseek-credentials.js";
 
@@ -313,6 +314,23 @@ program
   });
 
 program
+  .command("confirm")
+  .description(
+    "confirm a condition the analysis proposed: without --checksum, show the experiment; with it, run variant and control interleaved and count only matching failures"
+  )
+  .requiredOption("--condition <n>", "which proposed condition, from 1", (v) =>
+    Number.parseInt(v, 10)
+  )
+  .option("--checksum <sha256>", "the checksum of the experiment you were shown; runs it")
+  .option("--per-arm <n>", "runs with the change, and without it (10-100)", (v) =>
+    Number.parseInt(v, 10)
+  )
+  .option("--batch <id>", "confirm from the analysis of this rerun batch rather than the latest")
+  .action(async function (this: Command) {
+    await dispatch(this, (rt, g) => confirmCommand(rt, this.opts(), g));
+  });
+
+program
   .command("plan")
   .description("render the gate 1 proposal a human decides on (--ai drafts it with DeepSeek)")
   .option("--from <file>", "proposal input file")
@@ -330,6 +348,10 @@ program
   )
   .option("--ai", "add a DeepSeek reading: findings, root-cause hypotheses, reproduction steps")
   .option("--replay <dir>", "replay recorded provider responses instead of calling one")
+  .option(
+    "--batch <id>",
+    "analyse one rerun batch of the authored script (BATCH-001) instead of the measured runs"
+  )
   .action(async function (this: Command) {
     const g = globalsFrom(this);
     const logger = new Logger({ json: g.json === true });

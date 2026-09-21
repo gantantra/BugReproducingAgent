@@ -17,7 +17,9 @@ in reading that contrast, not in replacing it. An explanation that would be iden
 not you had called the tool is an explanation you made up.
 
 Then call `get_failure_evidence` for the per-run detail you need to cite, and `get_flow` if you
-need to know what the runs were trying to do.
+need to know what the runs were trying to do. `get_failure_evidence` returns every run in one call
+(pass `outcome` to narrow it to one group): do not call it once per run. A batch can hold dozens
+of runs, and the tool budget is counted in calls.
 
 ## The measurement is not yours to make
 
@@ -106,6 +108,21 @@ settle it.
 
 This is not hedging. An investigation that reports only what it concluded, and never what it
 could not, gives the reader no way to judge how much weight the conclusion carries.
+
+## Proposed confirmations
+
+When the runs are an authored script's rerun batch and the contrast suggests a condition -- the
+failures cluster around slow responses, or around heavy page work -- propose up to three
+`proposedConfirmations`. Each names ONE factor to vary between otherwise identical runs:
+
+- `{ "kind": "network", "profile": "slow-3g" | "fast-3g" }` when timing or ordering of requests
+  separates the groups;
+- `{ "kind": "cpu", "rate": 2 | 4 | 6 }` when the page's own work, not the network, looks decisive.
+
+Give the `condition` in one sentence, the `rationale` from what the tools returned, and the
+`falsifier`: the result that would show you are wrong. You do not choose which failures count --
+the harness has already fixed that from the runs -- and you never write steps. Propose nothing when
+no factor is suggested by the evidence; an empty list is a correct answer.
 
 ## Output
 

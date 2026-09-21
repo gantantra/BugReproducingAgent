@@ -60,9 +60,24 @@ as far as the bug from runs that reached it, and counts only the second kind.
           │              was waiting for and what the page showed; it records the flow again.
           │              At most twice, then back to ⑤
           ▼
-   ⑦ run it N× ───────► you pick the count; the agent runs it and reports
-                           reached the check · failed at the check (the bug) · stopped early
+   ⑦ run it N× ───────► you pick the count; the agent runs it, records every run's evidence,
+          │              and reports reached the check · failed at the check · stopped early
+          ▼
+   ⑧ analyse ─────────► what separates failing runs from passing ones, and the one condition
+          │              worth testing (for example: "it fails when the network is slow")
+          ▼
+   ⑨ confirm ─────────► one click runs the script with that condition and without it, interleaved,
+                         and counts only failures that look like the ones already seen
 ```
+
+The same flow as four agents:
+
+| Agent            | Steps                | What it is                                                                              |
+| ---------------- | -------------------- | --------------------------------------------------------------------------------------- |
+| **Planner**      | ①–②                  | the authoring model with no browser; asks until you press **That's all I know**         |
+| **Reproducer**   | ③–⑥                  | the authoring model driving Playwright MCP; goes back to the Planner when it gets stuck |
+| **Executor**     | ⑦, and the runs of ⑨ | deterministic: the script, N times, with every run's evidence recorded                  |
+| **Investigator** | ⑧–⑨                  | a deterministic contrast, a DeepSeek reading of it, and a measured confirmation         |
 
 Alongside the suite, a session also writes the same flow as an **experiment proposal**. That feeds
 the measured path, where a human approves a checksum-bound proposal before anything runs. Runs
@@ -229,6 +244,33 @@ The results card splits the runs:
 
 A failure at the final check is never sent to repair, because it may be the bug itself.
 
+### Analyse, see the condition, confirm
+
+After a run, the results card offers **Analyse**. It works on that batch's recorded evidence:
+
+- the contrast between failing and passing runs
+- a DeepSeek reading of that contrast
+- at most one plain line for any finding held back because the evidence it rests on was incomplete
+
+If the reading names a condition worth testing, a **See condition** card follows. It shows:
+
+- the condition
+- what would disprove it
+- exactly what **Confirm** will run: the script 12 times with the condition (for example the network
+  slowed to slow 3G) and 12 times without, interleaved
+
+Only failures that match the ones already seen are counted.
+
+**Confirm** is one click. The result card says **Confirmed** or **Not confirmed**, with:
+
+- the plain counts for each arm
+- other failures, which are shown but not counted
+- the reason when not confirmed
+- the likely cause when confirmed
+
+There is no second approval step and no statistics to set. The settings are frozen into the
+experiment the click confirms.
+
 ### Sessions
 
 Each browser tab gets its own session and its own folder. A reload resumes the conversation, and
@@ -356,6 +398,64 @@ investigate rerun --investigation INV-001 --repeat 30
 
 It reports `reachedCheck`, `failedAtCheck`, `stoppedEarly` and
 `failureRate = failedAtCheck / reachedCheck`.
+
+#### Every run's evidence
+
+Each repeat is also recorded by the same collector the measured path uses:
+
+- console messages and page errors
+- every request and response, with bodies when `execution.capture.responseBodyMaxBytes` allows
+- navigations
+- local storage, session storage and cookies at the end of the run
+
+Collection-time redaction runs before anything is buffered. It applies the workspace's redaction
+policy, and every stored credential value is masked by identity.
+
+The suite itself is not changed:
+
+- For the run, `rerun` writes a copy of its tests into `suite/.reproagent/`. The only change in the
+  copy is the `@playwright/test` import line, which becomes a capture fixture, so line numbers are
+  identical.
+- It runs that copy with the suite's own config, then deletes the folder.
+- If a spec loads Playwright some other way, the suite runs exactly as before, and the result
+  says `capture: { supported: false, reason }`.
+
+The runs are stored as a batch in the evidence store:
+
+- per run, the raw event log and the normalized evidence
+- the recording, stamped `video-raw-unredactable` like every video
+- a `rerun-batch` record listing each run's classification and outcome
+- an `evidence-quality` record, which is internal (see below)
+
+Before anything is written, stored credential values are masked again in the raw logs. Authored
+runs have ids like `ARUN-001-003` and no row in the measured path's `runs` table, so the 100-run
+gate and `investigate analyze` of measured runs are unaffected.
+
+Outcomes come from the existing six rules:
+
+| Run                          | Outcome                 |
+| ---------------------------- | ----------------------- |
+| failed at the final check    | `PRODUCT_FAILED`        |
+| stopped earlier              | `AUTOMATION_FAILED`     |
+| reached the check and passed | `VALID_COMPLETED`       |
+| failed before any step       | `INFRASTRUCTURE_FAILED` |
+
+The script's own statements are not seen as actions, so `actions` is `unsupported` for these runs
+rather than looking complete.
+
+`rerun --json` keeps every field it had. It adds:
+
+- `capture`
+- `evidenceIngested`
+- when stored: `batchId`, `runIds`, `evidenceQualityRef` and `batchRef`
+- `evidenceError` when the batch could not be stored. That never fails the run, and the counts
+  stand.
+
+**Evidence quality.** Each batch has a summary of which evidence categories were complete in which
+runs, and a fixed table of what each kind of claim needs. For example, a `console` claim
+needs `console`, and a `network` claim needs `networkMetadata`. It never blocks a batch and is
+not shown. The Investigator uses it to withhold a finding only when the evidence that finding needs
+was incomplete in a run it cites.
 
 ```bash
 investigate author --investigation INV-001 --resume <sessionId> --repair
@@ -489,11 +589,12 @@ and prompt bytes produced an interpretation. It is tamper-evident, not tamper-pr
 | `init`                                                                    | Create a workspace: database, `config.yaml`, redaction policy, directories                     | no        |
 | `intake`                                                                  | Open an investigation from a report file                                                       | `--ai`    |
 | `author`                                                                  | Write the plan; `--approve-plan` drives the browser; `--resume` answers; `--repair` re-records | authoring |
-| `rerun`                                                                   | Run the authored suite `--repeat N` times (1–500) and break down where runs ended              | no        |
+| `rerun`                                                                   | Run the authored suite `--repeat N` times (1–500), break down where runs ended, store evidence | no        |
+| `confirm`                                                                 | Show (no `--checksum`) or run (with it) a proposed condition against a control                 | no        |
 | `plan`                                                                    | Render the gate-1 proposal a human decides on                                                  | `--ai`    |
 | `approve <gate>`                                                          | Record a checksum-bound approval; `--scaffold` writes a blank one                              | no        |
 | `run`                                                                     | Execute approved experiments. Never calls a provider                                           | no        |
-| `analyze`                                                                 | Report what separates failing runs from passing ones                                           | `--ai`    |
+| `analyze`                                                                 | Report what separates failing runs from passing ones; `--batch <id>` reads a rerun batch       | `--ai`    |
 | `suite generate`                                                          | Emit a standalone Playwright spec for approved experiments                                     | no        |
 | `status`                                                                  | Gate states, run outcomes, queue and lineage health                                            | no        |
 | `show <what>`                                                             | Print a rendered proposal or an artifact                                                       | no        |
@@ -509,6 +610,12 @@ Other `author` options: `--headed`, `--max-turns <n>` (default 60), `--env <name
 (planning: write the final plan without asking again), `--plan-checksum <sha256:…>` (with
 `--approve-plan`: refuse unless the plan on disk is the one read). In the planning phase, `--answer`
 revises the plan.
+
+`confirm` options: `--condition <n>`, the proposed condition from 1; `--checksum <sha256:…>`, the
+checksum of the experiment shown, which runs it; `--per-arm <n>`, 10–100, default 12; `--batch <id>`.
+Without `--checksum` it prints the experiment and its checksum and runs nothing. With a checksum
+that no longer matches, it refuses with `GATE_CHECKSUM_MISMATCH` (exit 3) before any browser
+opens. See ADR-0031 for what is counted and how the verdict is decided.
 
 ### Exit codes
 
@@ -577,7 +684,9 @@ llm:
           browser-config.json, mcp-config.json,
           .secrets.env, live/ (the live-view frame)
           suite/                     tests/repro.spec.ts, playwright.config.ts, package.json,
-                                     artifacts/last-run.report.json, last-run.evidence.json
+                                     artifacts/last-run.report.json, last-run.evidence.json,
+                                     .reproagent/ (only while a rerun is capturing)
+        artifacts/rerun-batch/, artifacts/evidence-quality/   One record each per rerun batch
           experiment-proposal.json
     reports/report.md                The report as the CLI reads it; reports/versions/ keeps each edit
     session.jsonl                    What happened, appended as it happened
