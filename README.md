@@ -189,7 +189,14 @@ and the latest steps are visible together. Mobile profiles are shown in portrait
 When the agent offers choices, such as "Looks right — go", "Change something" or "Watch the
 browser", the input box is disabled until you pick one. When it asks a free-text question, the
 box is live and your answer resumes the same session. The browser profile and the steps already
-done are kept.
+done are kept. **That's all I know** is offered again there. It tells the same session you have
+nothing more, so it carries on with what it has or stops and says exactly what is missing.
+
+If the session stops without getting there, and not just because it ran out of turns, the card
+offers **Re-plan with this**. The reason it stopped goes into a new planning turn, the same one an
+answer to the plan uses. You get a revised plan card (the previous version is kept as
+`plan.v<N>.md`), and approving it starts a fresh browser session. "Add more detail" and "Try again"
+are still there.
 
 The **variables** pill in the header opens a side panel listing the credential names and
 descriptions this session holds. You can add or delete one there. Values are always masked.
@@ -203,7 +210,14 @@ Then, without another click:
 2. If a replay stops before the final check, the agent says where and sends that back to the
    authoring session to record the flow again. This happens at most twice.
 3. Once both replays reach the final check, the card offers **Run it N×**, with 30× and 100×
-   shortcuts.
+   shortcuts. Above the buttons it plays the **recording of the replay**, so you can see the script
+   do the flow before you run it many times. The video is loaded when the card appears, so a later
+   N× run, which clears the suite's `artifacts/` folder, does not change what the card shows. The
+   server reads the video's path from the suite's own Playwright report and serves only a `.webm`
+   inside that `artifacts/` folder.
+
+If the replay still stops before the final check after two repairs, the card says so and adds
+**Re-plan with this**. The replay summary goes into a new planning turn, the same way as above.
 
 The results card splits the runs:
 

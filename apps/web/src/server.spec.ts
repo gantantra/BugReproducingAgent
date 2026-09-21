@@ -10,6 +10,7 @@ describe("investigator web server endpoints", () => {
   let server: ReturnType<typeof createInvestigatorServer>;
   let baseUrl = "";
   let sessionCookie = "";
+  let sessionDir = "";
 
   beforeAll(async () => {
     mkdirSync(testDir, { recursive: true });
@@ -58,7 +59,7 @@ describe("investigator web server endpoints", () => {
     expect(m).toBeTruthy();
     sessionCookie = m![1];
 
-    const sessionDir = join(testDir, "sessions", data.sessionFolder);
+    sessionDir = join(testDir, "sessions", data.sessionFolder);
     mkdirSync(join(sessionDir, "authoring", "mcp"), { recursive: true });
     writeFileSync(
       join(sessionDir, "authoring", "mcp", "page-1.png"),
@@ -236,5 +237,89 @@ describe("investigator web server endpoints", () => {
     expect(data.ok).toBe(true);
     expect(data.removed).toBe(true);
     expect(data.names).not.toContain("CUSTOM_TOKEN");
+  });
+
+  describe("the authored suite's replay video", () => {
+    const suiteArtifacts = (inv: string): string =>
+      join(sessionDir, ".investigator", "investigations", inv, "authoring", "suite", "artifacts");
+    const report = (videoPath: string): string =>
+      JSON.stringify({
+        suites: [
+          {
+            suites: [
+              {
+                specs: [
+                  {
+                    tests: [
+                      {
+                        results: [
+                          { attachments: [{ name: "trace", path: "trace.zip" }] },
+                          { attachments: [{ name: "video", path: videoPath }] },
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      });
+    const get = (query: string, headers: Record<string, string> = {}): Promise<Response> =>
+      fetch(`${baseUrl}/api/suite-video?${query}`, {
+        headers: { cookie: `investigator_session=${sessionCookie}`, ...headers },
+      });
+
+    beforeAll(() => {
+      // Where Playwright really puts it: a per-test folder under the suite's outputDir, named in
+      // the report by absolute path.
+      const dir = join(suiteArtifacts("INV-010"), "tests-repro-abc");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "video.webm"), Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
+      writeFileSync(
+        join(suiteArtifacts("INV-010"), "last-run.report.json"),
+        report(join(dir, "video.webm"))
+      );
+      // A report naming a file outside artifacts/ must not become a way to read it.
+      mkdirSync(suiteArtifacts("INV-011"), { recursive: true });
+      writeFileSync(join(sessionDir, "outside.webm"), Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
+      writeFileSync(
+        join(suiteArtifacts("INV-011"), "last-run.report.json"),
+        report("../../../../../../outside.webm")
+      );
+    });
+
+    it("serves the first video the report lists", async () => {
+      const res = await get(`investigation=INV-010&token=${token}`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("video/webm");
+      expect(new Uint8Array(await res.arrayBuffer())[0]).toBe(0x1a);
+    });
+
+    it("accepts the token as a header too", async () => {
+      const res = await get("investigation=INV-010", { "x-investigator-token": token });
+      expect(res.status).toBe(200);
+    });
+
+    it("refuses a missing or wrong token", async () => {
+      expect((await get("investigation=INV-010")).status).toBe(403);
+      expect((await get("investigation=INV-010&token=wrong")).status).toBe(403);
+    });
+
+    it("refuses an investigation id that is not one", async () => {
+      const res = await get(`investigation=${encodeURIComponent("../INV-010")}&token=${token}`);
+      expect(res.status).toBe(400);
+    });
+
+    it("answers 404 when the suite has not been run", async () => {
+      const res = await get(`investigation=INV-012&token=${token}`);
+      expect(res.status).toBe(404);
+      expect(((await res.json()) as { code: string }).code).toBe("NO_SUCH_ARTIFACT");
+    });
+
+    it("will not serve a file the report places outside artifacts/", async () => {
+      const res = await get(`investigation=INV-011&token=${token}`);
+      expect(res.status).toBe(404);
+    });
   });
 });

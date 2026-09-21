@@ -80,6 +80,8 @@
     planning: false,
     // The checksum of the plan card on screen, sent with its approval.
     planChecksum: null,
+    // A browser-session question is open: "That's all I know" answers it for the same session.
+    browsingQuestion: false,
   };
 
   /* `state.awaiting` is opened and closed from a dozen places, some of them AFTER the card's
@@ -531,7 +533,7 @@
     const choosing = state.choicePending && !state.awaiting;
     el.input.disabled = state.busy || choosing;
     if (el.thatsAll) {
-      el.thatsAll.hidden = !state.planning;
+      el.thatsAll.hidden = !state.planning && !state.browsingQuestion;
       el.thatsAll.disabled = state.busy;
     }
     if (choosing) {
@@ -1478,6 +1480,7 @@
     const planning = !extra || extra.approvePlan !== true;
     // Planning keeps "That's all I know" beside the composer; opening the browser ends it.
     state.planning = planning;
+    state.browsingQuestion = false;
     if (!planning && state.planChecksum && !extra.planChecksum) {
       extra = { ...extra, planChecksum: state.planChecksum };
     }
@@ -1602,11 +1605,19 @@
               },
             ]
           : []),
-        {
-          label: "Add more detail",
-          ...(canContinue ? {} : { kind: "primary" }),
-          onClick: () => promptForMoreDetail(),
-        },
+        ...(canContinue
+          ? []
+          : [
+              {
+                label: "Re-plan with this",
+                kind: "primary",
+                onClick: () =>
+                  replanWith(
+                    `The browser session stopped: ${r.reason || r.message || "no reason given"}`
+                  ),
+              },
+            ]),
+        { label: "Add more detail", onClick: () => promptForMoreDetail() },
         { label: "Try again", onClick: () => startAuthoring({}) },
       ]);
       return;
@@ -1746,6 +1757,9 @@
       },
     ]);
 
+    // "That's all I know" stays available here too: the plan is settled, but the operator can
+    // still say they have nothing more, and the session carries on or says what is missing.
+    state.browsingQuestion = true;
     el.input.placeholder = "Your answer…";
     el.input.focus();
     const question = r.question || "";
@@ -1762,6 +1776,8 @@
    * The CLI reads that evidence itself, so there is no answer to send or echo. */
   async function resumeAuthoring(answer, repair = false) {
     el.input.placeholder = DEFAULT_PLACEHOLDER;
+    state.browsingQuestion = false;
+    updateComposer();
     if (!state.authoringSession) {
       say("I lost track of that session. Starting a fresh one with what you have told me.");
       await startAuthoring({});
@@ -1858,6 +1874,8 @@
    * the bug. */
   const VERIFY_RUNS = 2;
   const MAX_REPAIRS = 2;
+  const NO_MORE_INFO =
+    "That's all I know. I have no more information: don't ask again. Carry on with what you have, or stop and say exactly what is missing.";
 
   function renderAuthored(r) {
     setStep("approve");
@@ -1903,7 +1921,8 @@
       if (state.repairAttempts >= MAX_REPAIRS) {
         renderRunControls(
           r,
-          `After ${MAX_REPAIRS} repairs it still stops before the final check when replayed: ${result.summary}. Running it many times now would mostly measure that, not the bug.`
+          `After ${MAX_REPAIRS} repairs it still stops before the final check when replayed: ${result.summary}. Running it many times now would mostly measure that, not the bug.`,
+          `Replaying the recorded script stopped before the final check: ${result.summary}`
         );
         return;
       }
@@ -1915,7 +1934,42 @@
     });
   }
 
-  function renderRunControls(r, note) {
+  /* A new plan from what stopped the session, through the same planning turn an answer uses.
+   * The reason is the CLI's own text, already written with credential names, not something the
+   * operator typed, so it is not sent through credential extraction. */
+  async function replanWith(why) {
+    say(
+      `Re-plan with this.
+
+${why}`,
+      "user"
+    );
+    await startAuthoring({ answer: why });
+  }
+
+  /* The replay's own recording, fetched now into memory: the next N× run clears the folder it is
+   * in, and the card should keep showing the run the operator is deciding on. */
+  async function attachReviewVideo(c, before) {
+    try {
+      const res = await fetch(
+        `/api/suite-video?investigation=${encodeURIComponent(state.investigation)}`,
+        { headers: { "x-investigator-token": TOKEN } }
+      );
+      if (!res.ok) return;
+      const blob = await res.blob();
+      const v = document.createElement("video");
+      v.controls = true;
+      v.src = window.URL.createObjectURL(blob);
+      const heading = node("h4", null, "Recording of the replay");
+      heading.style.margin = "12px 0 0";
+      c.insertBefore(heading, before);
+      c.insertBefore(v, before);
+    } catch {
+      // No recording is not an error: the card works without one.
+    }
+  }
+
+  function renderRunControls(r, note, replanReason) {
     setStep("approve");
     const c = card("Ready to measure");
     if (note) c.appendChild(node("p", null, note));
@@ -1966,7 +2020,11 @@
       { label: "Run it", kind: "primary", onClick: () => runSuite(chosen()) },
       { label: "Run it 30×", onClick: () => runSuite(30) },
       { label: "Run it 100×", onClick: () => runSuite(100) },
+      ...(replanReason
+        ? [{ label: "Re-plan with this", onClick: () => replanWith(replanReason) }]
+        : []),
     ]);
+    void attachReviewVideo(c, row);
   }
 
   /** Run the authored suite N times here, streaming what the runner prints. */
@@ -2087,10 +2145,23 @@
    * still typed in the box goes with it as the last answer -- credentials first turned into names,
    * as every other answer is, so no value reaches the transcript. */
   el.thatsAll?.addEventListener("click", async () => {
-    if (state.busy || !state.planning || !state.investigation) return;
+    if (state.busy || !state.investigation) return;
+    if (!state.planning && !state.browsingQuestion) return;
     const typed = el.input.value.trim();
     el.input.value = "";
     state.awaiting = null;
+    if (!state.planning) {
+      // A question from the browser session: answer it in the same session, as every answer is.
+      const extra = typed ? await credentialsToNames("question", typed) : "";
+      await resumeAuthoring(
+        extra
+          ? `${extra}
+
+${NO_MORE_INFO}`
+          : NO_MORE_INFO
+      );
+      return;
+    }
     const answer = typed ? await credentialsToNames("plan", typed) : "";
     say(answer ? `${answer}\n\nThat's all I know.` : "That's all I know.", "user");
     await startAuthoring({ thatsAll: true, ...(answer ? { answer } : {}) });

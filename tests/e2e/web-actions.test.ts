@@ -111,6 +111,25 @@ describe("the planner's author calls reach the parser intact", () => {
       "an approval bound to the plan checksum",
       { investigation: "INV-001", approvePlan: true, planChecksum: `sha256:${"a".repeat(64)}` },
     ],
+    [
+      "Re-plan with this, carrying why the session stopped",
+      {
+        investigation: "INV-001",
+        answer: "The browser session stopped: no control named Delete account on /profile, line 12",
+      },
+    ],
+    [
+      "That's all I know, answering a browser-session question",
+      {
+        investigation: "INV-001",
+        resume: "62433c00-f352-4735-94b0-d5210d3da831",
+        answer: "That's all I know. I have no more information: don't ask again.",
+      },
+    ],
+    [
+      "a repair of the replayed script",
+      { investigation: "INV-001", resume: "62433c00-f352-4735-94b0-d5210d3da831", repair: true },
+    ],
   ])("%s", async (_label, params) => {
     const argv = author().build(params as Record<string, unknown>, ctx);
     const { output } = await invoke(argv);

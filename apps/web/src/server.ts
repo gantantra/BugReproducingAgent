@@ -9,6 +9,7 @@ import {
   ParamError,
   artifactRequest,
   findAction,
+  suiteVideoRequest,
   type BuildContext,
   type Params,
 } from "./actions.js";
@@ -271,6 +272,57 @@ export function createInvestigatorServer(opts: ServerOptions) {
     });
 
     return job;
+  }
+
+  /**
+   * The first video Playwright recorded on the authored suite's last run, as listed in its own
+   * report. The path comes from the report, not the request, and is served only if it resolves
+   * inside the suite's `artifacts/` folder and is a `.webm`.
+   */
+  function findSuiteVideo(workspace: string, investigation: string): string | null {
+    const artifacts = resolve(
+      workspace,
+      ".investigator",
+      "investigations",
+      investigation,
+      "authoring",
+      "suite",
+      "artifacts"
+    );
+    const reportPath = join(artifacts, "last-run.report.json");
+    if (!existsSync(reportPath)) return null;
+    let report: unknown;
+    try {
+      report = JSON.parse(readFileSync(reportPath, "utf8"));
+    } catch {
+      return null;
+    }
+    let found: string | null = null;
+    const walk = (suite: unknown): void => {
+      const s = suite as { suites?: unknown[]; specs?: unknown[] } | null;
+      if (found || !s || typeof s !== "object") return;
+      for (const spec of s.specs ?? []) {
+        for (const test of (spec as { tests?: unknown[] }).tests ?? []) {
+          for (const result of (test as { results?: unknown[] }).results ?? []) {
+            const attachments =
+              (result as { attachments?: Array<{ name?: string; path?: string }> }).attachments ??
+              [];
+            const video = attachments.find((a) => a.name === "video" && typeof a.path === "string");
+            if (video?.path) {
+              found = video.path;
+              return;
+            }
+          }
+        }
+      }
+      for (const child of s.suites ?? []) walk(child);
+    };
+    walk(report);
+    if (!found) return null;
+    const full = resolve(artifacts, found);
+    if (!full.startsWith(artifacts + sep)) return null;
+    if (extname(full).toLowerCase() !== ".webm" || !existsSync(full)) return null;
+    return full;
   }
 
   /** Locate an artifact by content hash. The layout is `<kind>/<first two hex>/<sha>.<ext>`. */
@@ -742,6 +794,24 @@ export function createInvestigatorServer(opts: ServerOptions) {
           const ext = extname(full).toLowerCase();
           res.writeHead(200, {
             "content-type": MIME[ext] ?? "application/octet-stream",
+            "cache-control": "no-store",
+            "x-content-type-options": "nosniff",
+          });
+          res.end(readFileSync(full));
+          return;
+        }
+
+        if (path === "/api/suite-video" && req.method === "GET") {
+          const { investigation } = suiteVideoRequest(url.searchParams);
+          const dir = requireSessionDir(res, sessionId);
+          if (!dir) return;
+          const full = findSuiteVideo(dir, investigation);
+          if (!full) {
+            sendJson(res, 404, { ok: false, code: "NO_SUCH_ARTIFACT", message: "not found" });
+            return;
+          }
+          res.writeHead(200, {
+            "content-type": MIME[".webm"] ?? "video/webm",
             "cache-control": "no-store",
             "x-content-type-options": "nosniff",
           });

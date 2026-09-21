@@ -317,6 +317,13 @@ export function findAction(id: unknown): ActionDef | undefined {
   return typeof id === "string" ? BY_ID.get(id) : undefined;
 }
 
+/** Validate a request for the authored suite's replay video. Only the investigation is taken
+ * from the browser; the file itself is found by the server, never named by the page. */
+export function suiteVideoRequest(query: URLSearchParams): { investigation: string } {
+  const p: Params = { investigation: query.get("investigation") ?? "" };
+  return { investigation: str(p, "investigation", ID, "an id like INV-001") };
+}
+
 /** Validate an artifact request. Separate from actions: it reads a file, it does not run one. */
 export function artifactRequest(query: URLSearchParams): {
   investigation: string;
