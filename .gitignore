@@ -44,3 +44,6 @@ desktop.ini
 
 # Supervisor logs from scripts/serve.mjs
 .logs/
+
+# GitLab access for pushes (TokenName, AccessToken). Never commit.
+HackathonGItLab.txt
